@@ -1,0 +1,85 @@
+# Golem
+
+Golem is an AI agent framework implementing a ReAct (Reasoning + Acting) loop for building coding assistants. It supports multiple communication channels, LLM providers, and a pluggable tool system.
+
+This project is a **Go clone** of [CrabClaw](https://github.com/jackwener/crabclaw), an OpenClaw-compatible agentic coding toolchain written in Rust. Huge thanks to [@jackwener](https://github.com/jackwener) and the CrabClaw project for the original design and inspiration.
+
+## Features
+
+- **Multi-channel**: CLI REPL with streaming, Lark/Feishu bot via WebSocket
+- **Multiple LLM providers**: OpenAI, Anthropic, any OpenAI-compatible service
+- **Tool system**: 12+ built-in tools with progressive disclosure to save tokens
+- **Skill discovery**: Auto-discover skills from `.agent/skills/` directory
+- **Context management**: Tape-based conversation log with anchor/masking strategies
+- **Sandboxed execution**: Filesystem and shell commands confined to workspace root
+- **Persistent memory**: Optional vector-similarity memory via mnemos/TiDB
+
+## Quick Start
+
+```sh
+# Build
+make build
+
+# Configure (copy and edit)
+cp .env.example .env
+# Set GOLEM_MODEL and API key, e.g.:
+#   GOLEM_MODEL=openai:gpt-4o
+#   OPENAI_API_KEY=sk-...
+
+# Run
+make run
+```
+
+## Usage
+
+Golem starts an interactive REPL. Type your request and the agent will reason, call tools, and respond.
+
+Built-in commands (prefix with `,`):
+
+| Command | Description |
+|---|---|
+| `,help` | Show available commands |
+| `,quit` | Exit golem |
+| `,tools` | List registered tools |
+| `,skills` | List discovered skills |
+| `,model [name]` | Show or change model |
+| `,anchor [label]` | Add context boundary |
+| `,tape.info` | Tape statistics |
+| `,tape.search <q>` | Search conversation history |
+
+## Configuration
+
+Set via environment variables or `.env` file:
+
+| Variable | Description |
+|---|---|
+| `GOLEM_MODEL` | Provider and model (e.g. `openai:gpt-4o`, `anthropic:claude-sonnet-4-20250514`) |
+| `<PROVIDER>_API_KEY` | API key for the provider |
+| `<PROVIDER>_BASE_URL` | Custom endpoint (optional) |
+| `GOLEM_MAX_TOOL_ITER` | Max tool calls per message (default: 15) |
+| `GOLEM_SHELL_TIMEOUT` | Shell command timeout (default: 30s) |
+| `LARK_APP_ID` / `LARK_APP_SECRET` | Lark bot credentials (optional) |
+
+See [docs/architecture.md](docs/architecture.md) for the full configuration reference.
+
+## Architecture
+
+See [docs/architecture.md](docs/architecture.md) for a detailed description of the project structure, core interfaces, agent loop, tool system, and more.
+
+## Development
+
+```sh
+make check    # gofmt + go vet + go test
+make fmt      # format code
+make lint     # golangci-lint
+make test     # go test ./...
+make clean    # remove build artifacts
+```
+
+## Acknowledgements
+
+This project is inspired by and based on [CrabClaw](https://github.com/jackwener/crabclaw) by [@jackwener](https://github.com/jackwener). Thank you for the excellent original design.
+
+## License
+
+See [LICENSE](LICENSE) for details.
