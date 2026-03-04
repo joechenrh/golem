@@ -292,8 +292,8 @@ func TestParseSkill(t *testing.T) {
 		t.Fatalf("ParseSkill() error: %v", err)
 	}
 
-	if tool.Name() != "skill.my-skill" {
-		t.Errorf("Name() = %q, want %q", tool.Name(), "skill.my-skill")
+	if tool.Name() != "skill_my-skill" {
+		t.Errorf("Name() = %q, want %q", tool.Name(), "skill_my-skill")
 	}
 	if tool.Description() != "A test skill for unit tests" {
 		t.Errorf("Description() = %q", tool.Description())
@@ -357,8 +357,8 @@ func TestDiscoverSkills(t *testing.T) {
 		t.Fatalf("DiscoverSkills() error: %v", err)
 	}
 
-	if r.Get("skill.my-skill") == nil {
-		t.Error("skill.my-skill not discovered")
+	if r.Get("skill_my-skill") == nil {
+		t.Error("skill_my-skill not discovered")
 	}
 }
 

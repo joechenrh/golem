@@ -147,7 +147,7 @@ func (r *Registry) List() string {
 	var b strings.Builder
 	var builtins, skills []string
 	for _, name := range r.order {
-		if strings.HasPrefix(name, "skill.") {
+		if strings.HasPrefix(name, "skill_") {
 			skills = append(skills, name)
 		} else {
 			builtins = append(builtins, name)

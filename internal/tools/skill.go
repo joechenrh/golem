@@ -14,7 +14,7 @@ var skillParams = json.RawMessage(`{"type":"object","properties":{"input":{"type
 
 // skillTool wraps a parsed SKILL.md as a Tool.
 type skillTool struct {
-	name        string // "skill.<name>"
+	name        string // "skill_<name>"
 	description string // from frontmatter
 	body        string // markdown body (full instructions)
 }
@@ -46,7 +46,7 @@ func ParseSkill(path string) (Tool, error) {
 	}
 
 	return &skillTool{
-		name:        "skill." + name,
+		name:        "skill_" + name,
 		description: description,
 		body:        body,
 	}, nil
