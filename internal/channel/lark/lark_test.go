@@ -39,7 +39,7 @@ func TestExtractTextContent(t *testing.T) {
 
 func TestBuildCardContent(t *testing.T) {
 	text := "**bold** and *italic*"
-	card := map[string]interface{}{
+	card := map[string]any{
 		"elements": []map[string]string{
 			{"tag": "markdown", "content": text},
 		},
@@ -49,17 +49,17 @@ func TestBuildCardContent(t *testing.T) {
 		t.Fatalf("marshal card: %v", err)
 	}
 
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal(content, &parsed); err != nil {
 		t.Fatalf("unmarshal card: %v", err)
 	}
 
-	elements, ok := parsed["elements"].([]interface{})
+	elements, ok := parsed["elements"].([]any)
 	if !ok || len(elements) != 1 {
 		t.Fatalf("expected 1 element, got %v", parsed["elements"])
 	}
 
-	elem := elements[0].(map[string]interface{})
+	elem := elements[0].(map[string]any)
 	if elem["tag"] != "markdown" {
 		t.Errorf("tag = %q, want %q", elem["tag"], "markdown")
 	}
@@ -69,11 +69,8 @@ func TestBuildCardContent(t *testing.T) {
 }
 
 func TestSendSkipsDuplicateChat(t *testing.T) {
-	logger := zap.NewNop()
-	lc := &LarkChannel{
-		logger:    logger,
-		sentChats: map[string]bool{"chat_123": true},
-	}
+	lc := &LarkChannel{logger: zap.NewNop()}
+	lc.sentChats.Store("chat_123", true)
 
 	// Send to a chat that was already sent to — should be a no-op (no client, so
 	// calling sendCard would panic).
@@ -87,15 +84,8 @@ func TestSendSkipsDuplicateChat(t *testing.T) {
 }
 
 func TestSendToChatRecordsChatID(t *testing.T) {
-	lc := &LarkChannel{
-		logger:    zap.NewNop(),
-		sentChats: make(map[string]bool),
-	}
-
-	// Directly record a chat ID and verify Send skips it.
-	lc.sentMu.Lock()
-	lc.sentChats["chat_456"] = true
-	lc.sentMu.Unlock()
+	lc := &LarkChannel{logger: zap.NewNop()}
+	lc.sentChats.Store("chat_456", true)
 
 	// Send should skip because chat_456 was already "sent to".
 	err := lc.Send(context.Background(), channel.OutgoingMessage{

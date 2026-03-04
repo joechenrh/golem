@@ -30,8 +30,7 @@ type LarkChannel struct {
 	// sentChats tracks chat IDs that have already been sent to during the
 	// current message-processing cycle, preventing duplicate replies when
 	// both a tool call and processMessage send to the same chat.
-	sentMu    sync.Mutex
-	sentChats map[string]bool
+	sentChats sync.Map
 }
 
 // New creates a LarkChannel with the given credentials.
@@ -111,9 +110,7 @@ func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh ch
 	}
 
 	// Reset per-cycle duplicate tracking before dispatching.
-	l.sentMu.Lock()
-	l.sentChats = make(map[string]bool)
-	l.sentMu.Unlock()
+	l.sentChats.Clear()
 
 	done := make(chan struct{})
 	inCh <- channel.IncomingMessage{
@@ -132,11 +129,7 @@ func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh ch
 func (l *LarkChannel) Send(ctx context.Context, msg channel.OutgoingMessage) error {
 	chatID := strings.TrimPrefix(msg.ChannelID, "lark:")
 
-	l.sentMu.Lock()
-	alreadySent := l.sentChats[chatID]
-	l.sentMu.Unlock()
-
-	if alreadySent {
+	if _, alreadySent := l.sentChats.Load(chatID); alreadySent {
 		l.logger.Debug("skipping duplicate send", zap.String("chat_id", chatID))
 		return nil
 	}
@@ -161,12 +154,7 @@ func (l *LarkChannel) SendStream(ctx context.Context, channelID string, tokenCh 
 // SendToChat sends a message to a specific chat_id. Exported for use by tools.
 // It records the chat_id so that a subsequent Send to the same chat is skipped.
 func (l *LarkChannel) SendToChat(ctx context.Context, chatID, text string) error {
-	l.sentMu.Lock()
-	if l.sentChats == nil {
-		l.sentChats = make(map[string]bool)
-	}
-	l.sentChats[chatID] = true
-	l.sentMu.Unlock()
+	l.sentChats.Store(chatID, true)
 
 	return l.sendCard(ctx, chatID, text)
 }
@@ -174,7 +162,7 @@ func (l *LarkChannel) SendToChat(ctx context.Context, chatID, text string) error
 // sendCard sends a message as an interactive card with a markdown element,
 // which supports bold, italic, strikethrough, links, and code formatting.
 func (l *LarkChannel) sendCard(ctx context.Context, chatID, text string) error {
-	card := map[string]interface{}{
+	card := map[string]any{
 		"elements": []map[string]string{
 			{"tag": "markdown", "content": text},
 		},
@@ -257,18 +245,18 @@ type zapLarkLogger struct {
 	z *zap.Logger
 }
 
-func (l *zapLarkLogger) Debug(_ context.Context, args ...interface{}) {
+func (l *zapLarkLogger) Debug(_ context.Context, args ...any) {
 	l.z.Debug(fmt.Sprint(args...))
 }
 
-func (l *zapLarkLogger) Info(_ context.Context, args ...interface{}) {
+func (l *zapLarkLogger) Info(_ context.Context, args ...any) {
 	l.z.Info(fmt.Sprint(args...))
 }
 
-func (l *zapLarkLogger) Warn(_ context.Context, args ...interface{}) {
+func (l *zapLarkLogger) Warn(_ context.Context, args ...any) {
 	l.z.Warn(fmt.Sprint(args...))
 }
 
-func (l *zapLarkLogger) Error(_ context.Context, args ...interface{}) {
+func (l *zapLarkLogger) Error(_ context.Context, args ...any) {
 	l.z.Error(fmt.Sprint(args...))
 }
