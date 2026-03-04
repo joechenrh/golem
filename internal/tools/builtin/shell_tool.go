@@ -40,7 +40,7 @@ func (t *ShellTool) Execute(ctx context.Context, args string) (string, error) {
 		Command string `json:"command"`
 		Timeout int    `json:"timeout"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
+	if err := json.Unmarshal([]byte(normalizeArgs(args)), &params); err != nil {
 		return "Error: invalid arguments: " + err.Error(), nil
 	}
 	if params.Command == "" {
