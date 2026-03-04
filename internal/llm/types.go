@@ -1,5 +1,7 @@
 package llm
 
+import "encoding/json"
+
 // Provider represents a named LLM provider.
 type Provider string
 
@@ -20,50 +22,50 @@ const (
 
 // Message represents a conversation message.
 type Message struct {
-	Role       Role
-	Content    string
-	ToolCalls  []ToolCall // assistant messages may contain tool calls
-	ToolCallID string     // for tool result messages
-	Name       string     // tool name for tool results
+	Role       Role       `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Name       string     `json:"name,omitempty"`
 }
 
 // ToolCall represents a tool invocation from the model.
 type ToolCall struct {
-	ID        string
-	Name      string
-	Arguments string // raw JSON string
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // raw JSON string
 }
 
 // ToolDefinition describes a tool the model can call.
 type ToolDefinition struct {
-	Name        string
-	Description string
-	Parameters  map[string]interface{} // JSON Schema object
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"` // raw JSON Schema
 }
 
 // ChatRequest holds the input to an LLM call.
 type ChatRequest struct {
-	Model        string
-	Messages     []Message
-	Tools        []ToolDefinition
-	MaxTokens    int
-	Temperature  float64
-	SystemPrompt string // separate field; Anthropic requires top-level system
+	Model        string           `json:"model"`
+	Messages     []Message        `json:"messages"`
+	Tools        []ToolDefinition `json:"tools,omitempty"`
+	MaxTokens    int              `json:"max_tokens,omitempty"`
+	Temperature  float64          `json:"temperature,omitempty"`
+	SystemPrompt string           `json:"system_prompt,omitempty"` // separate field; Anthropic requires top-level system
 }
 
 // ChatResponse holds a complete non-streaming response.
 type ChatResponse struct {
-	Content      string
-	ToolCalls    []ToolCall
-	Usage        Usage
-	FinishReason string // "stop", "tool_calls", "length"
+	Content      string     `json:"content"`
+	ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
+	Usage        Usage      `json:"usage"`
+	FinishReason string     `json:"finish_reason"`
 }
 
 // Usage tracks token consumption.
 type Usage struct {
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 // StreamEventType discriminates streaming events.
@@ -86,7 +88,7 @@ type StreamEvent struct {
 
 // ToolCallDelta represents a partial tool call during streaming.
 type ToolCallDelta struct {
-	ID        string
-	Name      string
-	Arguments string // partial JSON fragment
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"` // partial JSON fragment
 }

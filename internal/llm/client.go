@@ -23,12 +23,12 @@ type Client interface {
 type APIError struct {
 	StatusCode int
 	Message    string
-	Prov       Provider
+	Provider   Provider
 	Retryable  bool
 }
 
 func (e *APIError) Error() string {
-	return fmt.Sprintf("%s API error (HTTP %d): %s", e.Prov, e.StatusCode, e.Message)
+	return fmt.Sprintf("%s API error (HTTP %d): %s", e.Provider, e.StatusCode, e.Message)
 }
 
 // NewClient creates a Client based on the provider string.
