@@ -18,6 +18,7 @@ import (
 	"github.com/joechenrh/golem/internal/agent"
 	"github.com/joechenrh/golem/internal/channel"
 	"github.com/joechenrh/golem/internal/channel/cli"
+	larkchan "github.com/joechenrh/golem/internal/channel/lark"
 	"github.com/joechenrh/golem/internal/config"
 	"github.com/joechenrh/golem/internal/ctxmgr"
 	"github.com/joechenrh/golem/internal/executor"
@@ -121,7 +122,17 @@ func main() {
 	hookBus := hooks.NewBus(logger)
 	hookBus.Register(hooks.NewLoggingHook(logger))
 
-	// 9. Build tool registry.
+	// 9. Build channel registry (before tools so Lark tools can reference the channel).
+	cliCh := cli.New()
+	channels := map[string]channel.Channel{"cli": cliCh}
+
+	var larkCh *larkchan.LarkChannel
+	if cfg.LarkAppID != "" && cfg.LarkAppSecret != "" {
+		larkCh = larkchan.New(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkVerifyToken, logger)
+		channels["lark"] = larkCh
+	}
+
+	// 10. Build tool registry.
 	registry := tools.NewRegistry()
 	registry.RegisterAll(
 		builtin.NewShellTool(exec, cfg.ShellTimeout),
@@ -135,21 +146,29 @@ func main() {
 	for _, s := range builtin.WebStubs() {
 		registry.Register(&s)
 	}
+	// Register Lark tools if channel is enabled (pre-expanded so the LLM
+	// sees full parameter schemas immediately).
+	if larkCh != nil {
+		registry.RegisterAll(
+			builtin.NewLarkSendTool(larkCh),
+			builtin.NewLarkListChatsTool(larkCh),
+		)
+		registry.Expand("lark_send")
+		registry.Expand("lark_list_chats")
+	}
 
 	// Discover skills from the skills directory.
 	if err := registry.DiscoverSkills(cfg.SkillsDir); err != nil {
 		logger.Debug("skills discovery", zap.Error(err))
 	}
 
-	// 10. Create agent loop.
+	// 11. Create agent loop.
 	agentLoop := agent.New(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
 
-	// 11. Setup signal handling.
+	// 12. Setup signal handling.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// 12. Create CLI channel and run.
-	cliCh := cli.New()
 	cliCh.PrintBanner(cfg.Model, len(registry.ToolDefinitions()), tapePath)
 
 	inCh := make(chan channel.IncomingMessage, 100)
@@ -157,12 +176,22 @@ func main() {
 	// Message processing goroutine.
 	go func() {
 		for msg := range inCh {
-			if processMessage(ctx, agentLoop, cliCh, msg, logger) {
+			if processMessage(ctx, agentLoop, channels, msg, logger) {
 				cancel() // signal the REPL to stop
 				return
 			}
 		}
 	}()
+
+	// Start Lark channel in background if configured.
+	if larkCh != nil {
+		cliCh.PrintSystem("Lark channel enabled (WebSocket mode)")
+		go func() {
+			if err := larkCh.Start(ctx, inCh); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("Lark channel error", zap.Error(err))
+			}
+		}()
+	}
 
 	// Start REPL (blocks until EOF or context cancel).
 	if err := cliCh.Start(ctx, inCh); err != nil && !errors.Is(err, context.Canceled) {
@@ -175,29 +204,36 @@ func main() {
 
 // processMessage handles a single incoming message through the agent loop.
 // Returns true if the user requested quit.
-func processMessage(ctx context.Context, agentLoop *agent.AgentLoop, cliCh *cli.CLIChannel, msg channel.IncomingMessage, logger *zap.Logger) bool {
+func processMessage(ctx context.Context, agentLoop *agent.AgentLoop, channels map[string]channel.Channel, msg channel.IncomingMessage, logger *zap.Logger) bool {
 	if msg.Done != nil {
 		defer close(msg.Done)
 	}
-	if cliCh.SupportsStreaming() {
+
+	ch, ok := channels[msg.ChannelName]
+	if !ok {
+		logger.Error("unknown channel", zap.String("channel", msg.ChannelName))
+		return false
+	}
+
+	if ch.SupportsStreaming() {
 		tokenCh := make(chan string, 100)
 
 		streamDone := make(chan struct{})
 		go func() {
 			defer close(streamDone)
-			if err := cliCh.SendStream(ctx, msg.ChannelID, tokenCh); err != nil {
+			if err := ch.SendStream(ctx, msg.ChannelID, tokenCh); err != nil {
 				logger.Error("stream send error", zap.Error(err))
 			}
 		}()
 
 		err := agentLoop.HandleInputStream(ctx, msg, tokenCh)
 		close(tokenCh)
-		<-streamDone // wait for SendStream to finish printing
+		<-streamDone // wait for SendStream to finish
 		if err != nil {
 			if errors.Is(err, agent.ErrQuit) {
 				return true
 			}
-			cliCh.PrintError("Error: " + err.Error())
+			logOrPrintError(ch, logger, "Error: "+err.Error())
 		}
 	} else {
 		response, err := agentLoop.HandleInput(ctx, msg)
@@ -205,14 +241,24 @@ func processMessage(ctx context.Context, agentLoop *agent.AgentLoop, cliCh *cli.
 			if errors.Is(err, agent.ErrQuit) {
 				return true
 			}
-			cliCh.PrintError("Error: " + err.Error())
+			logOrPrintError(ch, logger, "Error: "+err.Error())
 			return false
 		}
-		if err := cliCh.Send(ctx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response}); err != nil {
+		if err := ch.Send(ctx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response}); err != nil {
 			logger.Error("send error", zap.Error(err))
 		}
 	}
 	return false
+}
+
+// logOrPrintError uses CLIChannel.PrintError for colored output when available,
+// otherwise logs the error.
+func logOrPrintError(ch channel.Channel, logger *zap.Logger, text string) {
+	if cliCh, ok := ch.(*cli.CLIChannel); ok {
+		cliCh.PrintError(text)
+	} else {
+		logger.Error(text)
+	}
 }
 
 // parseFlags parses CLI flags and returns overrides for config.Load.
