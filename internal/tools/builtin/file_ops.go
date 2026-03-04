@@ -61,8 +61,8 @@ func NewReadFileTool(filesystem fs.FS) *ReadFileTool {
 	return &ReadFileTool{filesystem: filesystem}
 }
 
-func (t *ReadFileTool) Name() string               { return "read_file" }
-func (t *ReadFileTool) Description() string         { return "Read a file's contents" }
+func (t *ReadFileTool) Name() string        { return "read_file" }
+func (t *ReadFileTool) Description() string { return "Read a file's contents" }
 func (t *ReadFileTool) FullDescription() string {
 	return "Read a file's contents. Supports offset/limit for reading portions of large files. Binary files are detected and skipped."
 }
@@ -133,8 +133,8 @@ func NewWriteFileTool(filesystem fs.FS) *WriteFileTool {
 	return &WriteFileTool{filesystem: filesystem}
 }
 
-func (t *WriteFileTool) Name() string               { return "write_file" }
-func (t *WriteFileTool) Description() string         { return "Write content to a file" }
+func (t *WriteFileTool) Name() string        { return "write_file" }
+func (t *WriteFileTool) Description() string { return "Write content to a file" }
 func (t *WriteFileTool) FullDescription() string {
 	return "Write content to a file, creating parent directories as needed. Overwrites existing files."
 }
@@ -181,8 +181,8 @@ func NewEditFileTool(filesystem fs.FS) *EditFileTool {
 	return &EditFileTool{filesystem: filesystem}
 }
 
-func (t *EditFileTool) Name() string               { return "edit_file" }
-func (t *EditFileTool) Description() string         { return "Edit a file by replacing text" }
+func (t *EditFileTool) Name() string        { return "edit_file" }
+func (t *EditFileTool) Description() string { return "Edit a file by replacing text" }
 func (t *EditFileTool) FullDescription() string {
 	return "Edit a file by finding and replacing an exact text match. The first occurrence of old_text is replaced with new_text."
 }
@@ -243,8 +243,8 @@ func NewListDirectoryTool(filesystem fs.FS) *ListDirectoryTool {
 	return &ListDirectoryTool{filesystem: filesystem}
 }
 
-func (t *ListDirectoryTool) Name() string               { return "list_directory" }
-func (t *ListDirectoryTool) Description() string         { return "List directory contents" }
+func (t *ListDirectoryTool) Name() string        { return "list_directory" }
+func (t *ListDirectoryTool) Description() string { return "List directory contents" }
 func (t *ListDirectoryTool) FullDescription() string {
 	return "List directory contents with type indicators (file/dir) and sizes. Skips .git, node_modules, and similar directories."
 }
@@ -327,8 +327,8 @@ func NewSearchFilesTool(filesystem fs.FS) *SearchFilesTool {
 	return &SearchFilesTool{filesystem: filesystem}
 }
 
-func (t *SearchFilesTool) Name() string               { return "search_files" }
-func (t *SearchFilesTool) Description() string         { return "Search for text in files" }
+func (t *SearchFilesTool) Name() string        { return "search_files" }
+func (t *SearchFilesTool) Description() string { return "Search for text in files" }
 func (t *SearchFilesTool) FullDescription() string {
 	return "Search for text in files recursively. Returns matching lines with file paths and line numbers. Case-insensitive. Supports optional file glob filter."
 }

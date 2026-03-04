@@ -20,7 +20,7 @@ func NewLarkSendTool(ch *larkchan.LarkChannel) *LarkSendTool {
 }
 
 func (t *LarkSendTool) Name() string        { return "lark_send" }
-func (t *LarkSendTool) Description() string  { return "Send a message to a Lark group chat" }
+func (t *LarkSendTool) Description() string { return "Send a message to a Lark group chat" }
 func (t *LarkSendTool) FullDescription() string {
 	return "Send a text message to a Lark/Feishu group chat. " +
 		"Use lark_list_chats first to find the chat_id of the target group."
@@ -68,7 +68,7 @@ func NewLarkListChatsTool(ch *larkchan.LarkChannel) *LarkListChatsTool {
 }
 
 func (t *LarkListChatsTool) Name() string        { return "lark_list_chats" }
-func (t *LarkListChatsTool) Description() string  { return "List Lark group chats the bot belongs to" }
+func (t *LarkListChatsTool) Description() string { return "List Lark group chats the bot belongs to" }
 func (t *LarkListChatsTool) FullDescription() string {
 	return "List all Lark/Feishu group chats that the bot is a member of. " +
 		"Returns chat_id, name, and description for each group. " +

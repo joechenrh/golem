@@ -14,20 +14,20 @@ import (
 // Wire-format structs for OpenAI Chat Completions API.
 
 type openaiChatRequest struct {
-	Model       string             `json:"model"`
-	Messages    []openaiMessage    `json:"messages"`
-	Tools       []openaiTool       `json:"tools,omitempty"`
-	MaxTokens   int                `json:"max_tokens,omitempty"`
-	Temperature *float64           `json:"temperature,omitempty"`
-	Stream      bool               `json:"stream,omitempty"`
+	Model       string          `json:"model"`
+	Messages    []openaiMessage `json:"messages"`
+	Tools       []openaiTool    `json:"tools,omitempty"`
+	MaxTokens   int             `json:"max_tokens,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	Stream      bool            `json:"stream,omitempty"`
 }
 
 type openaiMessage struct {
-	Role       string               `json:"role"`
-	Content    string               `json:"content,omitempty"`
-	ToolCalls  []openaiToolCall      `json:"tool_calls,omitempty"`
-	ToolCallID string               `json:"tool_call_id,omitempty"`
-	Name       string               `json:"name,omitempty"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Name       string           `json:"name,omitempty"`
 }
 
 type openaiToolCall struct {

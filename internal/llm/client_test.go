@@ -624,8 +624,8 @@ func TestAnthropicChatStream_ToolCalls(t *testing.T) {
 
 func TestChat_APIError(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider Provider
+		name      string
+		provider  Provider
 		newClient func(url string) Client
 	}{
 		{

@@ -71,7 +71,7 @@ type mockTool struct {
 	result string
 }
 
-func (m *mockTool) Name() string               { return m.name }
+func (m *mockTool) Name() string                { return m.name }
 func (m *mockTool) Description() string         { return "mock tool" }
 func (m *mockTool) FullDescription() string     { return "mock tool for testing" }
 func (m *mockTool) Parameters() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }

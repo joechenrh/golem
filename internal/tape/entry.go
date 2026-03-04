@@ -18,10 +18,10 @@ const (
 
 // TapeEntry is a single record in the append-only tape.
 type TapeEntry struct {
-	ID        string                 `json:"id"`
-	Kind      EntryKind              `json:"kind"`
+	ID        string         `json:"id"`
+	Kind      EntryKind      `json:"kind"`
 	Payload   map[string]any `json:"payload"`
-	Timestamp time.Time              `json:"timestamp"`
+	Timestamp time.Time      `json:"timestamp"`
 }
 
 // TapeInfo provides stats about a tape file.

@@ -19,7 +19,7 @@ type skillTool struct {
 	body        string // markdown body (full instructions)
 }
 
-func (s *skillTool) Name() string               { return s.name }
+func (s *skillTool) Name() string                { return s.name }
 func (s *skillTool) Description() string         { return s.description }
 func (s *skillTool) FullDescription() string     { return s.body }
 func (s *skillTool) Parameters() json.RawMessage { return skillParams }

@@ -30,7 +30,7 @@ func NewShellTool(exec executor.Executor, defaultTimeout time.Duration) *ShellTo
 }
 
 func (t *ShellTool) Name() string        { return "shell_exec" }
-func (t *ShellTool) Description() string  { return "Execute a shell command" }
+func (t *ShellTool) Description() string { return "Execute a shell command" }
 func (t *ShellTool) FullDescription() string {
 	return "Execute a shell command in the workspace directory. Returns stdout, stderr, and exit code."
 }

@@ -155,9 +155,9 @@ func (a *AgentLoop) runReActLoop(ctx context.Context, stream bool, tokenCh chan<
 		a.hooks.Emit(ctx, hooks.Event{
 			Type: hooks.EventAfterLLMCall,
 			Payload: map[string]any{
-				"finish_reason":    resp.FinishReason,
-				"tool_call_count":  len(resp.ToolCalls),
-				"prompt_tokens":    resp.Usage.PromptTokens,
+				"finish_reason":     resp.FinishReason,
+				"tool_call_count":   len(resp.ToolCalls),
+				"prompt_tokens":     resp.Usage.PromptTokens,
 				"completion_tokens": resp.Usage.CompletionTokens,
 			},
 		})
