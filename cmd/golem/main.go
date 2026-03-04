@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -52,7 +54,7 @@ func main() {
 	apiKey := cfg.APIKeys[string(provider)]
 	if apiKey == "" {
 		fmt.Fprintf(os.Stderr, "no API key for provider %q. Set %s_API_KEY environment variable.\n",
-			provider, toEnvPrefix(string(provider)))
+			provider, strings.ToUpper(string(provider)))
 		os.Exit(1)
 	}
 
@@ -120,7 +122,6 @@ func main() {
 	)
 	// Register stubs for future features.
 	for _, s := range builtin.WebStubs() {
-		s := s
 		registry.Register(&s)
 	}
 
@@ -145,12 +146,15 @@ func main() {
 	// Message processing goroutine.
 	go func() {
 		for msg := range inCh {
-			processMessage(ctx, agentLoop, cliCh, msg, logger)
+			if processMessage(ctx, agentLoop, cliCh, msg, logger) {
+				cancel() // signal the REPL to stop
+				return
+			}
 		}
 	}()
 
 	// Start REPL (blocks until EOF or context cancel).
-	if err := cliCh.Start(ctx, inCh); err != nil && err != context.Canceled {
+	if err := cliCh.Start(ctx, inCh); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("CLI channel error", zap.Error(err))
 	}
 
@@ -159,7 +163,8 @@ func main() {
 }
 
 // processMessage handles a single incoming message through the agent loop.
-func processMessage(ctx context.Context, agentLoop *agent.AgentLoop, cliCh *cli.CLIChannel, msg channel.IncomingMessage, logger *zap.Logger) {
+// Returns true if the user requested quit.
+func processMessage(ctx context.Context, agentLoop *agent.AgentLoop, cliCh *cli.CLIChannel, msg channel.IncomingMessage, logger *zap.Logger) bool {
 	if cliCh.SupportsStreaming() {
 		tokenCh := make(chan string, 100)
 
@@ -169,27 +174,28 @@ func processMessage(ctx context.Context, agentLoop *agent.AgentLoop, cliCh *cli.
 			}
 		}()
 
-		if err := agentLoop.HandleInputStream(ctx, msg, tokenCh); err != nil {
-			if err == agent.ErrQuit {
-				cliCh.PrintSystem("Goodbye!")
-				os.Exit(0)
+		err := agentLoop.HandleInputStream(ctx, msg, tokenCh)
+		close(tokenCh)
+		if err != nil {
+			if errors.Is(err, agent.ErrQuit) {
+				return true
 			}
 			cliCh.PrintError("Error: " + err.Error())
 		}
 	} else {
 		response, err := agentLoop.HandleInput(ctx, msg)
 		if err != nil {
-			if err == agent.ErrQuit {
-				cliCh.PrintSystem("Goodbye!")
-				os.Exit(0)
+			if errors.Is(err, agent.ErrQuit) {
+				return true
 			}
 			cliCh.PrintError("Error: " + err.Error())
-			return
+			return false
 		}
 		if err := cliCh.Send(ctx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response}); err != nil {
 			logger.Error("send error", zap.Error(err))
 		}
 	}
+	return false
 }
 
 // parseFlags parses CLI flags and returns overrides for config.Load.
@@ -256,15 +262,3 @@ func initLogger(level string) *zap.Logger {
 	return logger
 }
 
-// toEnvPrefix converts a provider name to an env var prefix (uppercase).
-func toEnvPrefix(s string) string {
-	result := make([]byte, len(s))
-	for i := range s {
-		if s[i] >= 'a' && s[i] <= 'z' {
-			result[i] = s[i] - 32
-		} else {
-			result[i] = s[i]
-		}
-	}
-	return string(result)
-}
