@@ -41,11 +41,12 @@ Generate images by calling the Volcengine (火山方舟) Seedream API via `shell
 
 | Model ID | Version |
 |----------|---------|
-| `doubao-seedream-5-0-lite-t2i-250901` | Seedream 5.0 Lite |
+| `doubao-seedream-5-0-260128` | Seedream 5.0 (default) |
+| `doubao-seedream-5-0-260128` | Seedream 5.0 Lite |
 | `doubao-seedream-4-5-251128` | Seedream 4.5 |
 | `doubao-seedream-4-0-250828` | Seedream 4.0 |
 
-Use the latest model (`doubao-seedream-5-0-lite-t2i-250901`) unless the user specifies otherwise.
+Use `doubao-seedream-5-0-260128` unless the user specifies otherwise.
 
 ## Response Format
 
@@ -68,14 +69,17 @@ The `url` field contains a temporary download link for the generated image. Extr
 Use `shell_exec` with `curl`:
 
 ```bash
-curl -s https://ark.cn-beijing.volces.com/api/v3/images/generations \
+curl -s -X POST https://ark.cn-beijing.volces.com/api/v3/images/generations \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ARK_API_KEY" \
   -d '{
-    "model": "doubao-seedream-5-0-lite-t2i-250901",
+    "model": "doubao-seedream-5-0-260128",
     "prompt": "a cat sitting on a windowsill at sunset, watercolor style",
+    "sequential_image_generation": "disabled",
+    "response_format": "url",
     "size": "2K",
-    "response_format": "url"
+    "stream": false,
+    "watermark": false
   }'
 ```
 
