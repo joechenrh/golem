@@ -84,6 +84,12 @@ func BuildMessages(entries []TapeEntry) []llm.Message
 
 This converts tape entries with `kind=message` into `llm.Message` structs. Entries with `kind=anchor` are used as context boundaries — only messages after the last anchor are included.
 
+## Implementation Notes
+
+- All struct fields must have `json:` tags — this was a review finding from Step 03. Without tags, JSONL serialization uses PascalCase field names which is inconsistent with the rest of the system.
+- `BuildMessages` converts tape entries to `llm.Message`. Since `llm.Message` already has JSON tags, ensure the payload parsing respects the `json:"snake_case"` field names.
+- Ensure tests cover JSON round-tripping (marshal → unmarshal), not just in-memory operations.
+
 ## Design Decisions
 
 - Payload is `map[string]interface{}` (not a typed union) — keeps the tape format flexible and forward-compatible

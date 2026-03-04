@@ -77,14 +77,31 @@ func (c *Config) ModelProvider() (provider, model string)
 | SkillsDir | `GOLEM_SKILLS_DIR` | `.agent/skills` |
 | LogLevel | `GOLEM_LOG_LEVEL` | `info` |
 
+### Validation
+
+`Load()` validates the config and returns an error for:
+- Invalid `LogLevel` (must be one of: debug, info, warn, error)
+- `MaxToolIter <= 0`
+- `ShellTimeout <= 0`
+- Empty `Model`
+- Model format with more than one colon (e.g., `"a:b:c"`)
+
+`.env.local` parse errors are surfaced (file-not-found is silently ignored).
+
+### Provider Routing
+
+`Config.ModelProvider()` was **removed** to avoid duplicating `llm.ParseModelProvider()`. Callers should use `llm.ParseModelProvider(cfg.Model)` directly.
+
 ### Design Decisions
 
 - No TOML/YAML config file for now — env vars + `.env.local` is sufficient for Phase 1-2
 - `~` in paths is expanded to `os.UserHomeDir()`
 - API keys are stored in a map keyed by provider name for easy lookup
+- Tests use `t.Setenv()` (not `os.Setenv`) for automatic cleanup and parallel-safety awareness
 
 ## Done When
 
 - `config.Load(nil)` returns a Config with defaults
 - Setting `GOLEM_MODEL=anthropic:claude-sonnet-4-20250514` overrides the model
 - `.env.local` file values are loaded
+- Invalid log level / model format / zero iterations returns a descriptive error

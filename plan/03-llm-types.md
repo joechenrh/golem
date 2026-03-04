@@ -108,9 +108,12 @@ const (
 - `ToolCall.Arguments` is a raw JSON string, not `map[string]interface{}` — the tool registry parses it, not the LLM layer
 - `ChatRequest.SystemPrompt` is separate from `Messages` because Anthropic requires system as a top-level field, not a message
 - `StreamEvent` uses a discriminated type field rather than separate channel types — simpler to consume
-- `ToolDefinition.Parameters` is `map[string]interface{}` (generic JSON Schema) — tools define their own schema
+- `ToolDefinition.Parameters` is `json.RawMessage` — preserves raw JSON bytes without forcing deserialization into `interface{}`, avoids double-encoding issues when marshaling for API calls
+- All structs have `json:"snake_case"` struct tags with `omitempty` where fields are optional — this is critical for correct serialization to tape/persistence and for any future direct JSON usage
+- `StreamEvent` intentionally omits JSON tags — it is an in-memory-only type (streamed via channels, never serialized)
 
 ## Done When
 
 - All types compile
-- No external dependencies needed (pure Go types)
+- `encoding/json` is the only external dependency (stdlib)
+- `json.Marshal`/`json.Unmarshal` round-trips correctly for all types

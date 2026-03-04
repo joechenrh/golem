@@ -20,7 +20,7 @@ type Tool interface {
     Name() string
     Description() string                              // short (for compact/progressive mode)
     FullDescription() string                           // full (for expanded mode), defaults to Description()
-    Parameters() map[string]interface{}                // JSON Schema
+    Parameters() json.RawMessage                      // JSON Schema as raw JSON
     Execute(ctx context.Context, args string) (string, error)  // args is raw JSON
 }
 ```
@@ -116,6 +116,11 @@ LLM returns ToolCall{Name: "read_file", Arguments: '{"path": "/tmp/x.txt"}'}
     │
     └─ Result is added as a tool result message for the next LLM call
 ```
+
+## Implementation Notes
+
+- `Tool.Parameters()` returns `json.RawMessage` (not `map[string]interface{}`). This matches `llm.ToolDefinition.Parameters` which was changed from `map[string]interface{}` to `json.RawMessage` during the Step 03 review. Tools should define their JSON Schema as a raw JSON literal.
+- `ToolDefinitions()` can directly assign `tool.Parameters()` to `llm.ToolDefinition.Parameters` without any conversion — both are `json.RawMessage`.
 
 ## Design Decisions
 

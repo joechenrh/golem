@@ -29,7 +29,7 @@ func NewClient(provider Provider, apiKey string) (Client, error)
 
 ### Provider Routing
 
-`config.ModelProvider()` splits `"openai:gpt-4o"` → `(ProviderOpenAI, "gpt-4o")`. If no prefix, default to OpenAI.
+`llm.ParseModelProvider()` splits `"openai:gpt-4o"` → `(ProviderOpenAI, "gpt-4o")`. If no prefix, default to OpenAI. Note: `Config.ModelProvider()` was removed — use `llm.ParseModelProvider(cfg.Model)` to avoid logic duplication.
 
 ### OpenAI Implementation (`openai.go`)
 
@@ -101,6 +101,35 @@ type APIError struct {
     Retryable  bool
 }
 ```
+
+## Implementation Notes (from code review)
+
+### Wire-format separation
+
+**Do NOT marshal the unified types (from `types.go`) directly to/from provider APIs.** OpenAI and Anthropic have very different JSON shapes:
+
+- Anthropic `content` is an array of blocks, not a string
+- Anthropic tool call arguments are a JSON object, OpenAI uses a JSON string
+- Anthropic tool results go in a `user` message with `tool_result` content blocks
+- Anthropic system prompt is a top-level field, not a message
+
+**Solution**: Define private wire-format structs in each provider file (e.g., `openaiChatRequest`, `anthropicMessageRequest`) with their own JSON tags, and convert to/from the unified types. This keeps the provider API details out of the shared type definitions.
+
+### JSON tags
+
+All unified types in `types.go` already have `json:` struct tags (added during review). Wire-format structs must also have proper tags matching each provider's API spec.
+
+### HTTP client timeout
+
+Both client stubs already set `http.Client{Timeout: 120 * time.Second}`. For streaming requests, the timeout applies to the entire response, not per-chunk — consider using a context deadline instead for streaming, or setting Timeout to 0 for streaming and relying solely on context cancellation.
+
+### `APIError.Provider` field
+
+The field is named `Provider` (not `Prov`). Ensure error construction uses this field name.
+
+### `ToolDefinition.Parameters`
+
+This is `json.RawMessage` (not `map[string]interface{}`). When building wire-format request bodies, use it directly — no need to marshal/unmarshal through `interface{}`.
 
 ## Design Decisions
 

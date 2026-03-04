@@ -107,8 +107,8 @@ cmd/golem/main.go
 |------|------|-------------|
 | [01](01-project-init.md) | go.mod, Makefile, .env.example | Project init, dependencies, build system |
 | [02](02-config.md) | internal/config/config.go | Hierarchical configuration |
-| [03](03-llm-types.md) | internal/llm/types.go | Shared LLM types (Message, ToolCall, etc.) |
-| [04](04-llm-clients.md) | internal/llm/*.go | OpenAI + Anthropic clients with streaming |
+| [03](03-llm-types.md) | internal/llm/types.go | Shared LLM types with JSON tags, json.RawMessage params |
+| [04](04-llm-clients.md) | internal/llm/*.go | OpenAI + Anthropic clients with streaming, wire-format separation |
 | [05](05-tape.md) | internal/tape/*.go | Append-only JSONL tape store |
 | [05a](05a-context-management.md) | internal/context/strategy.go | Pluggable ContextStrategy interface |
 | [06](06-tools.md) | internal/tools/*.go | Tool interface, registry, skills, progressive |
