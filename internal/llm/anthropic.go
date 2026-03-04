@@ -176,19 +176,8 @@ func (c *anthropicClient) ChatStream(ctx context.Context, req ChatRequest) (<-ch
 }
 
 func (c *anthropicClient) readStream(ctx context.Context, body io.ReadCloser, ch chan<- StreamEvent) {
-	done := make(chan struct{})
-	defer close(done)
 	defer close(ch)
 	defer body.Close()
-
-	// Close body early on context cancellation to unblock reader.Next().
-	go func() {
-		select {
-		case <-ctx.Done():
-			body.Close()
-		case <-done:
-		}
-	}()
 
 	reader := newSSEReader(body)
 	for {
