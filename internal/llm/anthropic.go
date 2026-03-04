@@ -323,7 +323,7 @@ func convertMessages(msgs []Message) []anthropicMessage {
 			block := anthropicContentBlock{
 				Type:      "tool_result",
 				ToolUseID: m.ToolCallID,
-				Text:      m.Content,
+				Content:   m.Content,
 			}
 			// Merge into previous user message if it has tool_result blocks.
 			if len(result) > 0 {

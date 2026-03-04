@@ -696,6 +696,40 @@ func TestAnthropicConversion_SystemFiltered(t *testing.T) {
 	}
 }
 
+func TestAnthropicConversion_ToolResultUsesContentField(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleUser, Content: "Do something"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "t1", Name: "test", Arguments: `{}`}}},
+		{Role: RoleTool, ToolCallID: "t1", Content: "tool output here"},
+	}
+
+	result := convertMessages(msgs)
+
+	// The tool_result block should serialize with "content", not "text".
+	last := result[len(result)-1]
+	blocks, ok := last.Content.([]anthropicContentBlock)
+	if !ok {
+		t.Fatalf("expected []anthropicContentBlock, got %T", last.Content)
+	}
+	block := blocks[0]
+	if block.Type != "tool_result" {
+		t.Fatalf("type = %q, want %q", block.Type, "tool_result")
+	}
+
+	// Marshal to JSON and verify the field name is "content", not "text".
+	data, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("Marshal error: %v", err)
+	}
+	jsonStr := string(data)
+	if !strings.Contains(jsonStr, `"content":"tool output here"`) {
+		t.Errorf("tool_result JSON should use 'content' field, got: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, `"text":"tool output here"`) {
+		t.Errorf("tool_result JSON should NOT use 'text' field for tool output, got: %s", jsonStr)
+	}
+}
+
 func TestOpenAIChat_SystemPrompt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req openaiChatRequest
