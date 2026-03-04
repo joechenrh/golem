@@ -26,6 +26,7 @@ import (
 	"github.com/joechenrh/golem/internal/fs"
 	"github.com/joechenrh/golem/internal/hooks"
 	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/memory"
 	"github.com/joechenrh/golem/internal/tape"
 	"github.com/joechenrh/golem/internal/tools"
 	"github.com/joechenrh/golem/internal/tools/builtin"
@@ -158,6 +159,19 @@ func main() {
 		)
 		registry.Expand("lark_send")
 		registry.Expand("lark_list_chats")
+	}
+
+	// Register memory tools if mnemos direct mode is configured.
+	if cfg.MnemosDBHost != "" {
+		mnemosClient := memory.NewClient(
+			&http.Client{Timeout: 30 * time.Second},
+			cfg.MnemosDBHost, cfg.MnemosDBUser, cfg.MnemosDBPass,
+			cfg.MnemosDBName, cfg.MnemosAutoEmbedModel, cfg.MnemosAutoEmbedDims,
+		)
+		registry.RegisterAll(
+			builtin.NewMemoryStoreTool(mnemosClient),
+			builtin.NewMemoryRecallTool(mnemosClient),
+		)
 	}
 
 	// Discover skills from the skills directory.

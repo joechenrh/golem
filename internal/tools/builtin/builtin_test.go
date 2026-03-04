@@ -337,21 +337,6 @@ func TestSearchFiles_CaseInsensitive(t *testing.T) {
 	}
 }
 
-// ─── Stub Tests ──────────────────────────────────────────────────
-
-func TestStubs_ReturnNotImplemented(t *testing.T) {
-	stubs := MemoryStubs()
-	for _, s := range stubs {
-		result, err := s.Execute(context.Background(), `{"input":"test"}`)
-		if err != nil {
-			t.Errorf("%s Execute error: %v", s.Name(), err)
-		}
-		if result != "This tool is not yet implemented." {
-			t.Errorf("%s result = %q", s.Name(), result)
-		}
-	}
-}
-
 // ─── FormatSize Tests ────────────────────────────────────────────
 
 func TestFormatSize(t *testing.T) {

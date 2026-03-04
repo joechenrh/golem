@@ -22,19 +22,7 @@ func (s *stubTool) Execute(_ context.Context, _ string) (string, error) {
 }
 
 var stubInputParams = json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"}},"required":["input"]}`)
-var stubQueryParams = json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`)
 var stubIDParams = json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`)
-
-// MemoryStubs returns stub tools for memory operations.
-func MemoryStubs() []stubTool {
-	return []stubTool{
-		{name: "memory_store", desc: "Store a memory for later recall", params: stubInputParams},
-		{name: "memory_search", desc: "Search stored memories", params: stubQueryParams},
-		{name: "memory_get", desc: "Get a memory by ID", params: stubIDParams},
-		{name: "memory_update", desc: "Update an existing memory", params: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"content":{"type":"string"}},"required":["id","content"]}`)},
-		{name: "memory_delete", desc: "Delete a memory by ID", params: stubIDParams},
-	}
-}
 
 // ScheduleStubs returns stub tools for scheduling operations.
 func ScheduleStubs() []stubTool {

@@ -44,9 +44,13 @@ type Config struct {
 	LarkAppSecret   string
 	LarkVerifyToken string
 
-	// Memory
-	MnemosURL     string
-	MnemosSpaceID string
+	// Memory (mnemos direct mode — TiDB Cloud Serverless)
+	MnemosDBHost         string // TiDB gateway host (e.g. gateway01.us-east-1.prod.aws.tidbcloud.com)
+	MnemosDBUser         string // TiDB username
+	MnemosDBPass         string // TiDB password
+	MnemosDBName         string // database name (default: "mnemos")
+	MnemosAutoEmbedModel string // auto-embed model (e.g. "tidbcloud_free/amazon/titan-embed-text-v2")
+	MnemosAutoEmbedDims  int    // auto-embed dimensions (default: 1024)
 
 	// Web
 	WebSearchBackend string // "bing", "stub" (default: "bing")
@@ -81,9 +85,13 @@ func Load(flagOverrides map[string]string) (*Config, error) {
 		LarkAppSecret:   os.Getenv("LARK_APP_SECRET"),
 		LarkVerifyToken: os.Getenv("LARK_VERIFY_TOKEN"),
 
-		// Memory
-		MnemosURL:     os.Getenv("MNEMOS_URL"),
-		MnemosSpaceID: env("MNEMOS_SPACE_ID", "default"),
+		// Memory (mnemos direct mode)
+		MnemosDBHost:         os.Getenv("MNEMO_DB_HOST"),
+		MnemosDBUser:         os.Getenv("MNEMO_DB_USER"),
+		MnemosDBPass:         os.Getenv("MNEMO_DB_PASS"),
+		MnemosDBName:         env("MNEMO_DB_NAME", "mnemos"),
+		MnemosAutoEmbedModel: os.Getenv("MNEMO_AUTO_EMBED_MODEL"),
+		MnemosAutoEmbedDims:  envInt("MNEMO_AUTO_EMBED_DIMS", 1024),
 	}
 
 	// Collect API keys and base URLs from environment.
