@@ -167,7 +167,11 @@ func (a *AgentLoop) runReActLoop(ctx context.Context, stream bool, tokenCh chan<
 			// Record assistant message with tool calls.
 			a.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls)
 
-			// Detect tool hints for progressive disclosure.
+			// Auto-expand any tool the model calls, so the next iteration
+			// sends the full parameter schema (progressive disclosure).
+			for _, tc := range resp.ToolCalls {
+				a.tools.Expand(tc.Name)
+			}
 			if resp.Content != "" {
 				a.tools.ExpandHints(resp.Content)
 			}
