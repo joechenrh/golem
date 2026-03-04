@@ -129,7 +129,7 @@ func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh ch
 func (l *LarkChannel) Send(ctx context.Context, msg channel.OutgoingMessage) error {
 	chatID := strings.TrimPrefix(msg.ChannelID, "lark:")
 
-	if _, alreadySent := l.sentChats.Load(chatID); alreadySent {
+	if _, alreadySent := l.sentChats.LoadOrStore(chatID, true); alreadySent {
 		l.logger.Debug("skipping duplicate send", zap.String("chat_id", chatID))
 		return nil
 	}
