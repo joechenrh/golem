@@ -1,6 +1,11 @@
-# Golem
+# 🤖 Golem
 
-Golem is an AI agent framework implementing a ReAct (Reasoning + Acting) loop for building coding assistants. It supports multiple communication channels, LLM providers, and a pluggable tool system.
+<p align="center">
+  <img src="docs/logo.png" width="500" alt="Golem Logo">
+</p>
+
+
+An AI agent framework with a ReAct loop, built in Go.
 
 This project is a **Go clone** of [CrabClaw](https://github.com/jackwener/crabclaw), an OpenClaw-compatible agentic coding toolchain written in Rust. Huge thanks to [@jackwener](https://github.com/jackwener) and the CrabClaw project for the original design and inspiration.
 
