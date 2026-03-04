@@ -12,7 +12,7 @@ type stubTool struct {
 	params json.RawMessage
 }
 
-func (s *stubTool) Name() string               { return s.name }
+func (s *stubTool) Name() string                { return s.name }
 func (s *stubTool) Description() string         { return s.desc }
 func (s *stubTool) FullDescription() string     { return s.desc }
 func (s *stubTool) Parameters() json.RawMessage { return s.params }
@@ -23,16 +23,7 @@ func (s *stubTool) Execute(_ context.Context, _ string) (string, error) {
 
 var stubInputParams = json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"}},"required":["input"]}`)
 var stubQueryParams = json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`)
-var stubURLParams = json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}`)
 var stubIDParams = json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`)
-
-// WebStubs returns stub tools for web operations.
-func WebStubs() []stubTool {
-	return []stubTool{
-		{name: "web_fetch", desc: "Fetch content from a URL", params: stubURLParams},
-		{name: "web_search", desc: "Search the web", params: stubQueryParams},
-	}
-}
 
 // MemoryStubs returns stub tools for memory operations.
 func MemoryStubs() []stubTool {

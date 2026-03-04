@@ -340,7 +340,7 @@ func TestSearchFiles_CaseInsensitive(t *testing.T) {
 // ─── Stub Tests ──────────────────────────────────────────────────
 
 func TestStubs_ReturnNotImplemented(t *testing.T) {
-	stubs := WebStubs()
+	stubs := MemoryStubs()
 	for _, s := range stubs {
 		result, err := s.Execute(context.Background(), `{"input":"test"}`)
 		if err != nil {

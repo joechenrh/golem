@@ -8,6 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
 	go.uber.org/zap v1.27.1
+	golang.org/x/net v0.33.0
 )
 
 require (

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -142,10 +143,12 @@ func main() {
 		builtin.NewListDirectoryTool(filesystem),
 		builtin.NewSearchFilesTool(filesystem),
 	)
-	// Register stubs for future features.
-	for _, s := range builtin.WebStubs() {
-		registry.Register(&s)
-	}
+	// Register web tools.
+	webClient := &http.Client{Timeout: 30 * time.Second}
+	registry.RegisterAll(
+		builtin.NewWebSearchTool(webClient),
+		builtin.NewWebFetchTool(webClient),
+	)
 	// Register Lark tools if channel is enabled (pre-expanded so the LLM
 	// sees full parameter schemas immediately).
 	if larkCh != nil {
@@ -326,4 +329,3 @@ func initLogger(level, logDir string) *zap.Logger {
 	}
 	return logger
 }
-
