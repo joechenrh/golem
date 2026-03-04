@@ -24,7 +24,7 @@ var ignoredDirs = map[string]bool{
 	"vendor": true, "__pycache__": true, ".venv": true,
 }
 
-// binaryExtensions returns true for known binary file extensions.
+// isBinaryExt returns true for known binary file extensions.
 func isBinaryExt(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {

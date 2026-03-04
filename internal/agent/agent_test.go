@@ -388,6 +388,116 @@ func (h *blockingHook) Handle(_ context.Context, event hooks.Event) error {
 	return nil
 }
 
+func TestHandleInput_InternalCommand_TapeSearch(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			{Content: "Hello world response", FinishReason: "stop"},
+		},
+	}
+	agent := newTestAgent(t, client)
+
+	// Add a message to search through.
+	agent.HandleInput(context.Background(), cliMsg("Hello world"))
+
+	result, err := agent.HandleInput(context.Background(), cliMsg(",tape.search hello"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if !strings.Contains(result, "matches") {
+		t.Errorf("result = %q, want search results", result)
+	}
+}
+
+func TestHandleInput_InternalCommand_TapeSearchEmpty(t *testing.T) {
+	agent := newTestAgent(t, &mockLLMClient{})
+
+	result, err := agent.HandleInput(context.Background(), cliMsg(",tape.search"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if !strings.Contains(result, "Usage:") {
+		t.Errorf("result = %q, want usage hint", result)
+	}
+}
+
+func TestHandleInput_InternalCommand_TapeSearchNoMatch(t *testing.T) {
+	agent := newTestAgent(t, &mockLLMClient{})
+
+	result, err := agent.HandleInput(context.Background(), cliMsg(",tape.search nonexistent"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if !strings.Contains(result, "No matches") {
+		t.Errorf("result = %q, want no matches", result)
+	}
+}
+
+func TestHandleInput_InternalCommand_Skills(t *testing.T) {
+	agent := newTestAgent(t, &mockLLMClient{})
+
+	result, err := agent.HandleInput(context.Background(), cliMsg(",skills"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if !strings.Contains(result, "No skills") {
+		t.Errorf("result = %q, want no skills message", result)
+	}
+}
+
+func TestHandleInput_InternalCommand_AnchorDefaultLabel(t *testing.T) {
+	agent := newTestAgent(t, &mockLLMClient{})
+
+	result, err := agent.HandleInput(context.Background(), cliMsg(",anchor"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if !strings.Contains(result, "manual") {
+		t.Errorf("result = %q, want default 'manual' label", result)
+	}
+}
+
+func TestHandleInput_InternalCommand_ModelWithArg(t *testing.T) {
+	agent := newTestAgent(t, &mockLLMClient{})
+
+	result, err := agent.HandleInput(context.Background(), cliMsg(",model openai:gpt-3.5"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if !strings.Contains(result, "not yet supported") {
+		t.Errorf("result = %q, want unsupported message", result)
+	}
+}
+
+func TestHandleInput_ShellCommand(t *testing.T) {
+	agent := newTestAgent(t, &mockLLMClient{})
+
+	// ,foobar is routed as a shell command (not internal).
+	// Without shell_exec tool registered, it should return an error.
+	result, err := agent.HandleInput(context.Background(), cliMsg(",echo hello"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if !strings.Contains(result, "Error:") {
+		t.Errorf("result = %q, want error (shell_exec tool not registered)", result)
+	}
+}
+
+func TestTruncateForLog(t *testing.T) {
+	long := strings.Repeat("a", 200)
+	truncated := truncateForLog(long, 50)
+	if len(truncated) != 53 { // 50 + "..."
+		t.Errorf("truncated length = %d, want 53", len(truncated))
+	}
+	if !strings.HasSuffix(truncated, "...") {
+		t.Error("truncated string should end with ...")
+	}
+
+	short := "hello"
+	if truncateForLog(short, 50) != "hello" {
+		t.Error("short strings should not be truncated")
+	}
+}
+
 func TestBuildSystemPrompt(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
