@@ -130,18 +130,36 @@ func TestRegistry_ToolDefinitions_PreservesInsertionOrder(t *testing.T) {
 	}
 }
 
-func TestRegistry_ToolDefinitions_ParametersAsRawMessage(t *testing.T) {
+func TestRegistry_ToolDefinitions_CompactParamsWhenUnexpanded(t *testing.T) {
 	r := NewRegistry()
 	r.Register(newMockTool("test_tool", "desc", "full"))
 
 	defs := r.ToolDefinitions()
-	// Should be valid JSON.
+	// Unexpanded tools should get compact params.
 	var parsed map[string]interface{}
 	if err := json.Unmarshal(defs[0].Parameters, &parsed); err != nil {
 		t.Fatalf("Parameters is not valid JSON: %v", err)
 	}
 	if parsed["type"] != "object" {
 		t.Errorf("Parameters.type = %v, want %q", parsed["type"], "object")
+	}
+	if _, hasProps := parsed["properties"]; hasProps {
+		t.Error("unexpanded tool should use compact params without properties")
+	}
+}
+
+func TestRegistry_ToolDefinitions_FullParamsWhenExpanded(t *testing.T) {
+	r := NewRegistry()
+	r.Register(newMockTool("test_tool", "desc", "full"))
+	r.Expand("test_tool")
+
+	defs := r.ToolDefinitions()
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(defs[0].Parameters, &parsed); err != nil {
+		t.Fatalf("Parameters is not valid JSON: %v", err)
+	}
+	if _, hasProps := parsed["properties"]; !hasProps {
+		t.Error("expanded tool should include full properties in params")
 	}
 }
 

@@ -24,7 +24,7 @@ func (h *testHook) Handle(_ context.Context, event Event) error {
 }
 
 func TestBus_EmptyBus(t *testing.T) {
-	bus := NewBus()
+	bus := NewBus(zap.NewNop())
 	err := bus.Emit(context.Background(), Event{Type: EventUserMessage})
 	if err != nil {
 		t.Fatalf("empty bus should not error, got: %v", err)
@@ -32,7 +32,7 @@ func TestBus_EmptyBus(t *testing.T) {
 }
 
 func TestBus_DispatchesToHooks(t *testing.T) {
-	bus := NewBus()
+	bus := NewBus(zap.NewNop())
 	h1 := &testHook{name: "h1"}
 	h2 := &testHook{name: "h2"}
 	bus.Register(h1)
@@ -55,7 +55,7 @@ func TestBus_DispatchesToHooks(t *testing.T) {
 }
 
 func TestBus_BeforeEventErrorStopsChain(t *testing.T) {
-	bus := NewBus()
+	bus := NewBus(zap.NewNop())
 	blocker := &testHook{name: "blocker", err: errors.New("blocked")}
 	second := &testHook{name: "second"}
 	bus.Register(blocker)
@@ -74,7 +74,7 @@ func TestBus_BeforeEventErrorStopsChain(t *testing.T) {
 }
 
 func TestBus_AfterEventErrorDoesNotBlock(t *testing.T) {
-	bus := NewBus()
+	bus := NewBus(zap.NewNop())
 	failing := &testHook{name: "failing", err: errors.New("oops")}
 	second := &testHook{name: "second"}
 	bus.Register(failing)

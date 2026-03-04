@@ -17,7 +17,7 @@ type anthropicRequest struct {
 	Messages    []anthropicMessage  `json:"messages"`
 	System      string              `json:"system,omitempty"`
 	MaxTokens   int                 `json:"max_tokens"`
-	Temperature float64             `json:"temperature,omitempty"`
+	Temperature *float64            `json:"temperature,omitempty"`
 	Tools       []anthropicTool     `json:"tools,omitempty"`
 	Stream      bool                `json:"stream,omitempty"`
 }
@@ -253,11 +253,13 @@ func (c *anthropicClient) buildRequest(req ChatRequest, stream bool) anthropicRe
 	}
 
 	wireReq := anthropicRequest{
-		Model:       req.Model,
-		System:      req.SystemPrompt,
-		MaxTokens:   maxTokens,
-		Temperature: req.Temperature,
-		Stream:      stream,
+		Model:     req.Model,
+		System:    req.SystemPrompt,
+		MaxTokens: maxTokens,
+		Stream:    stream,
+	}
+	if req.Temperature != 0 {
+		wireReq.Temperature = &req.Temperature
 	}
 
 	wireReq.Messages = convertMessages(req.Messages)

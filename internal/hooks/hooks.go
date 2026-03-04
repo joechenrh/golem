@@ -2,8 +2,9 @@ package hooks
 
 import (
 	"context"
-	"log"
 	"strings"
+
+	"go.uber.org/zap"
 )
 
 // EventType identifies a lifecycle event in the agent loop.
@@ -36,12 +37,13 @@ type Hook interface {
 
 // Bus dispatches events to registered hooks.
 type Bus struct {
-	hooks []Hook
+	hooks  []Hook
+	logger *zap.Logger
 }
 
 // NewBus creates an empty event bus.
-func NewBus() *Bus {
-	return &Bus{}
+func NewBus(logger *zap.Logger) *Bus {
+	return &Bus{logger: logger}
 }
 
 // Register adds a hook to the bus. Hooks are called in registration order.
@@ -56,11 +58,21 @@ func (b *Bus) Emit(ctx context.Context, event Event) error {
 	isBefore := strings.HasPrefix(string(event.Type), "before_")
 
 	for _, h := range b.hooks {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if err := h.Handle(ctx, event); err != nil {
 			if isBefore {
 				return err
 			}
-			log.Printf("hook %q error on %s: %v", h.Name(), event.Type, err)
+			b.logger.Warn("hook error",
+				zap.String("hook", h.Name()),
+				zap.String("event", string(event.Type)),
+				zap.Error(err),
+			)
 		}
 	}
 	return nil

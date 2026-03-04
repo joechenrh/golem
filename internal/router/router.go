@@ -182,7 +182,8 @@ func ParseArgs(raw string) ParsedArgs {
 	return result
 }
 
-// splitArgs splits a string by whitespace, respecting quoted strings.
+// splitArgs splits a string by whitespace, respecting quoted strings and
+// backslash escapes (e.g., \" inside double-quoted strings).
 func splitArgs(s string) []string {
 	var parts []string
 	var current strings.Builder
@@ -193,6 +194,15 @@ func splitArgs(s string) []string {
 		ch := s[i]
 		switch {
 		case inQuote:
+			if ch == '\\' && i+1 < len(s) {
+				next := s[i+1]
+				// Inside quotes, backslash escapes the quote char and backslash itself.
+				if next == quoteChar || next == '\\' {
+					current.WriteByte(next)
+					i++
+					continue
+				}
+			}
 			if ch == quoteChar {
 				inQuote = false
 			} else {

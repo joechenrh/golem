@@ -2,6 +2,8 @@ package llm
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -53,12 +55,14 @@ func doWithRetry(ctx context.Context, cfg retryConfig, fn func() (*http.Response
 			return resp, nil
 		}
 
-		// Retryable: 429 or 5xx.
+		// Retryable: 429 or 5xx. Read body before closing for error context.
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		lastErr = &APIError{
 			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("retryable error (attempt %d/%d): %s", attempt+1, cfg.maxAttempts, truncateBody(body, 200)),
 			Retryable:  true,
 		}
-		resp.Body.Close()
 
 		if attempt < cfg.maxAttempts-1 {
 			if waitErr := backoff(ctx, cfg, attempt, resp); waitErr != nil {
@@ -102,4 +106,13 @@ func backoff(ctx context.Context, cfg retryConfig, attempt int, resp *http.Respo
 	case <-time.After(wait):
 		return nil
 	}
+}
+
+// truncateBody returns a string from body bytes, truncating to maxLen.
+func truncateBody(body []byte, maxLen int) string {
+	s := string(body)
+	if len(s) > maxLen {
+		return s[:maxLen] + "..."
+	}
+	return s
 }

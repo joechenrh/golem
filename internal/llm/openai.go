@@ -17,7 +17,7 @@ type openaiChatRequest struct {
 	Messages    []openaiMessage    `json:"messages"`
 	Tools       []openaiTool       `json:"tools,omitempty"`
 	MaxTokens   int                `json:"max_tokens,omitempty"`
-	Temperature float64            `json:"temperature,omitempty"`
+	Temperature *float64           `json:"temperature,omitempty"`
 	Stream      bool               `json:"stream,omitempty"`
 }
 
@@ -256,11 +256,13 @@ func (c *openaiClient) buildRequest(req ChatRequest, stream bool) openaiChatRequ
 	}
 
 	wireReq := openaiChatRequest{
-		Model:       req.Model,
-		Messages:    msgs,
-		MaxTokens:   req.MaxTokens,
-		Temperature: req.Temperature,
-		Stream:      stream,
+		Model:     req.Model,
+		Messages:  msgs,
+		MaxTokens: req.MaxTokens,
+		Stream:    stream,
+	}
+	if req.Temperature != 0 {
+		wireReq.Temperature = &req.Temperature
 	}
 
 	for _, td := range req.Tools {

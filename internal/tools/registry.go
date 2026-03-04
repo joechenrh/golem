@@ -2,12 +2,16 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/joechenrh/golem/internal/llm"
 )
+
+// compactParams is a minimal JSON Schema used for unexpanded tools to save tokens.
+var compactParams = json.RawMessage(`{"type":"object"}`)
 
 // Registry holds registered tools and manages progressive disclosure state.
 type Registry struct {
@@ -55,19 +59,22 @@ func (r *Registry) Execute(ctx context.Context, name string, args string) (strin
 }
 
 // ToolDefinitions returns llm.ToolDefinition slice for passing to the LLM.
-// Respects progressive disclosure: unexpanded tools get short descriptions.
+// Respects progressive disclosure: unexpanded tools get short descriptions
+// and a minimal parameter schema to save tokens.
 func (r *Registry) ToolDefinitions() []llm.ToolDefinition {
 	defs := make([]llm.ToolDefinition, 0, len(r.tools))
 	for _, name := range r.order {
 		t := r.tools[name]
 		desc := t.Description()
+		params := compactParams
 		if r.expanded[name] {
 			desc = t.FullDescription()
+			params = t.Parameters()
 		}
 		defs = append(defs, llm.ToolDefinition{
 			Name:        name,
 			Description: desc,
-			Parameters:  t.Parameters(),
+			Parameters:  params,
 		})
 	}
 	return defs

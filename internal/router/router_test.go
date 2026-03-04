@@ -294,3 +294,26 @@ func TestSplitArgs_MultipleSpaces(t *testing.T) {
 		t.Errorf("splitArgs = %v, want [a, b, c]", parts)
 	}
 }
+
+func TestSplitArgs_BackslashEscape(t *testing.T) {
+	parts := splitArgs(`"He said \"hello\"" world`)
+	if len(parts) != 2 {
+		t.Fatalf("splitArgs = %v, want 2 parts", parts)
+	}
+	if parts[0] != `He said "hello"` {
+		t.Errorf("parts[0] = %q, want %q", parts[0], `He said "hello"`)
+	}
+	if parts[1] != "world" {
+		t.Errorf("parts[1] = %q, want %q", parts[1], "world")
+	}
+}
+
+func TestSplitArgs_EscapedBackslash(t *testing.T) {
+	parts := splitArgs(`"path\\to" file`)
+	if len(parts) != 2 {
+		t.Fatalf("splitArgs = %v, want 2 parts", parts)
+	}
+	if parts[0] != `path\to` {
+		t.Errorf("parts[0] = %q, want %q", parts[0], `path\to`)
+	}
+}

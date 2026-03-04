@@ -194,6 +194,31 @@ func TestAbs(t *testing.T) {
 	}
 }
 
+func TestReadFile_AdjacentDirectoryEscape(t *testing.T) {
+	// Regression test: root="/tmp/sandbox" must not allow access to "/tmp/sandboxescape".
+	parent := resolvedTempDir(t)
+	root := filepath.Join(parent, "sandbox")
+	adjacent := filepath.Join(parent, "sandboxescape")
+	os.MkdirAll(root, 0o755)
+	os.MkdirAll(adjacent, 0o755)
+	os.WriteFile(filepath.Join(adjacent, "secret.txt"), []byte("secret"), 0o644)
+
+	lfs, err := NewLocalFS(root)
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+
+	// Absolute path to adjacent directory should be rejected.
+	_, err = lfs.ReadFile(filepath.Join(adjacent, "secret.txt"))
+	if err == nil {
+		t.Fatal("expected error for adjacent directory access")
+	}
+	var se *SandboxError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected SandboxError, got %T: %v", err, err)
+	}
+}
+
 func TestSandboxError_Message(t *testing.T) {
 	e := &SandboxError{Path: "../secret", Root: "/workspace"}
 	want := `path "../secret" is outside workspace root "/workspace"`

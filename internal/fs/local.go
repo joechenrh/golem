@@ -79,6 +79,13 @@ func (f *LocalFS) Abs(path string) (string, error) {
 	return f.resolve(path)
 }
 
+// inSandbox checks whether the given absolute path is within the workspace root.
+// A simple HasPrefix(path, root) is insufficient because "/tmp/sandbox" is a
+// prefix of "/tmp/sandboxescape". We require an exact match or a separator after root.
+func (f *LocalFS) inSandbox(abs string) bool {
+	return abs == f.root || strings.HasPrefix(abs, f.root+string(filepath.Separator))
+}
+
 // resolve converts a path to an absolute path within the sandbox.
 // It rejects paths that escape the workspace root, including via symlinks.
 func (f *LocalFS) resolve(path string) (string, error) {
@@ -90,7 +97,7 @@ func (f *LocalFS) resolve(path string) (string, error) {
 	}
 
 	// Check the cleaned path first (catches ../../../etc/passwd).
-	if !strings.HasPrefix(abs, f.root) {
+	if !f.inSandbox(abs) {
 		return "", &SandboxError{Path: path, Root: f.root}
 	}
 
@@ -105,7 +112,7 @@ func (f *LocalFS) resolve(path string) (string, error) {
 		return "", err
 	}
 
-	if !strings.HasPrefix(resolved, f.root) {
+	if !f.inSandbox(resolved) {
 		return "", &SandboxError{Path: path, Root: f.root}
 	}
 	return resolved, nil
@@ -120,14 +127,14 @@ func (f *LocalFS) resolveNewPath(abs, original string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		// Parent doesn't exist either — check the cleaned path.
-		if !strings.HasPrefix(abs, f.root) {
+		if !f.inSandbox(abs) {
 			return "", &SandboxError{Path: original, Root: f.root}
 		}
 		return abs, nil
 	}
 
 	full := filepath.Join(resolved, base)
-	if !strings.HasPrefix(full, f.root) {
+	if !f.inSandbox(full) {
 		return "", &SandboxError{Path: original, Root: f.root}
 	}
 	return full, nil
