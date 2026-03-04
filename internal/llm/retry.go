@@ -1,0 +1,105 @@
+package llm
+
+import (
+	"context"
+	"math/rand"
+	"net/http"
+	"strconv"
+	"time"
+)
+
+type retryConfig struct {
+	maxAttempts int           // default 3 (1 initial + 2 retries)
+	baseBackoff time.Duration // default 1s, tests use 1ms
+}
+
+func defaultRetryConfig() retryConfig {
+	return retryConfig{
+		maxAttempts: 3,
+		baseBackoff: 1 * time.Second,
+	}
+}
+
+// doWithRetry executes fn with exponential backoff and jitter for retryable failures.
+func doWithRetry(ctx context.Context, cfg retryConfig, fn func() (*http.Response, error)) (*http.Response, error) {
+	if cfg.maxAttempts <= 0 {
+		cfg.maxAttempts = 3
+	}
+	if cfg.baseBackoff <= 0 {
+		cfg.baseBackoff = 1 * time.Second
+	}
+
+	var lastErr error
+	for attempt := range cfg.maxAttempts {
+		resp, err := fn()
+		if err != nil {
+			// Network error — retryable.
+			lastErr = err
+			if attempt < cfg.maxAttempts-1 {
+				if waitErr := backoff(ctx, cfg, attempt, nil); waitErr != nil {
+					return nil, waitErr
+				}
+			}
+			continue
+		}
+
+		// Success.
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return resp, nil
+		}
+
+		// Not retryable: 4xx except 429.
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 {
+			return resp, nil
+		}
+
+		// Retryable: 429 or 5xx.
+		lastErr = &APIError{
+			StatusCode: resp.StatusCode,
+			Retryable:  true,
+		}
+		resp.Body.Close()
+
+		if attempt < cfg.maxAttempts-1 {
+			if waitErr := backoff(ctx, cfg, attempt, resp); waitErr != nil {
+				return nil, waitErr
+			}
+		}
+	}
+
+	return nil, lastErr
+}
+
+// backoff sleeps with exponential backoff and jitter. Respects Retry-After header on 429 responses.
+func backoff(ctx context.Context, cfg retryConfig, attempt int, resp *http.Response) error {
+	wait := cfg.baseBackoff * (1 << uint(attempt))
+
+	// Cap at 30s.
+	const maxBackoff = 30 * time.Second
+	if wait > maxBackoff {
+		wait = maxBackoff
+	}
+
+	// Respect Retry-After header if present.
+	if resp != nil && resp.StatusCode == 429 {
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, err := strconv.Atoi(ra); err == nil {
+				raWait := time.Duration(secs) * time.Second
+				if raWait > wait {
+					wait = raWait
+				}
+			}
+		}
+	}
+
+	// Apply jitter: multiply by random factor in [0.5, 1.5).
+	jitter := 0.5 + rand.Float64() // [0.5, 1.5)
+	wait = time.Duration(float64(wait) * jitter)
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(wait):
+		return nil
+	}
+}
