@@ -1,7 +1,7 @@
 MODULE := github.com/joechenrh/golem
 BINARY := golem
 
-.PHONY: build run test lint clean
+.PHONY: build run test test-integration lint clean
 
 build:
 	go build -o bin/$(BINARY) ./cmd/golem/
@@ -11,6 +11,9 @@ run: build
 
 test:
 	go test ./...
+
+test-integration:
+	go test -tags=integration ./internal/agent/
 
 lint:
 	golangci-lint run ./...
