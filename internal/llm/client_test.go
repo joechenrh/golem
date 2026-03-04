@@ -60,6 +60,37 @@ func TestNewClientUnknownProvider(t *testing.T) {
 	}
 }
 
+func TestRegisterProvider(t *testing.T) {
+	// Register a custom provider.
+	RegisterProvider("custom", "https://custom.example.com", func(apiKey, baseURL string) Client {
+		return newOpenAIClient(apiKey, baseURL) // reuse OpenAI client for custom OpenAI-compatible endpoints
+	})
+
+	c, err := NewClient("custom", "test-key")
+	if err != nil {
+		t.Fatalf("NewClient(\"custom\") error: %v", err)
+	}
+	if c == nil {
+		t.Fatal("NewClient(\"custom\") returned nil")
+	}
+}
+
+func TestRegisterProvider_OverrideBaseURL(t *testing.T) {
+	RegisterProvider("custom2", "https://default.example.com", func(apiKey, baseURL string) Client {
+		return newOpenAIClient(apiKey, baseURL)
+	})
+
+	c, err := NewClient("custom2", "test-key", WithBaseURL("https://override.example.com"))
+	if err != nil {
+		t.Fatalf("NewClient error: %v", err)
+	}
+	// Verify the override took effect by checking the client's baseURL.
+	oc := c.(*openaiClient)
+	if oc.baseURL != "https://override.example.com" {
+		t.Errorf("baseURL = %q, want override URL", oc.baseURL)
+	}
+}
+
 func TestAPIErrorFormat(t *testing.T) {
 	err := &APIError{
 		StatusCode: 429,

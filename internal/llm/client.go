@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // Client is the unified interface for calling LLMs.
@@ -31,6 +32,31 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("%s API error (HTTP %d): %s", e.Provider, e.StatusCode, e.Message)
 }
 
+// ClientFactory creates a Client for a given provider with the provided API key and base URL.
+type ClientFactory func(apiKey, baseURL string) Client
+
+var (
+	providersMu sync.RWMutex
+	providers   = map[Provider]struct {
+		factory    ClientFactory
+		defaultURL string
+	}{
+		ProviderOpenAI:    {factory: func(k, u string) Client { return newOpenAIClient(k, u) }, defaultURL: "https://api.openai.com/v1"},
+		ProviderAnthropic: {factory: func(k, u string) Client { return newAnthropicClient(k, u) }, defaultURL: "https://api.anthropic.com"},
+	}
+)
+
+// RegisterProvider registers a new LLM provider factory.
+// This allows third-party providers to be plugged in without modifying this package.
+func RegisterProvider(name Provider, defaultURL string, factory ClientFactory) {
+	providersMu.Lock()
+	defer providersMu.Unlock()
+	providers[name] = struct {
+		factory    ClientFactory
+		defaultURL string
+	}{factory: factory, defaultURL: defaultURL}
+}
+
 // NewClient creates a Client based on the provider string.
 func NewClient(provider Provider, apiKey string, opts ...ClientOption) (Client, error) {
 	o := &clientOptions{}
@@ -38,22 +64,19 @@ func NewClient(provider Provider, apiKey string, opts ...ClientOption) (Client, 
 		opt(o)
 	}
 
-	switch provider {
-	case ProviderOpenAI:
-		baseURL := "https://api.openai.com/v1"
-		if o.baseURL != "" {
-			baseURL = o.baseURL
-		}
-		return newOpenAIClient(apiKey, baseURL), nil
-	case ProviderAnthropic:
-		baseURL := "https://api.anthropic.com"
-		if o.baseURL != "" {
-			baseURL = o.baseURL
-		}
-		return newAnthropicClient(apiKey, baseURL), nil
-	default:
+	providersMu.RLock()
+	p, ok := providers[provider]
+	providersMu.RUnlock()
+
+	if !ok {
 		return nil, fmt.Errorf("unsupported LLM provider: %q", provider)
 	}
+
+	baseURL := p.defaultURL
+	if o.baseURL != "" {
+		baseURL = o.baseURL
+	}
+	return p.factory(apiKey, baseURL), nil
 }
 
 // ParseModelProvider splits a model string like "openai:gpt-4o" into (provider, model).

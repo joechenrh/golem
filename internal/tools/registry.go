@@ -13,11 +13,16 @@ import (
 // compactParams is a minimal JSON Schema used for unexpanded tools to save tokens.
 var compactParams = json.RawMessage(`{"type":"object"}`)
 
+// Middleware wraps tool execution with cross-cutting behavior.
+// Call next(ctx, args) to proceed to the next middleware or the actual tool.
+type Middleware func(ctx context.Context, toolName string, args string, next func(context.Context, string) (string, error)) (string, error)
+
 // Registry holds registered tools and manages progressive disclosure state.
 type Registry struct {
-	tools    map[string]Tool
-	expanded map[string]bool
-	order    []string // insertion order for deterministic listing
+	tools       map[string]Tool
+	expanded    map[string]bool
+	order       []string // insertion order for deterministic listing
+	middlewares []Middleware
 }
 
 // NewRegistry creates an empty tool registry.
@@ -44,18 +49,34 @@ func (r *Registry) RegisterAll(tools ...Tool) {
 	}
 }
 
+// Use adds a middleware to the execution chain.
+// Middlewares are called in registration order, wrapping the tool's Execute method.
+func (r *Registry) Use(mw Middleware) {
+	r.middlewares = append(r.middlewares, mw)
+}
+
 // Get returns a tool by name, or nil if not found.
 func (r *Registry) Get(name string) Tool {
 	return r.tools[name]
 }
 
-// Execute runs a tool by name with raw JSON args.
+// Execute runs a tool by name with raw JSON args, applying any registered middlewares.
 func (r *Registry) Execute(ctx context.Context, name string, args string) (string, error) {
 	t, ok := r.tools[name]
 	if !ok {
 		return "", fmt.Errorf("unknown tool: %q", name)
 	}
-	return t.Execute(ctx, args)
+
+	// Build the execution chain: middlewares wrap the final tool call.
+	exec := t.Execute
+	for i := len(r.middlewares) - 1; i >= 0; i-- {
+		mw := r.middlewares[i]
+		next := exec
+		exec = func(ctx context.Context, args string) (string, error) {
+			return mw(ctx, name, args, next)
+		}
+	}
+	return exec(ctx, args)
 }
 
 // ToolDefinitions returns llm.ToolDefinition slice for passing to the LLM.
