@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 
@@ -25,6 +26,12 @@ type LarkChannel struct {
 	client     *lark.Client
 	dispatcher *dispatcher.EventDispatcher
 	logger     *zap.Logger
+
+	// sentChats tracks chat IDs that have already been sent to during the
+	// current message-processing cycle, preventing duplicate replies when
+	// both a tool call and processMessage send to the same chat.
+	sentMu    sync.Mutex
+	sentChats map[string]bool
 }
 
 // New creates a LarkChannel with the given credentials.
@@ -103,6 +110,11 @@ func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh ch
 		}
 	}
 
+	// Reset per-cycle duplicate tracking before dispatching.
+	l.sentMu.Lock()
+	l.sentChats = make(map[string]bool)
+	l.sentMu.Unlock()
+
 	done := make(chan struct{})
 	inCh <- channel.IncomingMessage{
 		ChannelID:   "lark:" + *msg.ChatId,
@@ -114,10 +126,21 @@ func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh ch
 	<-done
 }
 
-// Send sends a text message to the chat identified in msg.ChannelID.
+// Send sends a message to the chat identified in msg.ChannelID.
+// If the chat was already sent to during this cycle (e.g. by a tool call),
+// the send is skipped to avoid duplicate replies.
 func (l *LarkChannel) Send(ctx context.Context, msg channel.OutgoingMessage) error {
 	chatID := strings.TrimPrefix(msg.ChannelID, "lark:")
-	return l.sendText(ctx, chatID, msg.Text)
+
+	l.sentMu.Lock()
+	alreadySent := l.sentChats[chatID]
+	l.sentMu.Unlock()
+
+	if alreadySent {
+		l.logger.Debug("skipping duplicate send", zap.String("chat_id", chatID))
+		return nil
+	}
+	return l.sendCard(ctx, chatID, msg.Text)
 }
 
 // SendTyping is a no-op for Lark.
@@ -135,19 +158,35 @@ func (l *LarkChannel) SendStream(ctx context.Context, channelID string, tokenCh 
 	return l.Send(ctx, channel.OutgoingMessage{ChannelID: channelID, Text: sb.String()})
 }
 
-// SendToChat sends a text message to a specific chat_id. Exported for use by tools.
+// SendToChat sends a message to a specific chat_id. Exported for use by tools.
+// It records the chat_id so that a subsequent Send to the same chat is skipped.
 func (l *LarkChannel) SendToChat(ctx context.Context, chatID, text string) error {
-	return l.sendText(ctx, chatID, text)
+	l.sentMu.Lock()
+	if l.sentChats == nil {
+		l.sentChats = make(map[string]bool)
+	}
+	l.sentChats[chatID] = true
+	l.sentMu.Unlock()
+
+	return l.sendCard(ctx, chatID, text)
 }
 
-func (l *LarkChannel) sendText(ctx context.Context, chatID, text string) error {
-	content, _ := json.Marshal(map[string]string{"text": text})
+// sendCard sends a message as an interactive card with a markdown element,
+// which supports bold, italic, strikethrough, links, and code formatting.
+func (l *LarkChannel) sendCard(ctx context.Context, chatID, text string) error {
+	card := map[string]interface{}{
+		"elements": []map[string]string{
+			{"tag": "markdown", "content": text},
+		},
+	}
+	content, _ := json.Marshal(card)
+
 	req := larkim.NewCreateMessageReqBuilder().
 		ReceiveIdType("chat_id").
 		Body(
 			larkim.NewCreateMessageReqBodyBuilder().
 				ReceiveId(chatID).
-				MsgType("text").
+				MsgType("interactive").
 				Content(string(content)).
 				Build(),
 		).
