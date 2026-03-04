@@ -42,7 +42,7 @@ type Config struct {
 	TelegramACL     []int64
 	LarkAppID       string
 	LarkAppSecret   string
-	LarkWebhookPort int
+	LarkVerifyToken string
 
 	// Memory
 	MnemosURL     string
@@ -55,100 +55,55 @@ type Config struct {
 // Load reads config from all sources with the following precedence:
 //
 //  1. flagOverrides (CLI flags, only non-empty values)
-//  2. Environment variables
-//  3. .env.local file
-//  4. Hardcoded defaults
+//  2. Environment variables / .env file
+//  3. Hardcoded defaults
 func Load(flagOverrides map[string]string) (*Config, error) {
-	// Load dotenv files (lowest precedence, env vars override).
-	// .env.local takes precedence over .env; both are optional.
-	for _, envFile := range []string{".env", ".env.local"} {
-		if err := godotenv.Load(envFile); err != nil && !errors.Is(err, os.ErrNotExist) {
-			if _, ok := err.(*os.PathError); !ok {
-				return nil, fmt.Errorf("parsing %s: %w", envFile, err)
-			}
-		}
-	}
+	loadDotenvFiles()
 
 	cfg := &Config{
-		Model:           getWithDefault("GOLEM_MODEL", "openai:gpt-4o"),
-		APIKeys:         make(map[string]string),
-		MaxToolIter:     getIntWithDefault("GOLEM_MAX_TOOL_ITER", 15),
-		ShellTimeout:    getDurationWithDefault("GOLEM_SHELL_TIMEOUT", 30*time.Second),
-		ContextStrategy: getWithDefault("GOLEM_CONTEXT_STRATEGY", "masking"),
-		Executor:        getWithDefault("GOLEM_EXECUTOR", "local"),
-		TapeDir:         expandHome(getWithDefault("GOLEM_TAPE_DIR", "~/.golem/tapes")),
-		SkillsDir:       getWithDefault("GOLEM_SKILLS_DIR", ".agent/skills"),
+		Model:           env("GOLEM_MODEL", "openai:gpt-4o"),
+		MaxToolIter:     envInt("GOLEM_MAX_TOOL_ITER", 15),
+		ShellTimeout:    envDuration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
+		ContextStrategy: env("GOLEM_CONTEXT_STRATEGY", "masking"),
+		Executor:        env("GOLEM_EXECUTOR", "local"),
+		TapeDir:         expandHome(env("GOLEM_TAPE_DIR", "~/.golem/tapes")),
+		SkillsDir:       env("GOLEM_SKILLS_DIR", ".agent/skills"),
+		LogLevel:        env("GOLEM_LOG_LEVEL", "info"),
+
+		// Channels
 		TelegramToken:   os.Getenv("TELEGRAM_BOT_TOKEN"),
+		TelegramACL:     envInt64List("TELEGRAM_ALLOW_FROM"),
 		LarkAppID:       os.Getenv("LARK_APP_ID"),
 		LarkAppSecret:   os.Getenv("LARK_APP_SECRET"),
-		LarkWebhookPort: getIntWithDefault("LARK_WEBHOOK_PORT", 9999),
-		MnemosURL:       os.Getenv("MNEMOS_URL"),
-		MnemosSpaceID:   getWithDefault("MNEMOS_SPACE_ID", "default"),
-		LogLevel:        getWithDefault("GOLEM_LOG_LEVEL", "info"),
+		LarkVerifyToken: os.Getenv("LARK_VERIFY_TOKEN"),
+
+		// Memory
+		MnemosURL:     os.Getenv("MNEMOS_URL"),
+		MnemosSpaceID: env("MNEMOS_SPACE_ID", "default"),
 	}
 
 	// Collect API keys and base URLs from environment.
 	// Supports any provider via <PROVIDER>_API_KEY and <PROVIDER>_BASE_URL.
-	for _, env := range os.Environ() {
-		key, val, ok := strings.Cut(env, "=")
+	cfg.APIKeys = make(map[string]string)
+	cfg.BaseURLs = make(map[string]string)
+	for _, e := range os.Environ() {
+		key, val, ok := strings.Cut(e, "=")
 		if !ok || val == "" {
 			continue
 		}
 		if suffix, found := strings.CutSuffix(key, "_API_KEY"); found && suffix != "" {
-			provider := strings.ToLower(suffix)
-			cfg.APIKeys[provider] = val
-		}
-	}
-
-	cfg.BaseURLs = make(map[string]string)
-	for _, env := range os.Environ() {
-		key, val, ok := strings.Cut(env, "=")
-		if !ok || val == "" {
-			continue
+			cfg.APIKeys[strings.ToLower(suffix)] = val
 		}
 		if suffix, found := strings.CutSuffix(key, "_BASE_URL"); found && suffix != "" {
-			provider := strings.ToLower(suffix)
-			cfg.BaseURLs[provider] = val
+			cfg.BaseURLs[strings.ToLower(suffix)] = val
 		}
 	}
 
-	// Telegram ACL
-	if acl := os.Getenv("TELEGRAM_ALLOW_FROM"); acl != "" {
-		for _, s := range strings.Split(acl, ",") {
-			s = strings.TrimSpace(s)
-			if id, err := strconv.ParseInt(s, 10, 64); err == nil {
-				cfg.TelegramACL = append(cfg.TelegramACL, id)
-			}
-		}
-	}
+	applyFlagOverrides(cfg, flagOverrides)
 
-	// Apply CLI flag overrides (highest precedence)
-	if flagOverrides != nil {
-		if v, ok := flagOverrides["model"]; ok && v != "" {
-			cfg.Model = v
-		}
-		if v, ok := flagOverrides["tape-dir"]; ok && v != "" {
-			cfg.TapeDir = expandHome(v)
-		}
-		if v, ok := flagOverrides["skills-dir"]; ok && v != "" {
-			cfg.SkillsDir = v
-		}
-		if v, ok := flagOverrides["log-level"]; ok && v != "" {
-			cfg.LogLevel = v
-		}
-		if v, ok := flagOverrides["context-strategy"]; ok && v != "" {
-			cfg.ContextStrategy = v
-		}
-		if v, ok := flagOverrides["executor"]; ok && v != "" {
-			cfg.Executor = v
-		}
-	}
-
-	// Validate
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-
 	return cfg, nil
 }
 
@@ -162,7 +117,6 @@ func (c *Config) validate() error {
 	if c.ShellTimeout <= 0 {
 		return fmt.Errorf("shell timeout must be positive, got %v", c.ShellTimeout)
 	}
-	// Model must be non-empty and have at most one colon separator.
 	if c.Model == "" {
 		return fmt.Errorf("model must not be empty")
 	}
@@ -172,14 +126,50 @@ func (c *Config) validate() error {
 	return nil
 }
 
-func getWithDefault(key, defaultVal string) string {
+// loadDotenvFiles loads .env, ignoring if missing.
+func loadDotenvFiles() {
+	if err := godotenv.Load(".env"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		// Ignore path errors (file not found).
+		if _, ok := err.(*os.PathError); ok {
+			return
+		}
+	}
+}
+
+// applyFlagOverrides applies CLI flag overrides (highest precedence).
+func applyFlagOverrides(cfg *Config, flags map[string]string) {
+	if flags == nil {
+		return
+	}
+	overrides := map[string]*string{
+		"model":            &cfg.Model,
+		"tape-dir":         &cfg.TapeDir,
+		"skills-dir":       &cfg.SkillsDir,
+		"log-level":        &cfg.LogLevel,
+		"context-strategy": &cfg.ContextStrategy,
+		"executor":         &cfg.Executor,
+	}
+	for key, ptr := range overrides {
+		if v, ok := flags[key]; ok && v != "" {
+			*ptr = v
+		}
+	}
+	// tape-dir needs home expansion.
+	if v, ok := flags["tape-dir"]; ok && v != "" {
+		cfg.TapeDir = expandHome(v)
+	}
+}
+
+// env returns the environment variable value, or defaultVal if empty/unset.
+func env(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return defaultVal
 }
 
-func getIntWithDefault(key string, defaultVal int) int {
+// envInt returns the environment variable as int, or defaultVal.
+func envInt(key string, defaultVal int) int {
 	if v := os.Getenv(key); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			return i
@@ -188,13 +178,30 @@ func getIntWithDefault(key string, defaultVal int) int {
 	return defaultVal
 }
 
-func getDurationWithDefault(key string, defaultVal time.Duration) time.Duration {
+// envDuration returns the environment variable as time.Duration, or defaultVal.
+func envDuration(key string, defaultVal time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
 		}
 	}
 	return defaultVal
+}
+
+// envInt64List parses a comma-separated list of int64 values from an env var.
+func envInt64List(key string) []int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return nil
+	}
+	var result []int64
+	for _, s := range strings.Split(v, ",") {
+		s = strings.TrimSpace(s)
+		if id, err := strconv.ParseInt(s, 10, 64); err == nil {
+			result = append(result, id)
+		}
+	}
+	return result
 }
 
 func expandHome(path string) string {
