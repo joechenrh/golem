@@ -181,7 +181,7 @@ func (c *openaiClient) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 		return nil, c.parseError(resp)
 	}
 
-	ch := make(chan StreamEvent, 8)
+	ch := make(chan StreamEvent, streamBufferSize)
 	go c.readStream(ctx, resp.Body, ch)
 	return ch, nil
 }
@@ -189,6 +189,12 @@ func (c *openaiClient) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 func (c *openaiClient) readStream(ctx context.Context, body io.ReadCloser, ch chan<- StreamEvent) {
 	defer close(ch)
 	defer body.Close()
+
+	// Close body early on context cancellation to unblock reader.Next().
+	go func() {
+		<-ctx.Done()
+		body.Close()
+	}()
 
 	reader := newSSEReader(body)
 	for {

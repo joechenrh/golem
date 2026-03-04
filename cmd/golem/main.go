@@ -1,3 +1,5 @@
+// Package main is the entry point for golem, an AI agent framework implementing
+// the ReAct loop with pluggable LLM providers, communication channels, and tools.
 package main
 
 import (
@@ -10,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -190,8 +193,12 @@ func main() {
 
 	inCh := make(chan channel.IncomingMessage, 100)
 
+	var wg sync.WaitGroup
+
 	// Message processing goroutine.
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for msg := range inCh {
 			if processMessage(ctx, agentLoop, channels, msg, logger) {
 				cancel() // signal the REPL to stop
@@ -203,7 +210,9 @@ func main() {
 	// Start Lark channel in background if configured.
 	if larkCh != nil {
 		cliCh.PrintSystem("Lark channel enabled (WebSocket mode)")
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			if err := larkCh.Start(ctx, inCh); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("Lark channel error", zap.Error(err))
 			}
@@ -215,7 +224,9 @@ func main() {
 		logger.Error("CLI channel error", zap.Error(err))
 	}
 
+	cancel() // signal background goroutines to stop
 	close(inCh)
+	wg.Wait()
 	cliCh.PrintSystem("Goodbye!")
 }
 

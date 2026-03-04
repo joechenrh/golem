@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+const (
+	defaultMaxAttempts = 3 // 1 initial + 2 retries
+	defaultBaseBackoff = 1 * time.Second
+	maxBackoffCap      = 30 * time.Second
+	maxErrorBodyLen    = 200
+)
+
 type retryConfig struct {
 	maxAttempts int           // default 3 (1 initial + 2 retries)
 	baseBackoff time.Duration // default 1s, tests use 1ms
@@ -17,18 +24,18 @@ type retryConfig struct {
 
 func defaultRetryConfig() retryConfig {
 	return retryConfig{
-		maxAttempts: 3,
-		baseBackoff: 1 * time.Second,
+		maxAttempts: defaultMaxAttempts,
+		baseBackoff: defaultBaseBackoff,
 	}
 }
 
 // doWithRetry executes fn with exponential backoff and jitter for retryable failures.
 func doWithRetry(ctx context.Context, cfg retryConfig, fn func() (*http.Response, error)) (*http.Response, error) {
 	if cfg.maxAttempts <= 0 {
-		cfg.maxAttempts = 3
+		cfg.maxAttempts = defaultMaxAttempts
 	}
 	if cfg.baseBackoff <= 0 {
-		cfg.baseBackoff = 1 * time.Second
+		cfg.baseBackoff = defaultBaseBackoff
 	}
 
 	var lastErr error
@@ -60,7 +67,7 @@ func doWithRetry(ctx context.Context, cfg retryConfig, fn func() (*http.Response
 		resp.Body.Close()
 		lastErr = &APIError{
 			StatusCode: resp.StatusCode,
-			Message:    fmt.Sprintf("retryable error (attempt %d/%d): %s", attempt+1, cfg.maxAttempts, truncateBody(body, 200)),
+			Message:    fmt.Sprintf("retryable error (attempt %d/%d): %s", attempt+1, cfg.maxAttempts, truncateBody(body, maxErrorBodyLen)),
 			Retryable:  true,
 		}
 
@@ -78,10 +85,8 @@ func doWithRetry(ctx context.Context, cfg retryConfig, fn func() (*http.Response
 func backoff(ctx context.Context, cfg retryConfig, attempt int, resp *http.Response) error {
 	wait := cfg.baseBackoff * (1 << uint(attempt))
 
-	// Cap at 30s.
-	const maxBackoff = 30 * time.Second
-	if wait > maxBackoff {
-		wait = maxBackoff
+	if wait > maxBackoffCap {
+		wait = maxBackoffCap
 	}
 
 	// Respect Retry-After header if present.

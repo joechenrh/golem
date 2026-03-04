@@ -71,6 +71,9 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
+// streamBufferSize is the channel buffer size for streaming events.
+const streamBufferSize = 8
+
 // StreamEventType discriminates streaming events.
 type StreamEventType string
 

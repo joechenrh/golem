@@ -126,11 +126,12 @@ func (f *LocalFS) resolveNewPath(abs, original string) (string, error) {
 
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		// Parent doesn't exist either — check the cleaned path.
-		if !f.inSandbox(abs) {
+		// Parent doesn't exist either — check the fully cleaned path.
+		cleaned := filepath.Clean(abs)
+		if !f.inSandbox(cleaned) {
 			return "", &SandboxError{Path: original, Root: f.root}
 		}
-		return abs, nil
+		return cleaned, nil
 	}
 
 	full := filepath.Join(resolved, base)

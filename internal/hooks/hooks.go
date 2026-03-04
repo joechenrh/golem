@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 )
@@ -37,6 +38,7 @@ type Hook interface {
 
 // Bus dispatches events to registered hooks.
 type Bus struct {
+	mu     sync.RWMutex
 	hooks  []Hook
 	logger *zap.Logger
 }
@@ -48,6 +50,8 @@ func NewBus(logger *zap.Logger) *Bus {
 
 // Register adds a hook to the bus. Hooks are called in registration order.
 func (b *Bus) Register(h Hook) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.hooks = append(b.hooks, h)
 }
 
@@ -55,9 +59,14 @@ func (b *Bus) Register(h Hook) {
 // For "before_*" events, the first error stops further hooks and returns the error.
 // For other events, errors are logged but do not affect the main flow.
 func (b *Bus) Emit(ctx context.Context, event Event) error {
+	b.mu.RLock()
+	hooks := make([]Hook, len(b.hooks))
+	copy(hooks, b.hooks)
+	b.mu.RUnlock()
+
 	isBefore := strings.HasPrefix(string(event.Type), "before_")
 
-	for _, h := range b.hooks {
+	for _, h := range hooks {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

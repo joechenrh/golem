@@ -239,8 +239,31 @@ func buildColIdx(types []sqlColumn) map[string]int {
 	return idx
 }
 
+// sqlEscape escapes a string for safe inclusion in a SQL single-quoted literal.
+// It handles the most common injection vectors: single quotes, backslashes,
+// null bytes, and control characters.
 func sqlEscape(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch r {
+		case '\'':
+			b.WriteString("''")
+		case '\\':
+			b.WriteString("\\\\")
+		case '\x00':
+			// Drop null bytes — they can truncate strings in some SQL engines.
+		case '\n':
+			b.WriteString("\\n")
+		case '\r':
+			b.WriteString("\\r")
+		case '\x1a': // Ctrl+Z (EOF on Windows)
+			b.WriteString("\\Z")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func parseRows(result *sqlResponse) []Memory {

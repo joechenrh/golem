@@ -108,108 +108,120 @@ func (a *AgentLoop) runReActLoop(ctx context.Context, stream bool, tokenCh chan<
 	maxTokens := ctxmgr.ModelContextWindow(modelName)
 
 	for iter := range a.config.MaxToolIter {
-		// Build context from tape.
-		entries, err := a.tape.Entries()
+		resp, err := a.executeLLMCall(ctx, modelName, maxTokens, iter, stream, tokenCh)
 		if err != nil {
-			return "", fmt.Errorf("reading tape: %w", err)
+			return "", err
 		}
-		messages, err := a.contextStrategy.BuildContext(ctx, entries, maxTokens)
-		if err != nil {
-			return "", fmt.Errorf("building context: %w", err)
-		}
-
-		systemPrompt := a.buildSystemPrompt()
-		toolDefs := a.tools.ToolDefinitions()
-
-		// Emit before LLM call.
-		a.hooks.Emit(ctx, hooks.Event{
-			Type:    hooks.EventBeforeLLMCall,
-			Payload: map[string]any{"iteration": iter, "message_count": len(messages)},
-		})
-
-		req := llm.ChatRequest{
-			Model:        modelName,
-			SystemPrompt: systemPrompt,
-			Messages:     messages,
-			Tools:        toolDefs,
-		}
-
-		var resp *llm.ChatResponse
-
-		// On the last iteration before tool-call limit, or when streaming a potential
-		// final answer (no tool calls in progress), use streaming.
-		if stream && tokenCh != nil {
-			resp, err = a.doStreamingCall(ctx, req, tokenCh)
-		} else {
-			resp, err = a.llm.Chat(ctx, req)
-		}
-		if err != nil {
-			a.hooks.Emit(ctx, hooks.Event{
-				Type:    hooks.EventError,
-				Payload: map[string]any{"error": err.Error()},
-			})
-			return "", fmt.Errorf("LLM call: %w", err)
-		}
-
-		// Emit after LLM call.
-		a.hooks.Emit(ctx, hooks.Event{
-			Type: hooks.EventAfterLLMCall,
-			Payload: map[string]any{
-				"finish_reason":     resp.FinishReason,
-				"tool_call_count":   len(resp.ToolCalls),
-				"prompt_tokens":     resp.Usage.PromptTokens,
-				"completion_tokens": resp.Usage.CompletionTokens,
-			},
-		})
 
 		// Tool calls present — execute them and continue the loop.
 		if len(resp.ToolCalls) > 0 {
-			// Record assistant message with tool calls.
-			a.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls)
-
-			// Auto-expand any tool the model calls, so the next iteration
-			// sends the full parameter schema (progressive disclosure).
-			for _, tc := range resp.ToolCalls {
-				a.tools.Expand(tc.Name)
-			}
-			if resp.Content != "" {
-				a.tools.ExpandHints(resp.Content)
-			}
-
-			for _, tc := range resp.ToolCalls {
-				toolResult := a.executeTool(ctx, tc)
-				a.appendToolResult(tc.ID, tc.Name, toolResult)
-			}
-
+			a.processToolCalls(ctx, resp)
 			continue
 		}
 
 		// Final answer — no tool calls.
-		content := resp.Content
-
-		// Check for assistant-embedded comma commands.
-		commands, cleanText := router.RouteAssistant(content)
-		if len(commands) > 0 {
-			content = cleanText
-			for _, cmd := range commands {
-				route := router.RouteResult{
-					IsCommand: true,
-					Command:   cmd.Command,
-					Args:      cmd.Args,
-					Kind:      cmd.Kind,
-				}
-				cmdResult, _ := a.handleCommand(ctx, route)
-				content += "\n" + cmdResult
-			}
-		}
-
-		// Record assistant response.
-		a.appendMessage(llm.RoleAssistant, content, nil)
-
+		content := a.processAssistantResponse(ctx, resp)
 		return content, nil
 	}
 
 	return "Tool calling limit reached. Please try a simpler request.", nil
+}
+
+// executeLLMCall builds context, calls the LLM (streaming or not), and emits hooks.
+func (a *AgentLoop) executeLLMCall(ctx context.Context, modelName string, maxTokens, iter int, stream bool, tokenCh chan<- string) (*llm.ChatResponse, error) {
+	entries, err := a.tape.Entries()
+	if err != nil {
+		return nil, fmt.Errorf("reading tape: %w", err)
+	}
+	messages, err := a.contextStrategy.BuildContext(ctx, entries, maxTokens)
+	if err != nil {
+		return nil, fmt.Errorf("building context: %w", err)
+	}
+
+	systemPrompt := a.buildSystemPrompt()
+	toolDefs := a.tools.ToolDefinitions()
+
+	a.hooks.Emit(ctx, hooks.Event{
+		Type:    hooks.EventBeforeLLMCall,
+		Payload: map[string]any{"iteration": iter, "message_count": len(messages)},
+	})
+
+	req := llm.ChatRequest{
+		Model:        modelName,
+		SystemPrompt: systemPrompt,
+		Messages:     messages,
+		Tools:        toolDefs,
+	}
+
+	var resp *llm.ChatResponse
+	if stream && tokenCh != nil {
+		resp, err = a.doStreamingCall(ctx, req, tokenCh)
+	} else {
+		resp, err = a.llm.Chat(ctx, req)
+	}
+	if err != nil {
+		a.hooks.Emit(ctx, hooks.Event{
+			Type:    hooks.EventError,
+			Payload: map[string]any{"error": err.Error()},
+		})
+		return nil, fmt.Errorf("LLM call: %w", err)
+	}
+
+	a.hooks.Emit(ctx, hooks.Event{
+		Type: hooks.EventAfterLLMCall,
+		Payload: map[string]any{
+			"finish_reason":     resp.FinishReason,
+			"tool_call_count":   len(resp.ToolCalls),
+			"prompt_tokens":     resp.Usage.PromptTokens,
+			"completion_tokens": resp.Usage.CompletionTokens,
+		},
+	})
+
+	return resp, nil
+}
+
+// processToolCalls records the assistant message, expands tool schemas, and
+// executes each tool call, recording results to the tape.
+func (a *AgentLoop) processToolCalls(ctx context.Context, resp *llm.ChatResponse) {
+	a.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls)
+
+	// Auto-expand any tool the model calls, so the next iteration
+	// sends the full parameter schema (progressive disclosure).
+	for _, tc := range resp.ToolCalls {
+		a.tools.Expand(tc.Name)
+	}
+	if resp.Content != "" {
+		a.tools.ExpandHints(resp.Content)
+	}
+
+	for _, tc := range resp.ToolCalls {
+		toolResult := a.executeTool(ctx, tc)
+		a.appendToolResult(tc.ID, tc.Name, toolResult)
+	}
+}
+
+// processAssistantResponse handles the final answer: runs any embedded comma
+// commands, records the response to the tape, and returns the content.
+func (a *AgentLoop) processAssistantResponse(ctx context.Context, resp *llm.ChatResponse) string {
+	content := resp.Content
+
+	commands, cleanText := router.RouteAssistant(content)
+	if len(commands) > 0 {
+		content = cleanText
+		for _, cmd := range commands {
+			route := router.RouteResult{
+				IsCommand: true,
+				Command:   cmd.Command,
+				Args:      cmd.Args,
+				Kind:      cmd.Kind,
+			}
+			cmdResult, _ := a.handleCommand(ctx, route)
+			content += "\n" + cmdResult
+		}
+	}
+
+	a.appendMessage(llm.RoleAssistant, content, nil)
+	return content
 }
 
 // doStreamingCall performs a streaming LLM call, sending content tokens to tokenCh,
@@ -247,7 +259,7 @@ func (a *AgentLoop) doStreamingCall(ctx context.Context, req llm.ChatRequest, to
 				// New tool call starting (first delta may also carry arguments).
 				toolCallMap[tc.ID] = &llm.ToolCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments}
 				toolCallOrder = append(toolCallOrder, tc.ID)
-			} else if len(toolCallOrder) > 0 {
+			} else if tc.Arguments != "" && len(toolCallOrder) > 0 {
 				// Append arguments to the most recent tool call.
 				lastID := toolCallOrder[len(toolCallOrder)-1]
 				if existing, ok := toolCallMap[lastID]; ok {
