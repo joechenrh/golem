@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"time"
@@ -97,7 +97,7 @@ func backoff(ctx context.Context, cfg retryConfig, attempt int, resp *http.Respo
 	}
 
 	// Apply jitter: multiply by random factor in [0.5, 1.5).
-	jitter := 0.5 + rand.Float64() // [0.5, 1.5)
+	jitter := 0.5 + rand.Float64() // [0.5, 1.5) via math/rand/v2
 	wait = time.Duration(float64(wait) * jitter)
 
 	select {

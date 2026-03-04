@@ -50,6 +50,60 @@ func TestRegistry_RegisterAndExecute(t *testing.T) {
 	}
 }
 
+func TestRegistry_Middleware(t *testing.T) {
+	r := NewRegistry()
+	r.Register(newMockTool("test_tool", "desc", "full"))
+
+	var called []string
+	r.Use(func(ctx context.Context, name string, args string, next func(context.Context, string) (string, error)) (string, error) {
+		called = append(called, "mw1:before:"+name)
+		result, err := next(ctx, args)
+		called = append(called, "mw1:after")
+		return result, err
+	})
+	r.Use(func(ctx context.Context, name string, args string, next func(context.Context, string) (string, error)) (string, error) {
+		called = append(called, "mw2:before:"+name)
+		result, err := next(ctx, args)
+		called = append(called, "mw2:after")
+		return result, err
+	})
+
+	result, err := r.Execute(context.Background(), "test_tool", `{}`)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if result != "mock result for test_tool" {
+		t.Errorf("result = %q", result)
+	}
+	// Middlewares should be called in order: mw1 wraps mw2 wraps tool.
+	expected := []string{"mw1:before:test_tool", "mw2:before:test_tool", "mw2:after", "mw1:after"}
+	if len(called) != len(expected) {
+		t.Fatalf("called = %v, want %v", called, expected)
+	}
+	for i, v := range expected {
+		if called[i] != v {
+			t.Errorf("called[%d] = %q, want %q", i, called[i], v)
+		}
+	}
+}
+
+func TestRegistry_MiddlewareCanBlock(t *testing.T) {
+	r := NewRegistry()
+	r.Register(newMockTool("test_tool", "desc", "full"))
+
+	r.Use(func(ctx context.Context, name string, args string, next func(context.Context, string) (string, error)) (string, error) {
+		return "blocked", nil // don't call next
+	})
+
+	result, err := r.Execute(context.Background(), "test_tool", `{}`)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if result != "blocked" {
+		t.Errorf("result = %q, want %q", result, "blocked")
+	}
+}
+
 func TestRegistry_ExecuteUnknownTool(t *testing.T) {
 	r := NewRegistry()
 	_, err := r.Execute(context.Background(), "nonexistent", "{}")
@@ -136,7 +190,7 @@ func TestRegistry_ToolDefinitions_CompactParamsWhenUnexpanded(t *testing.T) {
 
 	defs := r.ToolDefinitions()
 	// Unexpanded tools should get compact params.
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal(defs[0].Parameters, &parsed); err != nil {
 		t.Fatalf("Parameters is not valid JSON: %v", err)
 	}
@@ -154,7 +208,7 @@ func TestRegistry_ToolDefinitions_FullParamsWhenExpanded(t *testing.T) {
 	r.Expand("test_tool")
 
 	defs := r.ToolDefinitions()
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal(defs[0].Parameters, &parsed); err != nil {
 		t.Fatalf("Parameters is not valid JSON: %v", err)
 	}
@@ -245,7 +299,7 @@ func TestParseSkill(t *testing.T) {
 	}
 
 	// Parameters should be the standard skill schema.
-	var params map[string]interface{}
+	var params map[string]any
 	if err := json.Unmarshal(tool.Parameters(), &params); err != nil {
 		t.Fatalf("Parameters() invalid JSON: %v", err)
 	}

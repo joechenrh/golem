@@ -20,7 +20,7 @@ const (
 type TapeEntry struct {
 	ID        string                 `json:"id"`
 	Kind      EntryKind              `json:"kind"`
-	Payload   map[string]interface{} `json:"payload"`
+	Payload   map[string]any `json:"payload"`
 	Timestamp time.Time              `json:"timestamp"`
 }
 

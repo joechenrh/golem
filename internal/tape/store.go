@@ -148,7 +148,7 @@ func (s *FileStore) LastAnchor() (*TapeEntry, error) {
 func (s *FileStore) AddAnchor(label string) error {
 	return s.Append(TapeEntry{
 		Kind: KindAnchor,
-		Payload: map[string]interface{}{
+		Payload: map[string]any{
 			"label": label,
 		},
 	})

@@ -38,8 +38,8 @@ func TestNewContextStrategy(t *testing.T) {
 
 func TestAnchorStrategy_BasicMessages(t *testing.T) {
 	entries := []tape.TapeEntry{
-		{Kind: tape.KindMessage, Payload: map[string]interface{}{"role": "user", "content": "hello"}},
-		{Kind: tape.KindMessage, Payload: map[string]interface{}{"role": "assistant", "content": "hi"}},
+		{Kind: tape.KindMessage, Payload: map[string]any{"role": "user", "content": "hello"}},
+		{Kind: tape.KindMessage, Payload: map[string]any{"role": "assistant", "content": "hi"}},
 	}
 
 	s := &AnchorStrategy{}
@@ -57,9 +57,9 @@ func TestAnchorStrategy_BasicMessages(t *testing.T) {
 
 func TestAnchorStrategy_RespectsAnchors(t *testing.T) {
 	entries := []tape.TapeEntry{
-		{Kind: tape.KindMessage, Payload: map[string]interface{}{"role": "user", "content": "old"}},
-		{Kind: tape.KindAnchor, Payload: map[string]interface{}{"label": "reset"}},
-		{Kind: tape.KindMessage, Payload: map[string]interface{}{"role": "user", "content": "new"}},
+		{Kind: tape.KindMessage, Payload: map[string]any{"role": "user", "content": "old"}},
+		{Kind: tape.KindAnchor, Payload: map[string]any{"label": "reset"}},
+		{Kind: tape.KindMessage, Payload: map[string]any{"role": "user", "content": "new"}},
 	}
 
 	s := &AnchorStrategy{}
@@ -78,9 +78,9 @@ func TestAnchorStrategy_RespectsAnchors(t *testing.T) {
 func TestAnchorStrategy_TrimToFit(t *testing.T) {
 	// Create messages that exceed a tiny maxTokens budget.
 	entries := []tape.TapeEntry{
-		{Kind: tape.KindMessage, Payload: map[string]interface{}{"role": "user", "content": strings.Repeat("a", 400)}},
-		{Kind: tape.KindMessage, Payload: map[string]interface{}{"role": "assistant", "content": strings.Repeat("b", 400)}},
-		{Kind: tape.KindMessage, Payload: map[string]interface{}{"role": "user", "content": "last"}},
+		{Kind: tape.KindMessage, Payload: map[string]any{"role": "user", "content": strings.Repeat("a", 400)}},
+		{Kind: tape.KindMessage, Payload: map[string]any{"role": "assistant", "content": strings.Repeat("b", 400)}},
+		{Kind: tape.KindMessage, Payload: map[string]any{"role": "user", "content": "last"}},
 	}
 
 	s := &AnchorStrategy{}
@@ -101,8 +101,8 @@ func TestAnchorStrategy_TrimToFit(t *testing.T) {
 func TestMaskingStrategy_NoMaskingUnderThreshold(t *testing.T) {
 	longOutput := strings.Repeat("x", 5000)
 	entries := []tape.TapeEntry{
-		{Kind: tape.KindMessage, Payload: map[string]interface{}{"role": "user", "content": "run tool"}},
-		{Kind: tape.KindMessage, Payload: map[string]interface{}{"role": "tool", "content": longOutput, "tool_call_id": "t1"}},
+		{Kind: tape.KindMessage, Payload: map[string]any{"role": "user", "content": "run tool"}},
+		{Kind: tape.KindMessage, Payload: map[string]any{"role": "tool", "content": longOutput, "tool_call_id": "t1"}},
 	}
 
 	s := &MaskingStrategy{MaskThreshold: 0.5, MaxOutputChars: 2000}
@@ -123,8 +123,8 @@ func TestMaskingStrategy_NoMaskingUnderThreshold(t *testing.T) {
 func TestMaskingStrategy_MasksWhenOverThreshold(t *testing.T) {
 	longOutput := strings.Repeat("x", 5000)
 	entries := []tape.TapeEntry{
-		{Kind: tape.KindMessage, Payload: map[string]interface{}{"role": "user", "content": "run tool"}},
-		{Kind: tape.KindMessage, Payload: map[string]interface{}{"role": "tool", "content": longOutput, "tool_call_id": "t1"}},
+		{Kind: tape.KindMessage, Payload: map[string]any{"role": "user", "content": "run tool"}},
+		{Kind: tape.KindMessage, Payload: map[string]any{"role": "tool", "content": longOutput, "tool_call_id": "t1"}},
 	}
 
 	s := &MaskingStrategy{MaskThreshold: 0.5, MaxOutputChars: 2000}

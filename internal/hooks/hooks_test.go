@@ -40,7 +40,7 @@ func TestBus_DispatchesToHooks(t *testing.T) {
 
 	event := Event{
 		Type:    EventUserMessage,
-		Payload: map[string]interface{}{"text": "hello"},
+		Payload: map[string]any{"text": "hello"},
 	}
 	err := bus.Emit(context.Background(), event)
 	if err != nil {
@@ -109,7 +109,7 @@ func TestLoggingHook_AllEventTypes(t *testing.T) {
 	for _, et := range events {
 		err := h.Handle(context.Background(), Event{
 			Type:    et,
-			Payload: map[string]interface{}{"key": "value"},
+			Payload: map[string]any{"key": "value"},
 		})
 		if err != nil {
 			t.Errorf("Handle(%s) returned error: %v", et, err)

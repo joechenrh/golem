@@ -104,11 +104,11 @@ func (m *mockOpenAIServer) handler(w http.ResponseWriter, r *http.Request) {
 func (m *mockOpenAIServer) writeResponse(w http.ResponseWriter, resp mockResponse) {
 	// Build an OpenAI-format response.
 	finishReason := "stop"
-	var toolCallsJSON []map[string]interface{}
+	var toolCallsJSON []map[string]any
 	if len(resp.toolCalls) > 0 {
 		finishReason = "tool_calls"
 		for _, tc := range resp.toolCalls {
-			toolCallsJSON = append(toolCallsJSON, map[string]interface{}{
+			toolCallsJSON = append(toolCallsJSON, map[string]any{
 				"id":   tc.id,
 				"type": "function",
 				"function": map[string]string{
@@ -119,7 +119,7 @@ func (m *mockOpenAIServer) writeResponse(w http.ResponseWriter, resp mockRespons
 		}
 	}
 
-	message := map[string]interface{}{
+	message := map[string]any{
 		"role":    "assistant",
 		"content": resp.content,
 	}
@@ -127,8 +127,8 @@ func (m *mockOpenAIServer) writeResponse(w http.ResponseWriter, resp mockRespons
 		message["tool_calls"] = toolCallsJSON
 	}
 
-	result := map[string]interface{}{
-		"choices": []map[string]interface{}{
+	result := map[string]any{
+		"choices": []map[string]any{
 			{
 				"message":       message,
 				"finish_reason": finishReason,
@@ -155,10 +155,10 @@ func (m *mockOpenAIServer) writeStreamResponse(w http.ResponseWriter, resp mockR
 
 	// Send content as a single chunk.
 	if resp.content != "" {
-		chunk := map[string]interface{}{
-			"choices": []map[string]interface{}{
+		chunk := map[string]any{
+			"choices": []map[string]any{
 				{
-					"delta": map[string]interface{}{
+					"delta": map[string]any{
 						"content": resp.content,
 					},
 					"finish_reason": nil,

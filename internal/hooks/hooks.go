@@ -22,7 +22,7 @@ const (
 // Event represents a lifecycle event with an untyped payload.
 type Event struct {
 	Type    EventType
-	Payload map[string]interface{}
+	Payload map[string]any
 }
 
 // Hook reacts to agent lifecycle events.

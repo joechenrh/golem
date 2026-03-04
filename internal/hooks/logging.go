@@ -41,7 +41,7 @@ func (h *LoggingHook) Handle(_ context.Context, event Event) error {
 	return nil
 }
 
-func payloadFields(payload map[string]interface{}) []zap.Field {
+func payloadFields(payload map[string]any) []zap.Field {
 	fields := make([]zap.Field, 0, len(payload))
 	for k, v := range payload {
 		fields = append(fields, zap.Any(k, v))
