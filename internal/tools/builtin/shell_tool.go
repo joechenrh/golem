@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/joechenrh/golem/internal/executor"
+	"github.com/joechenrh/golem/internal/llm"
 )
 
 var shellParams = json.RawMessage(`{
@@ -40,7 +41,7 @@ func (t *ShellTool) Execute(ctx context.Context, args string) (string, error) {
 		Command string `json:"command"`
 		Timeout int    `json:"timeout"`
 	}
-	if err := json.Unmarshal([]byte(normalizeArgs(args)), &params); err != nil {
+	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
 		return "Error: invalid arguments: " + err.Error(), nil
 	}
 	if params.Command == "" {

@@ -1,6 +1,9 @@
 package llm
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Provider represents a named LLM provider.
 type Provider string
@@ -84,6 +87,15 @@ type StreamEvent struct {
 	Content  string         // for content deltas
 	ToolCall *ToolCallDelta // for tool call deltas
 	Error    error          // for error events
+}
+
+// NormalizeArgs ensures tool call arguments are valid JSON.
+// LLMs sometimes send empty strings instead of "{}".
+func NormalizeArgs(args string) string {
+	if strings.TrimSpace(args) == "" {
+		return "{}"
+	}
+	return args
 }
 
 // ToolCallDelta represents a partial tool call during streaming.

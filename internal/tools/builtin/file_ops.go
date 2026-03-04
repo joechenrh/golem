@@ -10,16 +10,8 @@ import (
 	"strings"
 
 	"github.com/joechenrh/golem/internal/fs"
+	"github.com/joechenrh/golem/internal/llm"
 )
-
-// normalizeArgs treats empty or whitespace-only args as "{}".
-// LLMs sometimes send empty strings instead of an empty JSON object.
-func normalizeArgs(args string) string {
-	if strings.TrimSpace(args) == "" {
-		return "{}"
-	}
-	return args
-}
 
 const (
 	maxReadChars   = 50_000
@@ -82,7 +74,7 @@ func (t *ReadFileTool) Execute(_ context.Context, args string) (string, error) {
 		Offset int    `json:"offset"`
 		Limit  int    `json:"limit"`
 	}
-	if err := json.Unmarshal([]byte(normalizeArgs(args)), &params); err != nil {
+	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
 		return "Error: invalid arguments: " + err.Error(), nil
 	}
 	if params.Path == "" {
@@ -153,7 +145,7 @@ func (t *WriteFileTool) Execute(_ context.Context, args string) (string, error) 
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
-	if err := json.Unmarshal([]byte(normalizeArgs(args)), &params); err != nil {
+	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
 		return "Error: invalid arguments: " + err.Error(), nil
 	}
 	if params.Path == "" {
@@ -202,7 +194,7 @@ func (t *EditFileTool) Execute(_ context.Context, args string) (string, error) {
 		OldText string `json:"old_text"`
 		NewText string `json:"new_text"`
 	}
-	if err := json.Unmarshal([]byte(normalizeArgs(args)), &params); err != nil {
+	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
 		return "Error: invalid arguments: " + err.Error(), nil
 	}
 	if params.Path == "" || params.OldText == "" {
@@ -262,7 +254,7 @@ func (t *ListDirectoryTool) Execute(_ context.Context, args string) (string, err
 	var params struct {
 		Path string `json:"path"`
 	}
-	if err := json.Unmarshal([]byte(normalizeArgs(args)), &params); err != nil {
+	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
 		return "Error: invalid arguments: " + err.Error(), nil
 	}
 	if params.Path == "" {
@@ -348,7 +340,7 @@ func (t *SearchFilesTool) Execute(_ context.Context, args string) (string, error
 		Pattern  string `json:"pattern"`
 		FileGlob string `json:"file_glob"`
 	}
-	if err := json.Unmarshal([]byte(normalizeArgs(args)), &params); err != nil {
+	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
 		return "Error: invalid arguments: " + err.Error(), nil
 	}
 	if params.Path == "" || params.Pattern == "" {

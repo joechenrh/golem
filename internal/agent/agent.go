@@ -177,8 +177,6 @@ func (a *AgentLoop) runReActLoop(ctx context.Context, stream bool, tokenCh chan<
 				a.appendToolResult(tc.ID, tc.Name, toolResult)
 			}
 
-			// Switch to non-streaming for tool-result iterations.
-			stream = false
 			continue
 		}
 
@@ -264,6 +262,7 @@ func (a *AgentLoop) doStreamingCall(ctx context.Context, req llm.ChatRequest, to
 	resp.Content = contentBuf.String()
 	for _, id := range toolCallOrder {
 		if tc, ok := toolCallMap[id]; ok {
+			tc.Arguments = llm.NormalizeArgs(tc.Arguments)
 			resp.ToolCalls = append(resp.ToolCalls, *tc)
 		}
 	}

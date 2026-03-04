@@ -304,7 +304,7 @@ func (c *openaiClient) convertResponse(resp openaiChatResponse) *ChatResponse {
 			cr.ToolCalls = append(cr.ToolCalls, ToolCall{
 				ID:        tc.ID,
 				Name:      tc.Function.Name,
-				Arguments: tc.Function.Arguments,
+				Arguments: NormalizeArgs(tc.Function.Arguments),
 			})
 		}
 	}
