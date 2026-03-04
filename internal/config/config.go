@@ -48,6 +48,9 @@ type Config struct {
 	MnemosURL     string
 	MnemosSpaceID string
 
+	// Web
+	WebSearchBackend string // "bing", "stub" (default: "bing")
+
 	// Logging
 	LogLevel string // "debug", "info", "warn", "error"
 }
@@ -61,14 +64,15 @@ func Load(flagOverrides map[string]string) (*Config, error) {
 	loadDotenvFiles()
 
 	cfg := &Config{
-		Model:           env("GOLEM_MODEL", "openai:gpt-4o"),
-		MaxToolIter:     envInt("GOLEM_MAX_TOOL_ITER", 15),
-		ShellTimeout:    envDuration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
-		ContextStrategy: env("GOLEM_CONTEXT_STRATEGY", "masking"),
-		Executor:        env("GOLEM_EXECUTOR", "local"),
-		TapeDir:         expandHome(env("GOLEM_TAPE_DIR", "~/.golem/tapes")),
-		SkillsDir:       env("GOLEM_SKILLS_DIR", ".agent/skills"),
-		LogLevel:        env("GOLEM_LOG_LEVEL", "info"),
+		Model:            env("GOLEM_MODEL", "openai:gpt-4o"),
+		MaxToolIter:      envInt("GOLEM_MAX_TOOL_ITER", 15),
+		ShellTimeout:     envDuration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
+		ContextStrategy:  env("GOLEM_CONTEXT_STRATEGY", "masking"),
+		Executor:         env("GOLEM_EXECUTOR", "local"),
+		TapeDir:          expandHome(env("GOLEM_TAPE_DIR", "~/.golem/tapes")),
+		SkillsDir:        env("GOLEM_SKILLS_DIR", ".agent/skills"),
+		WebSearchBackend: env("GOLEM_WEB_SEARCH_BACKEND", "bing"),
+		LogLevel:         env("GOLEM_LOG_LEVEL", "info"),
 
 		// Channels
 		TelegramToken:   os.Getenv("TELEGRAM_BOT_TOKEN"),

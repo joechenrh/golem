@@ -146,7 +146,7 @@ func main() {
 	// Register web tools.
 	webClient := &http.Client{Timeout: 30 * time.Second}
 	registry.RegisterAll(
-		builtin.NewWebSearchTool(webClient),
+		builtin.NewWebSearchTool(webClient, cfg.WebSearchBackend),
 		builtin.NewWebFetchTool(webClient),
 	)
 	// Register Lark tools if channel is enabled (pre-expanded so the LLM

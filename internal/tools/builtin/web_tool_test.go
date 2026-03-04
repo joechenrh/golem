@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,24 +11,35 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// WebSearchTool tests
+// WebSearchTool tests (Bing backend)
 // ---------------------------------------------------------------------------
 
-// cannedDDGLiteHTML mimics the DuckDuckGo Lite result table format.
-const cannedDDGLiteHTML = `<html><body>
-<table>
-<tr><td><a class="result-link" href="https://example.com/one">First Result</a></td></tr>
-<tr><td class="result-snippet">This is the first snippet.</td></tr>
-<tr><td><a class="result-link" href="https://example.com/two">Second Result</a></td></tr>
-<tr><td class="result-snippet">This is the second snippet.</td></tr>
-<tr><td><a class="result-link" href="https://example.com/three">Third Result</a></td></tr>
-<tr><td class="result-snippet">This is the third snippet.</td></tr>
-</table>
-</body></html>`
+// cannedBingHTML mimics real Bing search result HTML with redirect URLs.
+var cannedBingHTML = fmt.Sprintf(`<html><body>
+<ol id="b_results">
+<li class="b_algo">
+  <h2><a href="https://www.bing.com/ck/a?u=a1%s">First Result</a></h2>
+  <p>This is the first snippet.</p>
+</li>
+<li class="b_algo">
+  <h2><a href="https://www.bing.com/ck/a?u=a1%s">Second Result</a></h2>
+  <p>This is the second snippet.</p>
+</li>
+<li class="b_algo">
+  <h2><a href="https://www.bing.com/ck/a?u=a1%s">Third Result</a></h2>
+  <p>This is the third snippet.</p>
+</li>
+</ol>
+</body></html>`,
+	base64.RawURLEncoding.EncodeToString([]byte("https://example.com/one")),
+	base64.RawURLEncoding.EncodeToString([]byte("https://example.com/two")),
+	base64.RawURLEncoding.EncodeToString([]byte("https://example.com/three")),
+)
 
-func newTestSearchTool(serverURL string) *WebSearchTool {
+func newTestSearchTool(serverURL string, backend string) *WebSearchTool {
 	return &WebSearchTool{
 		client:    &http.Client{},
+		backend:   backend,
 		searchURL: serverURL,
 	}
 }
@@ -35,11 +47,11 @@ func newTestSearchTool(serverURL string) *WebSearchTool {
 func TestWebSearch_Basic(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, cannedDDGLiteHTML)
+		fmt.Fprint(w, cannedBingHTML)
 	}))
 	defer srv.Close()
 
-	tool := newTestSearchTool(srv.URL)
+	tool := newTestSearchTool(srv.URL, "bing")
 	result, err := tool.Execute(context.Background(), `{"query":"test"}`)
 	if err != nil {
 		t.Fatal(err)
@@ -61,11 +73,11 @@ func TestWebSearch_Basic(t *testing.T) {
 
 func TestWebSearch_CountLimitsResults(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, cannedDDGLiteHTML)
+		fmt.Fprint(w, cannedBingHTML)
 	}))
 	defer srv.Close()
 
-	tool := newTestSearchTool(srv.URL)
+	tool := newTestSearchTool(srv.URL, "bing")
 	result, err := tool.Execute(context.Background(), `{"query":"test","count":1}`)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +92,7 @@ func TestWebSearch_CountLimitsResults(t *testing.T) {
 }
 
 func TestWebSearch_MissingQuery(t *testing.T) {
-	tool := newTestSearchTool("http://unused")
+	tool := newTestSearchTool("http://unused", "bing")
 	result, err := tool.Execute(context.Background(), `{}`)
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +103,7 @@ func TestWebSearch_MissingQuery(t *testing.T) {
 }
 
 func TestWebSearch_InvalidJSON(t *testing.T) {
-	tool := newTestSearchTool("http://unused")
+	tool := newTestSearchTool("http://unused", "bing")
 	result, err := tool.Execute(context.Background(), `not json`)
 	if err != nil {
 		t.Fatal(err)
@@ -103,17 +115,115 @@ func TestWebSearch_InvalidJSON(t *testing.T) {
 
 func TestWebSearch_NoResults(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `<html><body><table></table></body></html>`)
+		fmt.Fprint(w, `<html><body><ol id="b_results"></ol></body></html>`)
 	}))
 	defer srv.Close()
 
-	tool := newTestSearchTool(srv.URL)
+	tool := newTestSearchTool(srv.URL, "bing")
 	result, err := tool.Execute(context.Background(), `{"query":"xyzzy"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(result, "No results found") {
 		t.Errorf("expected no results message, got: %s", result)
+	}
+}
+
+func TestWebSearch_Non200Status(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	tool := newTestSearchTool(srv.URL, "bing")
+	result, err := tool.Execute(context.Background(), `{"query":"test"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "Error") || !strings.Contains(result, "500") {
+		t.Errorf("expected error with status 500, got: %s", result)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Stub backend tests
+// ---------------------------------------------------------------------------
+
+func TestWebSearch_StubBackend(t *testing.T) {
+	tool := newTestSearchTool("http://unused", "stub")
+	result, err := tool.Execute(context.Background(), `{"query":"golang tutorials"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "duckduckgo.com") {
+		t.Errorf("expected DuckDuckGo URL in stub output, got: %s", result)
+	}
+	if !strings.Contains(result, "golang+tutorials") && !strings.Contains(result, "golang%20tutorials") {
+		t.Errorf("expected query in stub URL, got: %s", result)
+	}
+	if !strings.Contains(result, "web_fetch") {
+		t.Errorf("expected tip about web_fetch, got: %s", result)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// parseBingResults / decodeBingURL unit tests
+// ---------------------------------------------------------------------------
+
+func TestParseBingResults(t *testing.T) {
+	results := parseBingResults(cannedBingHTML, 10)
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	r := results[0]
+	if r.Title != "First Result" {
+		t.Errorf("title = %q", r.Title)
+	}
+	if r.URL != "https://example.com/one" {
+		t.Errorf("url = %q", r.URL)
+	}
+	if r.Snippet != "This is the first snippet." {
+		t.Errorf("snippet = %q", r.Snippet)
+	}
+}
+
+func TestParseBingResults_CountLimit(t *testing.T) {
+	results := parseBingResults(cannedBingHTML, 2)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+}
+
+func TestDecodeBingURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "bing redirect",
+			input:    "https://www.bing.com/ck/a?u=a1" + base64.RawURLEncoding.EncodeToString([]byte("https://example.com/page")),
+			expected: "https://example.com/page",
+		},
+		{
+			name:     "plain URL passthrough",
+			input:    "https://example.com/direct",
+			expected: "https://example.com/direct",
+		},
+		{
+			name:     "empty u param",
+			input:    "https://www.bing.com/ck/a?u=",
+			expected: "https://www.bing.com/ck/a?u=",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := decodeBingURL(tc.input)
+			if got != tc.expected {
+				t.Errorf("decodeBingURL(%q) = %q, want %q", tc.input, got, tc.expected)
+			}
+		})
 	}
 }
 
@@ -233,6 +343,22 @@ func TestWebFetch_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestWebFetch_Non200Status(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	tool := NewWebFetchTool(&http.Client{})
+	result, err := tool.Execute(context.Background(), fmt.Sprintf(`{"url":"%s"}`, srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "Error") || !strings.Contains(result, "404") {
+		t.Errorf("expected error with status 404, got: %s", result)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // extractText / cleanText unit tests
 // ---------------------------------------------------------------------------
@@ -279,34 +405,5 @@ func TestCleanText_CollapsesBlankLines(t *testing.T) {
 	}
 	if !strings.Contains(result, "Line1") || !strings.Contains(result, "Line2") || !strings.Contains(result, "Line3") {
 		t.Errorf("expected all lines preserved, got: %q", result)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// parseDDGLite unit tests
-// ---------------------------------------------------------------------------
-
-func TestParseDDGLite(t *testing.T) {
-	results := parseDDGLite(cannedDDGLiteHTML, 10)
-	if len(results) != 3 {
-		t.Fatalf("expected 3 results, got %d", len(results))
-	}
-
-	r := results[0]
-	if r.Title != "First Result" {
-		t.Errorf("title = %q", r.Title)
-	}
-	if r.URL != "https://example.com/one" {
-		t.Errorf("url = %q", r.URL)
-	}
-	if r.Snippet != "This is the first snippet." {
-		t.Errorf("snippet = %q", r.Snippet)
-	}
-}
-
-func TestParseDDGLite_CountLimit(t *testing.T) {
-	results := parseDDGLite(cannedDDGLiteHTML, 2)
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
 	}
 }
