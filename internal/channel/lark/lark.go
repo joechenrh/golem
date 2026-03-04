@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -32,6 +33,12 @@ type LarkChannel struct {
 	// current message-processing cycle, preventing duplicate replies when
 	// both a tool call and processMessage send to the same chat.
 	sentChats sync.Map
+
+	// seenMsgs deduplicates incoming Lark events. The Lark WebSocket SDK
+	// uses at-least-once delivery and may redeliver the same event if the
+	// handler takes too long (e.g. waiting for an LLM response). We track
+	// recently seen message IDs to discard duplicates.
+	seenMsgs sync.Map
 }
 
 // New creates a LarkChannel with the given credentials.
@@ -85,6 +92,24 @@ func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh ch
 		return
 	}
 
+	// Deduplicate: Lark WebSocket uses at-least-once delivery and may
+	// redeliver the same event while the handler is blocked on a slow
+	// LLM call.  Use the message ID to detect and discard duplicates.
+	var msgID string
+	if msg.MessageId != nil {
+		msgID = *msg.MessageId
+	}
+	if msgID != "" {
+		if _, dup := l.seenMsgs.LoadOrStore(msgID, time.Now()); dup {
+			l.logger.Info("dropping duplicate lark event",
+				zap.String("message_id", msgID),
+				zap.String("chat_id", *msg.ChatId))
+			return
+		}
+		// Evict old entries in the background so the map doesn't grow forever.
+		go l.evictSeenMsgs(5 * time.Minute)
+	}
+
 	text := extractTextContent(*msg.Content)
 	if text == "" {
 		return
@@ -110,6 +135,12 @@ func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh ch
 		}
 	}
 
+	l.logger.Info("received lark message",
+		zap.String("message_id", msgID),
+		zap.String("chat_id", *msg.ChatId),
+		zap.String("sender", senderID),
+		zap.String("text", truncateForLog(text, 80)))
+
 	// Reset per-cycle duplicate tracking before dispatching.
 	l.sentChats.Clear()
 
@@ -122,6 +153,24 @@ func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh ch
 		Done:        done,
 	}
 	<-done
+}
+
+// evictSeenMsgs removes entries from seenMsgs that are older than maxAge.
+func (l *LarkChannel) evictSeenMsgs(maxAge time.Duration) {
+	cutoff := time.Now().Add(-maxAge)
+	l.seenMsgs.Range(func(key, value any) bool {
+		if ts, ok := value.(time.Time); ok && ts.Before(cutoff) {
+			l.seenMsgs.Delete(key)
+		}
+		return true
+	})
+}
+
+func truncateForLog(s string, maxLen int) string {
+	if len(s) > maxLen {
+		return s[:maxLen] + "..."
+	}
+	return s
 }
 
 // Send sends a message to the chat identified in msg.ChannelID.
@@ -163,6 +212,9 @@ func (l *LarkChannel) SendToChat(ctx context.Context, chatID, text string) error
 // sendCard sends a message as an interactive card with a markdown element,
 // which supports bold, italic, strikethrough, links, and code formatting.
 func (l *LarkChannel) sendCard(ctx context.Context, chatID, text string) error {
+	l.logger.Info("sending lark card",
+		zap.String("chat_id", chatID),
+		zap.Int("text_len", len(text)))
 	card := map[string]any{
 		"elements": []map[string]string{
 			{"tag": "markdown", "content": sanitizeLarkMarkdown(text)},
