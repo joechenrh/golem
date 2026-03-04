@@ -11,7 +11,7 @@ import (
 )
 
 // compactParams is a minimal JSON Schema used for unexpanded tools to save tokens.
-var compactParams = json.RawMessage(`{"type":"object"}`)
+var compactParams = json.RawMessage(`{"type":"object","properties":{}}`)
 
 // Middleware wraps tool execution with cross-cutting behavior.
 // Call next(ctx, args) to proceed to the next middleware or the actual tool.

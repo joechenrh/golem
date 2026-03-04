@@ -58,6 +58,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Auto-register unknown providers as OpenAI-compatible.
+	if provider != llm.ProviderOpenAI && provider != llm.ProviderAnthropic {
+		baseURL := cfg.BaseURLs[string(provider)]
+		if baseURL == "" {
+			fmt.Fprintf(os.Stderr, "custom provider %q requires %s_BASE_URL to be set.\n",
+				provider, strings.ToUpper(string(provider)))
+			os.Exit(1)
+		}
+		llm.RegisterProvider(provider, baseURL, llm.NewOpenAICompatibleClient)
+	}
+
 	var clientOpts []llm.ClientOption
 	if baseURL := cfg.BaseURLs[string(provider)]; baseURL != "" {
 		clientOpts = append(clientOpts, llm.WithBaseURL(baseURL))

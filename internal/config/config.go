@@ -59,12 +59,13 @@ type Config struct {
 //  3. .env.local file
 //  4. Hardcoded defaults
 func Load(flagOverrides map[string]string) (*Config, error) {
-	// Load .env.local first (lowest precedence, env vars override).
-	// Ignore file-not-found but surface parse errors.
-	if err := godotenv.Load(".env.local"); err != nil && !errors.Is(err, os.ErrNotExist) {
-		// godotenv returns a *os.PathError for missing files
-		if _, ok := err.(*os.PathError); !ok {
-			return nil, fmt.Errorf("parsing .env.local: %w", err)
+	// Load dotenv files (lowest precedence, env vars override).
+	// .env.local takes precedence over .env; both are optional.
+	for _, envFile := range []string{".env", ".env.local"} {
+		if err := godotenv.Load(envFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if _, ok := err.(*os.PathError); !ok {
+				return nil, fmt.Errorf("parsing %s: %w", envFile, err)
+			}
 		}
 	}
 
@@ -86,21 +87,29 @@ func Load(flagOverrides map[string]string) (*Config, error) {
 		LogLevel:        getWithDefault("GOLEM_LOG_LEVEL", "info"),
 	}
 
-	// Collect API keys from environment
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-		cfg.APIKeys["openai"] = key
-	}
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		cfg.APIKeys["anthropic"] = key
+	// Collect API keys and base URLs from environment.
+	// Supports any provider via <PROVIDER>_API_KEY and <PROVIDER>_BASE_URL.
+	for _, env := range os.Environ() {
+		key, val, ok := strings.Cut(env, "=")
+		if !ok || val == "" {
+			continue
+		}
+		if suffix, found := strings.CutSuffix(key, "_API_KEY"); found && suffix != "" {
+			provider := strings.ToLower(suffix)
+			cfg.APIKeys[provider] = val
+		}
 	}
 
-	// Collect base URLs from environment
 	cfg.BaseURLs = make(map[string]string)
-	if u := os.Getenv("OPENAI_BASE_URL"); u != "" {
-		cfg.BaseURLs["openai"] = u
-	}
-	if u := os.Getenv("ANTHROPIC_BASE_URL"); u != "" {
-		cfg.BaseURLs["anthropic"] = u
+	for _, env := range os.Environ() {
+		key, val, ok := strings.Cut(env, "=")
+		if !ok || val == "" {
+			continue
+		}
+		if suffix, found := strings.CutSuffix(key, "_BASE_URL"); found && suffix != "" {
+			provider := strings.ToLower(suffix)
+			cfg.BaseURLs[provider] = val
+		}
 	}
 
 	// Telegram ACL

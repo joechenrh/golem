@@ -197,8 +197,12 @@ func TestRegistry_ToolDefinitions_CompactParamsWhenUnexpanded(t *testing.T) {
 	if parsed["type"] != "object" {
 		t.Errorf("Parameters.type = %v, want %q", parsed["type"], "object")
 	}
-	if _, hasProps := parsed["properties"]; hasProps {
-		t.Error("unexpanded tool should use compact params without properties")
+	props, hasProps := parsed["properties"]
+	if !hasProps {
+		t.Error("compact params should include properties key for API compatibility")
+	}
+	if m, ok := props.(map[string]any); !ok || len(m) != 0 {
+		t.Error("compact params properties should be an empty object")
 	}
 }
 

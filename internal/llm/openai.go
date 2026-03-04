@@ -102,6 +102,13 @@ type openaiClient struct {
 	streamHTTP *http.Client
 }
 
+// NewOpenAICompatibleClient creates an OpenAI-compatible client.
+// Use this as the factory when registering custom providers that expose
+// an OpenAI-compatible chat completions API.
+func NewOpenAICompatibleClient(apiKey, baseURL string) Client {
+	return newOpenAIClient(apiKey, baseURL)
+}
+
 func newOpenAIClient(apiKey, baseURL string) *openaiClient {
 	return &openaiClient{
 		apiKey:     apiKey,
