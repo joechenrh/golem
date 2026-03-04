@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,7 +25,7 @@ type anthropicRequest struct {
 
 type anthropicMessage struct {
 	Role    string      `json:"role"`
-	Content interface{} `json:"content"` // string or []anthropicContentBlock
+	Content any `json:"content"` // string or []anthropicContentBlock
 }
 
 type anthropicContentBlock struct {
@@ -181,7 +182,7 @@ func (c *anthropicClient) readStream(ctx context.Context, body io.ReadCloser, ch
 	reader := newSSEReader(body)
 	for {
 		ev, err := reader.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return
 		}
 		if err != nil {

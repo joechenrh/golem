@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -67,7 +68,7 @@ func (a *AgentLoop) HandleInput(ctx context.Context, msg channel.IncomingMessage
 	// Emit user message hook.
 	a.hooks.Emit(ctx, hooks.Event{
 		Type:    hooks.EventUserMessage,
-		Payload: map[string]interface{}{"text": msg.Text, "channel_id": msg.ChannelID},
+		Payload: map[string]any{"text": msg.Text, "channel_id": msg.ChannelID},
 	})
 
 	return a.runReActLoop(ctx, false, nil)
@@ -93,7 +94,7 @@ func (a *AgentLoop) HandleInputStream(ctx context.Context, msg channel.IncomingM
 	// Emit user message hook.
 	a.hooks.Emit(ctx, hooks.Event{
 		Type:    hooks.EventUserMessage,
-		Payload: map[string]interface{}{"text": msg.Text, "channel_id": msg.ChannelID},
+		Payload: map[string]any{"text": msg.Text, "channel_id": msg.ChannelID},
 	})
 
 	_, err := a.runReActLoop(ctx, true, tokenCh)
@@ -123,7 +124,7 @@ func (a *AgentLoop) runReActLoop(ctx context.Context, stream bool, tokenCh chan<
 		// Emit before LLM call.
 		a.hooks.Emit(ctx, hooks.Event{
 			Type:    hooks.EventBeforeLLMCall,
-			Payload: map[string]interface{}{"iteration": iter, "message_count": len(messages)},
+			Payload: map[string]any{"iteration": iter, "message_count": len(messages)},
 		})
 
 		req := llm.ChatRequest{
@@ -145,7 +146,7 @@ func (a *AgentLoop) runReActLoop(ctx context.Context, stream bool, tokenCh chan<
 		if err != nil {
 			a.hooks.Emit(ctx, hooks.Event{
 				Type:    hooks.EventError,
-				Payload: map[string]interface{}{"error": err.Error()},
+				Payload: map[string]any{"error": err.Error()},
 			})
 			return "", fmt.Errorf("LLM call: %w", err)
 		}
@@ -153,7 +154,7 @@ func (a *AgentLoop) runReActLoop(ctx context.Context, stream bool, tokenCh chan<
 		// Emit after LLM call.
 		a.hooks.Emit(ctx, hooks.Event{
 			Type: hooks.EventAfterLLMCall,
-			Payload: map[string]interface{}{
+			Payload: map[string]any{
 				"finish_reason":    resp.FinishReason,
 				"tool_call_count":  len(resp.ToolCalls),
 				"prompt_tokens":    resp.Usage.PromptTokens,
@@ -281,7 +282,7 @@ func (a *AgentLoop) executeTool(ctx context.Context, tc llm.ToolCall) string {
 	// Before tool exec hook — can block execution.
 	if err := a.hooks.Emit(ctx, hooks.Event{
 		Type: hooks.EventBeforeToolExec,
-		Payload: map[string]interface{}{
+		Payload: map[string]any{
 			"tool_name": tc.Name,
 			"tool_id":   tc.ID,
 			"arguments": tc.Arguments,
@@ -297,7 +298,7 @@ func (a *AgentLoop) executeTool(ctx context.Context, tc llm.ToolCall) string {
 
 	a.hooks.Emit(ctx, hooks.Event{
 		Type: hooks.EventAfterToolExec,
-		Payload: map[string]interface{}{
+		Payload: map[string]any{
 			"tool_name": tc.Name,
 			"tool_id":   tc.ID,
 			"result":    truncateForLog(result, 500),
@@ -429,7 +430,7 @@ func (a *AgentLoop) buildSystemPrompt() string {
 
 // appendMessage records a message to the tape.
 func (a *AgentLoop) appendMessage(role llm.Role, content string, toolCalls []llm.ToolCall) {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"role":    string(role),
 		"content": content,
 	}
@@ -447,7 +448,7 @@ func (a *AgentLoop) appendMessage(role llm.Role, content string, toolCalls []llm
 func (a *AgentLoop) appendToolResult(toolCallID, toolName, result string) {
 	a.tape.Append(tape.TapeEntry{
 		Kind: tape.KindMessage,
-		Payload: map[string]interface{}{
+		Payload: map[string]any{
 			"role":         string(llm.RoleTool),
 			"content":      result,
 			"tool_call_id": toolCallID,
@@ -457,7 +458,7 @@ func (a *AgentLoop) appendToolResult(toolCallID, toolName, result string) {
 }
 
 // ErrQuit signals that the user wants to quit.
-var ErrQuit = fmt.Errorf("quit")
+var ErrQuit = errors.New("quit")
 
 func truncateForLog(s string, maxLen int) string {
 	if len(s) > maxLen {

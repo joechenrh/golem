@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -185,7 +186,7 @@ func (c *openaiClient) readStream(ctx context.Context, body io.ReadCloser, ch ch
 	reader := newSSEReader(body)
 	for {
 		ev, err := reader.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return
 		}
 		if err != nil {

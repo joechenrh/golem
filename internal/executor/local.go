@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os/exec"
 	"syscall"
 	"time"
@@ -41,14 +42,15 @@ func (e *LocalExecutor) Execute(ctx context.Context, command string, timeout tim
 		Command: command,
 	}
 
-	if ctx.Err() == context.DeadlineExceeded {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		result.TimedOut = true
 		result.ExitCode = -1
 		return result, nil
 	}
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 				result.ExitCode = status.ExitStatus()
 			} else {
