@@ -1,0 +1,141 @@
+package executor
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestLocalExecutor_Echo(t *testing.T) {
+	e := NewLocal(t.TempDir())
+	r, err := e.Execute(context.Background(), "echo hello", 10*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.Stdout != "hello\n" {
+		t.Errorf("stdout = %q, want %q", r.Stdout, "hello\n")
+	}
+	if r.ExitCode != 0 {
+		t.Errorf("exit code = %d, want 0", r.ExitCode)
+	}
+	if r.TimedOut {
+		t.Error("should not have timed out")
+	}
+}
+
+func TestLocalExecutor_Stderr(t *testing.T) {
+	e := NewLocal(t.TempDir())
+	r, err := e.Execute(context.Background(), "echo err >&2", 10*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.Stderr != "err\n" {
+		t.Errorf("stderr = %q, want %q", r.Stderr, "err\n")
+	}
+}
+
+func TestLocalExecutor_NonZeroExit(t *testing.T) {
+	e := NewLocal(t.TempDir())
+	r, err := e.Execute(context.Background(), "exit 42", 10*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.ExitCode != 42 {
+		t.Errorf("exit code = %d, want 42", r.ExitCode)
+	}
+}
+
+func TestLocalExecutor_Timeout(t *testing.T) {
+	e := NewLocal(t.TempDir())
+	r, err := e.Execute(context.Background(), "sleep 100", 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !r.TimedOut {
+		t.Error("expected timeout")
+	}
+}
+
+func TestLocalExecutor_Name(t *testing.T) {
+	e := NewLocal(".")
+	if e.Name() != "local" {
+		t.Errorf("name = %q, want %q", e.Name(), "local")
+	}
+}
+
+func TestNoopExecutor(t *testing.T) {
+	e := NewNoop()
+	r, err := e.Execute(context.Background(), "echo hello", 10*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.ExitCode != 1 {
+		t.Errorf("exit code = %d, want 1", r.ExitCode)
+	}
+	if !strings.Contains(r.Stdout, "disabled") {
+		t.Errorf("stdout = %q, should contain 'disabled'", r.Stdout)
+	}
+	if e.Name() != "noop" {
+		t.Errorf("name = %q, want %q", e.Name(), "noop")
+	}
+}
+
+func TestFormatResult(t *testing.T) {
+	tests := []struct {
+		name   string
+		result *Result
+		want   string
+	}{
+		{
+			name: "success",
+			result: &Result{
+				Command: "echo hi",
+				Stdout:  "hi\n",
+			},
+			want: "$ echo hi\nhi\n",
+		},
+		{
+			name: "with stderr and exit code",
+			result: &Result{
+				Command:  "bad",
+				Stderr:   "fail\n",
+				ExitCode: 1,
+			},
+			want: "$ bad\n[stderr]\nfail\n[exit code: 1]\n",
+		},
+		{
+			name: "timed out",
+			result: &Result{
+				Command:  "sleep 100",
+				TimedOut: true,
+				ExitCode: -1,
+			},
+			want: "$ sleep 100\n[timed out]\n[exit code: -1]\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatResult(tt.result)
+			if got != tt.want {
+				t.Errorf("FormatResult() =\n%q\nwant:\n%q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	short := "hello"
+	if got := truncate(short, 100); got != short {
+		t.Errorf("truncate(%q, 100) = %q, want %q", short, got, short)
+	}
+
+	long := strings.Repeat("x", 100)
+	got := truncate(long, 50)
+	if !strings.HasSuffix(got, "... [truncated]") {
+		t.Errorf("truncated output should end with '... [truncated]', got %q", got)
+	}
+	if len(got) != 50+len("\n... [truncated]") {
+		t.Errorf("truncated length = %d, want %d", len(got), 50+len("\n... [truncated]"))
+	}
+}
