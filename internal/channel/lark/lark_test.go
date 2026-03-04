@@ -68,6 +68,63 @@ func TestBuildCardContent(t *testing.T) {
 	}
 }
 
+func TestSanitizeLarkMarkdown(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			"h1 to bold",
+			"# Title",
+			"**Title**",
+		},
+		{
+			"h2 to bold",
+			"## Section",
+			"**Section**",
+		},
+		{
+			"h3 to bold",
+			"### Subsection",
+			"**Subsection**",
+		},
+		{
+			"blockquote to italic",
+			"> some quote",
+			"*some quote*",
+		},
+		{
+			"blockquote without space",
+			">no space",
+			"*no space*",
+		},
+		{
+			"mixed content",
+			"# Title\nsome text\n## Sub\n> note\nmore text",
+			"**Title**\nsome text\n**Sub**\n*note*\nmore text",
+		},
+		{
+			"no change for supported syntax",
+			"**bold** and *italic* and `code`",
+			"**bold** and *italic* and `code`",
+		},
+		{
+			"code block not touched",
+			"```\n# not a header\n> not a quote\n```",
+			"```\n# not a header\n> not a quote\n```",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeLarkMarkdown(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeLarkMarkdown(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSendSkipsDuplicateChat(t *testing.T) {
 	lc := &LarkChannel{logger: zap.NewNop()}
 	lc.sentChats.Store("chat_123", true)

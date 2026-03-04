@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -164,7 +165,7 @@ func (l *LarkChannel) SendToChat(ctx context.Context, chatID, text string) error
 func (l *LarkChannel) sendCard(ctx context.Context, chatID, text string) error {
 	card := map[string]any{
 		"elements": []map[string]string{
-			{"tag": "markdown", "content": text},
+			{"tag": "markdown", "content": sanitizeLarkMarkdown(text)},
 		},
 	}
 	content, _ := json.Marshal(card)
@@ -238,6 +239,37 @@ func extractTextContent(content string) string {
 		return ""
 	}
 	return strings.TrimSpace(parsed.Text)
+}
+
+// headerRe matches markdown header lines (e.g. "## Title").
+var headerRe = regexp.MustCompile(`(?m)^(#{1,6})\s+(.+)$`)
+
+// blockquoteRe matches markdown blockquote lines (e.g. "> text").
+var blockquoteRe = regexp.MustCompile(`(?m)^>\s?(.*)$`)
+
+// codeBlockRe splits text on fenced code blocks (``` … ```).
+var codeBlockRe = regexp.MustCompile("(?s)(```.*?```)")
+
+// sanitizeLarkMarkdown converts standard markdown into the subset that
+// Lark card markdown supports. Unsupported elements:
+//   - Headers (# … ######) → bold text
+//   - Blockquotes (>) → italic text
+//
+// Content inside fenced code blocks is left untouched.
+func sanitizeLarkMarkdown(text string) string {
+	parts := codeBlockRe.Split(text, -1)
+	codeBlocks := codeBlockRe.FindAllString(text, -1)
+
+	var sb strings.Builder
+	for i, part := range parts {
+		part = headerRe.ReplaceAllString(part, "**$2**")
+		part = blockquoteRe.ReplaceAllString(part, "*$1*")
+		sb.WriteString(part)
+		if i < len(codeBlocks) {
+			sb.WriteString(codeBlocks[i])
+		}
+	}
+	return sb.String()
 }
 
 // zapLarkLogger adapts zap.Logger to the Lark SDK's Logger interface.
