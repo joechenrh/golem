@@ -46,7 +46,7 @@ func main() {
 	}
 
 	// 3. Initialize logger.
-	logger := initLogger(cfg.LogLevel)
+	logger := initLogger(cfg.LogLevel, cfg.TapeDir)
 	defer logger.Sync()
 
 	// 4. Initialize LLM client.
@@ -241,8 +241,9 @@ func parseFlags() map[string]string {
 	return overrides
 }
 
-// initLogger creates a zap.Logger based on the level string.
-func initLogger(level string) *zap.Logger {
+// initLogger creates a zap.Logger that writes to a file in logDir.
+// This keeps log output from mixing with the interactive REPL.
+func initLogger(level, logDir string) *zap.Logger {
 	var zapLevel zapcore.Level
 	switch level {
 	case "debug":
@@ -255,14 +256,15 @@ func initLogger(level string) *zap.Logger {
 		zapLevel = zapcore.InfoLevel
 	}
 
+	logFile := filepath.Join(logDir, fmt.Sprintf("golem-%s.log", time.Now().Format("20060102-150405")))
+
 	cfg := zap.Config{
 		Level:            zap.NewAtomicLevelAt(zapLevel),
 		Encoding:         "console",
 		EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
-		OutputPaths:      []string{"stderr"},
-		ErrorOutputPaths: []string{"stderr"},
+		OutputPaths:      []string{logFile},
+		ErrorOutputPaths: []string{logFile},
 	}
-	cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
 	logger, err := cfg.Build()
