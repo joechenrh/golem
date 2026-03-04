@@ -176,10 +176,15 @@ func main() {
 // processMessage handles a single incoming message through the agent loop.
 // Returns true if the user requested quit.
 func processMessage(ctx context.Context, agentLoop *agent.AgentLoop, cliCh *cli.CLIChannel, msg channel.IncomingMessage, logger *zap.Logger) bool {
+	if msg.Done != nil {
+		defer close(msg.Done)
+	}
 	if cliCh.SupportsStreaming() {
 		tokenCh := make(chan string, 100)
 
+		streamDone := make(chan struct{})
 		go func() {
+			defer close(streamDone)
 			if err := cliCh.SendStream(ctx, msg.ChannelID, tokenCh); err != nil {
 				logger.Error("stream send error", zap.Error(err))
 			}
@@ -187,6 +192,7 @@ func processMessage(ctx context.Context, agentLoop *agent.AgentLoop, cliCh *cli.
 
 		err := agentLoop.HandleInputStream(ctx, msg, tokenCh)
 		close(tokenCh)
+		<-streamDone // wait for SendStream to finish printing
 		if err != nil {
 			if errors.Is(err, agent.ErrQuit) {
 				return true

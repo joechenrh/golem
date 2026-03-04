@@ -22,9 +22,10 @@ const (
 
 // CLIChannel implements channel.Channel for an interactive terminal REPL.
 type CLIChannel struct {
-	prompt string
-	reader io.Reader
-	writer io.Writer
+	prompt          string
+	reader          io.Reader
+	writer          io.Writer
+	thinkingCleared bool // set by SendStream/Send when they clear the indicator
 }
 
 // Option configures a CLIChannel.
@@ -83,16 +84,31 @@ func (c *CLIChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMess
 			continue
 		}
 
+		done := make(chan struct{})
 		msg := channel.IncomingMessage{
 			ChannelID:   "cli",
 			ChannelName: "cli",
 			Text:        line,
+			Done:        done,
 		}
 
 		select {
 		case inCh <- msg:
 		case <-ctx.Done():
 			return ctx.Err()
+		}
+
+		// Show thinking indicator and wait for processing to complete.
+		c.thinkingCleared = false
+		fmt.Fprintf(c.writer, "%sThinking...%s", colorDim, colorReset)
+		select {
+		case <-done:
+		case <-ctx.Done():
+			fmt.Fprint(c.writer, "\r\033[K")
+			return ctx.Err()
+		}
+		if !c.thinkingCleared {
+			fmt.Fprint(c.writer, "\r\033[K")
 		}
 	}
 
@@ -102,9 +118,10 @@ func (c *CLIChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMess
 	return nil
 }
 
-// Send prints a message to the terminal.
+// Send prints a message to the terminal, clearing any pending indicator first.
 func (c *CLIChannel) Send(_ context.Context, msg channel.OutgoingMessage) error {
-	fmt.Fprintln(c.writer, msg.Text)
+	fmt.Fprintf(c.writer, "\r\033[K%s\n", msg.Text)
+	c.thinkingCleared = true
 	return nil
 }
 
@@ -118,10 +135,19 @@ func (c *CLIChannel) SupportsStreaming() bool { return true }
 
 // SendStream reads tokens from tokenCh and prints them incrementally.
 func (c *CLIChannel) SendStream(_ context.Context, _ string, tokenCh <-chan string) error {
+	first := true
 	for tok := range tokenCh {
+		if first {
+			// Clear the "Thinking..." indicator before first output.
+			fmt.Fprint(c.writer, "\r\033[K")
+			c.thinkingCleared = true
+			first = false
+		}
 		fmt.Fprint(c.writer, tok)
 	}
-	fmt.Fprintln(c.writer)
+	if !first {
+		fmt.Fprintln(c.writer)
+	}
 	return nil
 }
 
@@ -130,9 +156,9 @@ func (c *CLIChannel) PrintSystem(text string) {
 	fmt.Fprintf(c.writer, "%s%s%s\n", colorDim, text, colorReset)
 }
 
-// PrintError prints an error message in red.
+// PrintError prints an error message in red, clearing any pending indicator first.
 func (c *CLIChannel) PrintError(text string) {
-	fmt.Fprintf(c.writer, "%s%s%s\n", colorRed, text, colorReset)
+	fmt.Fprintf(c.writer, "\r\033[K%s%s%s\n", colorRed, text, colorReset)
 }
 
 // PrintBanner prints the startup banner.

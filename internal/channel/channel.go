@@ -10,6 +10,7 @@ type IncomingMessage struct {
 	SenderName  string
 	Text        string
 	Metadata    map[string]string
+	Done        chan struct{}      // closed when processing is complete (optional)
 }
 
 // OutgoingMessage represents a message to send to a channel.

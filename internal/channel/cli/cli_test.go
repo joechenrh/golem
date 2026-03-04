@@ -25,16 +25,22 @@ func TestStart_ReadsLines(t *testing.T) {
 	c := New(WithReader(strings.NewReader(input)), WithWriter(&bytes.Buffer{}))
 
 	inCh := make(chan channel.IncomingMessage, 10)
-	err := c.Start(context.Background(), inCh)
-	if err != nil {
+	var msgs []string
+
+	// Simulate a consumer that processes messages and signals Done.
+	go func() {
+		for msg := range inCh {
+			msgs = append(msgs, msg.Text)
+			if msg.Done != nil {
+				close(msg.Done)
+			}
+		}
+	}()
+
+	if err := c.Start(context.Background(), inCh); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-
-	var msgs []string
 	close(inCh)
-	for msg := range inCh {
-		msgs = append(msgs, msg.Text)
-	}
 
 	if len(msgs) != 2 {
 		t.Fatalf("got %d messages, want 2", len(msgs))
@@ -49,16 +55,21 @@ func TestStart_SkipsEmptyLines(t *testing.T) {
 	c := New(WithReader(strings.NewReader(input)), WithWriter(&bytes.Buffer{}))
 
 	inCh := make(chan channel.IncomingMessage, 10)
-	err := c.Start(context.Background(), inCh)
-	if err != nil {
+	var count int
+	go func() {
+		for msg := range inCh {
+			count++
+			if msg.Done != nil {
+				close(msg.Done)
+			}
+		}
+	}()
+
+	if err := c.Start(context.Background(), inCh); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-
 	close(inCh)
-	var count int
-	for range inCh {
-		count++
-	}
+
 	if count != 1 {
 		t.Errorf("got %d messages, want 1 (empty lines skipped)", count)
 	}
@@ -69,13 +80,20 @@ func TestStart_ContextCancel(t *testing.T) {
 	defer cancel()
 
 	// Provide input that will not EOF so we test context cancellation.
-	// The Start loop checks ctx.Done() before each scan.
 	c := New(
 		WithReader(strings.NewReader("line1\nline2\n")),
 		WithWriter(&bytes.Buffer{}),
 	)
 
 	inCh := make(chan channel.IncomingMessage, 10)
+	go func() {
+		for msg := range inCh {
+			if msg.Done != nil {
+				close(msg.Done)
+			}
+		}
+	}()
+
 	err := c.Start(ctx, inCh)
 	// Should complete without error (reads all input before context expires)
 	// or return context error.
@@ -89,15 +107,24 @@ func TestStart_SetsChannelFields(t *testing.T) {
 	c := New(WithReader(strings.NewReader(input)), WithWriter(&bytes.Buffer{}))
 
 	inCh := make(chan channel.IncomingMessage, 10)
+	var got channel.IncomingMessage
+	go func() {
+		for msg := range inCh {
+			got = msg
+			if msg.Done != nil {
+				close(msg.Done)
+			}
+		}
+	}()
+
 	_ = c.Start(context.Background(), inCh)
 	close(inCh)
 
-	msg := <-inCh
-	if msg.ChannelID != "cli" {
-		t.Errorf("ChannelID = %q, want %q", msg.ChannelID, "cli")
+	if got.ChannelID != "cli" {
+		t.Errorf("ChannelID = %q, want %q", got.ChannelID, "cli")
 	}
-	if msg.ChannelName != "cli" {
-		t.Errorf("ChannelName = %q, want %q", msg.ChannelName, "cli")
+	if got.ChannelName != "cli" {
+		t.Errorf("ChannelName = %q, want %q", got.ChannelName, "cli")
 	}
 }
 
@@ -109,8 +136,8 @@ func TestSend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if got := buf.String(); got != "hello\n" {
-		t.Errorf("output = %q, want %q", got, "hello\n")
+	if !strings.Contains(buf.String(), "hello\n") {
+		t.Errorf("output = %q, want to contain %q", buf.String(), "hello\n")
 	}
 }
 
@@ -135,8 +162,8 @@ func TestSendStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendStream: %v", err)
 	}
-	if got := buf.String(); got != "Hello World\n" {
-		t.Errorf("output = %q, want %q", got, "Hello World\n")
+	if !strings.Contains(buf.String(), "Hello World\n") {
+		t.Errorf("output = %q, want to contain %q", buf.String(), "Hello World\n")
 	}
 }
 
@@ -180,6 +207,13 @@ func TestPrompt_Displayed(t *testing.T) {
 	)
 
 	inCh := make(chan channel.IncomingMessage, 10)
+	go func() {
+		for msg := range inCh {
+			if msg.Done != nil {
+				close(msg.Done)
+			}
+		}
+	}()
 	_ = c.Start(context.Background(), inCh)
 
 	if !strings.Contains(buf.String(), "test> ") {
