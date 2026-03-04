@@ -240,8 +240,8 @@ func (a *AgentLoop) doStreamingCall(ctx context.Context, req llm.ChatRequest, to
 			}
 			tc := ev.ToolCall
 			if tc.ID != "" {
-				// New tool call starting.
-				toolCallMap[tc.ID] = &llm.ToolCall{ID: tc.ID, Name: tc.Name}
+				// New tool call starting (first delta may also carry arguments).
+				toolCallMap[tc.ID] = &llm.ToolCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments}
 				toolCallOrder = append(toolCallOrder, tc.ID)
 			} else if len(toolCallOrder) > 0 {
 				// Append arguments to the most recent tool call.
