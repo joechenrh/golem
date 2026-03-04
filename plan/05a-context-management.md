@@ -29,13 +29,13 @@ Context management is abstracted as a **pluggable strategy** — the agent loop 
 
 ### File
 
-`internal/context/strategy.go` (new package)
+`internal/ctxmgr/strategy.go` (new package — named `ctxmgr` to avoid collision with stdlib `context`)
 
 ### Interface
 
 ```go
-// internal/context/strategy.go
-package context
+// internal/ctxmgr/strategy.go
+package ctxmgr
 
 // ContextStrategy determines how conversation history is assembled for an LLM call.
 // The tape stores everything; the strategy decides what subset to send.

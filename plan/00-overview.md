@@ -22,7 +22,7 @@ golem/
 │   │   ├── telegram/telegram.go                 (stub)
 │   │   └── lark/lark.go                         (stub)
 │   ├── config/config.go                         # Hierarchical config
-│   ├── context/
+│   ├── ctxmgr/
 │   │   └── strategy.go                          # ContextStrategy interface
 │   ├── executor/                                 # RENAMED from shell/
 │   │   ├── executor.go                          # Executor interface
@@ -73,7 +73,7 @@ golem/
 | `Tool` | `tools` | Builtin tools, Skills | Agent capability |
 | `Memory` | `memory` | mnemos REST*, direct* | Cross-session persistence |
 | `Store` | `tape` | FileStore | Conversation history |
-| `ContextStrategy` | `context` | Anchor, Masking, Hybrid* | Context window management |
+| `ContextStrategy` | `ctxmgr` | Anchor, Masking, Hybrid* | Context window management |
 | `Executor` | `executor` | Local, Noop, Docker* | Command execution environment |
 | `Hook` | `hooks` | Logging, Memory*, Safety* | Lifecycle event handling |
 | `FS` | `fs` | LocalFS, MemFS* | Filesystem operations |
@@ -93,7 +93,7 @@ cmd/golem/main.go
   │   │       ├── internal/executor
   │   │       └── internal/fs
   │   ├── internal/tape
-  │   ├── internal/context
+  │   ├── internal/ctxmgr
   │   ├── internal/hooks
   │   └── internal/router
   ├── internal/channel/cli
@@ -110,14 +110,17 @@ cmd/golem/main.go
 | [03](03-llm-types.md) | internal/llm/types.go | Shared LLM types with JSON tags, json.RawMessage params |
 | [04](04-llm-clients.md) | internal/llm/*.go | OpenAI + Anthropic clients with streaming, wire-format separation |
 | [05](05-tape.md) | internal/tape/*.go | Append-only JSONL tape store |
-| [05a](05a-context-management.md) | internal/context/strategy.go | Pluggable ContextStrategy interface |
+| [05a](05a-context-management.md) | internal/ctxmgr/strategy.go | Pluggable ContextStrategy interface |
 | [06](06-tools.md) | internal/tools/*.go | Tool interface, registry, skills, progressive |
 | [07](07-router.md) | internal/router/router.go | Input routing and comma command parsing |
 | [08](08-shell.md) | internal/executor/*.go | Executor interface + LocalExecutor |
+| [08a](08a-hooks.md) | internal/hooks/*.go | Hook interface, event Bus, LoggingHook |
+| [08b](08b-fs.md) | internal/fs/*.go | FS interface + LocalFS with sandbox |
 | [09](09-builtin-tools.md) | internal/tools/builtin/*.go | Shell tool (uses Executor) + file ops (uses FS) |
 | [10](10-agent.md) | internal/agent/agent.go | Core ReAct loop (uses hooks.Bus) |
 | [11](11-channels.md) | internal/channel/*.go | Channel interface + CLI + stubs |
 | [12](12-main.md) | cmd/golem/main.go | Entry point, wiring, signal handling |
+| [12a](12a-integration-tests.md) | internal/agent/*_test.go | End-to-end integration tests with mock LLM |
 | [13](13-abstraction-review.md) | — | Abstraction review: Executor, Hooks, FS rationale |
 
 ## What NOT to Abstract (Rationale)

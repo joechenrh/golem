@@ -17,7 +17,7 @@ type AgentLoop struct {
     llm             llm.Client
     tools           *tools.Registry
     tape            tape.Store
-    contextStrategy context.ContextStrategy  // pluggable context management
+    contextStrategy ctxmgr.ContextStrategy   // pluggable context management
     hooks           *hooks.Bus               // lifecycle event bus
     router          *router.Router
     config          *config.Config
@@ -25,7 +25,7 @@ type AgentLoop struct {
 }
 
 func New(llm llm.Client, tools *tools.Registry, tape tape.Store,
-         ctxStrategy context.ContextStrategy, hookBus *hooks.Bus,
+         ctxStrategy ctxmgr.ContextStrategy, hookBus *hooks.Bus,
          cfg *config.Config, logger *zap.Logger) *AgentLoop
 ```
 

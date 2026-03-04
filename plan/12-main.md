@@ -53,7 +53,7 @@ func main() {
     filesystem := fs.NewLocalFS(workDir)
 
     // 7. Initialize context strategy
-    ctxStrategy, err := context.NewContextStrategy(cfg.ContextStrategy, llmClient)
+    ctxStrategy, err := ctxmgr.NewContextStrategy(cfg.ContextStrategy)
 
     // 8. Build hook bus
     hookBus := hooks.NewBus()

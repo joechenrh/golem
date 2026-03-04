@@ -195,6 +195,8 @@ func (s *FileStore) readEntries() ([]TapeEntry, error) {
 
 	var entries []TapeEntry
 	scanner := bufio.NewScanner(f)
+	// Increase buffer to 1MB to handle large tape entries (e.g. verbose tool outputs).
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
