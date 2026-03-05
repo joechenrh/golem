@@ -266,6 +266,8 @@ func BuildAgent(
 	hookBus := hooks.NewBus(logger)
 	hookBus.Register(hooks.NewLoggingHook(logger))
 	hookBus.Register(hooks.NewSafetyHook())
+	metricsHook := hooks.NewMetricsHook()
+	hookBus.Register(metricsHook)
 
 	// 6. Build channel registry.
 	channels := make(map[string]channel.Channel)
@@ -317,6 +319,7 @@ func BuildAgent(
 
 	// 9. Create agent loop.
 	loop := agent.New(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
+	loop.MetricsSummary = metricsHook.Summary
 
 	// 10. Create SessionManager for agents with remote channels.
 	// Each remote chat gets its own AgentLoop with isolated tape and tools.

@@ -17,6 +17,7 @@ var internalCommands = map[string]bool{
 	"help":        true,
 	"quit":        true,
 	"usage":       true,
+	"metrics":     true,
 	"tape.info":   true,
 	"tape.search": true,
 	"tools":       true,

@@ -39,6 +39,10 @@ type AgentLoop struct {
 
 	// Self-correction: per-tool failure counts, reset each turn.
 	toolFailures map[string]int
+
+	// MetricsSummary is an optional function that returns metrics text.
+	// Set by the wiring layer when a MetricsHook is registered.
+	MetricsSummary func() string
 }
 
 const maxToolFailures = 3
@@ -542,6 +546,12 @@ func (a *AgentLoop) handleInternalCommand(
 			a.sessionUsage.PromptTokens, a.sessionUsage.CompletionTokens, a.sessionUsage.TotalTokens,
 			a.turnUsage.PromptTokens, a.turnUsage.CompletionTokens, a.turnUsage.TotalTokens), nil
 
+	case "metrics":
+		if a.MetricsSummary != nil {
+			return a.MetricsSummary(), nil
+		}
+		return "Metrics not available.", nil
+
 	case "reset":
 		label := args
 		if label == "" {
@@ -562,6 +572,7 @@ func (a *AgentLoop) helpText() string {
   :help              Show this help message
   :quit              Exit golem
   :usage             Show token usage statistics
+  :metrics           Show operational metrics
   :tape.info         Show tape statistics
   :tape.search <q>   Search tape history
   :tools             List registered tools
