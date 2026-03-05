@@ -60,6 +60,10 @@ type Config struct {
 	MnemosAutoEmbedModel string // auto-embed model (e.g. "tidbcloud_free/amazon/titan-embed-text-v2")
 	MnemosAutoEmbedDims  int    // auto-embed dimensions (default: 1024)
 
+	// Sessions
+	MaxSessions     int           // max concurrent per-chat sessions (default: 100)
+	SessionIdleTime time.Duration // evict sessions idle longer than this (default: 24h)
+
 	// Web
 	WebSearchBackend string // "bing", "stub" (default: "bing")
 
@@ -89,6 +93,8 @@ func Load(agentName string, flagOverrides map[string]string) (*Config, error) {
 		Executor:         env("GOLEM_EXECUTOR", "local"),
 		TapeDir:          expandHome(env("GOLEM_TAPE_DIR", "~/.golem/tapes")),
 		SkillsDir:        env("GOLEM_SKILLS_DIR", ".agent/skills"),
+		MaxSessions:      envInt("GOLEM_MAX_SESSIONS", 100),
+		SessionIdleTime:  envDuration("GOLEM_SESSION_IDLE_TIME", 24*time.Hour),
 		WebSearchBackend: env("GOLEM_WEB_SEARCH_BACKEND", "bing"),
 		LogLevel:         env("GOLEM_LOG_LEVEL", "info"),
 

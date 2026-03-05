@@ -63,7 +63,7 @@ func (a *AgentLoop) HandleInput(ctx context.Context, msg channel.IncomingMessage
 	}
 
 	// Record user message to tape.
-	a.appendMessage(llm.RoleUser, msg.Text, nil)
+	a.appendMessage(llm.RoleUser, msg.Text, nil, msg.SenderID)
 
 	// Emit user message hook.
 	a.hooks.Emit(ctx, hooks.Event{
@@ -89,7 +89,7 @@ func (a *AgentLoop) HandleInputStream(ctx context.Context, msg channel.IncomingM
 	}
 
 	// Record user message to tape.
-	a.appendMessage(llm.RoleUser, msg.Text, nil)
+	a.appendMessage(llm.RoleUser, msg.Text, nil, msg.SenderID)
 
 	// Emit user message hook.
 	a.hooks.Emit(ctx, hooks.Event{
@@ -183,7 +183,7 @@ func (a *AgentLoop) executeLLMCall(ctx context.Context, modelName string, maxTok
 // processToolCalls records the assistant message, expands tool schemas, and
 // executes each tool call, recording results to the tape.
 func (a *AgentLoop) processToolCalls(ctx context.Context, resp *llm.ChatResponse) {
-	a.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls)
+	a.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "")
 
 	// Auto-expand any tool the model calls, so the next iteration
 	// sends the full parameter schema (progressive disclosure).
@@ -220,7 +220,7 @@ func (a *AgentLoop) processAssistantResponse(ctx context.Context, resp *llm.Chat
 		}
 	}
 
-	a.appendMessage(llm.RoleAssistant, content, nil)
+	a.appendMessage(llm.RoleAssistant, content, nil, "")
 	return content
 }
 
@@ -450,13 +450,17 @@ func (a *AgentLoop) buildSystemPrompt() string {
 }
 
 // appendMessage records a message to the tape.
-func (a *AgentLoop) appendMessage(role llm.Role, content string, toolCalls []llm.ToolCall) {
+// senderID is optional and only set for user messages in group chats.
+func (a *AgentLoop) appendMessage(role llm.Role, content string, toolCalls []llm.ToolCall, senderID string) {
 	payload := map[string]any{
 		"role":    string(role),
 		"content": content,
 	}
 	if len(toolCalls) > 0 {
 		payload["tool_calls"] = toolCalls
+	}
+	if senderID != "" {
+		payload["sender_id"] = senderID
 	}
 
 	a.tape.Append(tape.TapeEntry{

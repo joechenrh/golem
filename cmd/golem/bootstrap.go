@@ -38,7 +38,8 @@ type AgentInstance struct {
 	Name     string
 	Config   *config.Config
 	Logger   *zap.Logger
-	Loop     *agent.AgentLoop
+	Loop     *agent.AgentLoop      // used by CLI (single session)
+	Sessions *agent.SessionManager // used by remote channels (per-chat)
 	Channels map[string]channel.Channel
 	Registry *tools.Registry
 	TapePath string
@@ -57,6 +58,12 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 	inCh := make(chan channel.IncomingMessage, 100)
 	gctx, gcancel := context.WithCancel(ctx)
 	defer gcancel()
+
+	// Start periodic session eviction if sessions are enabled.
+	if inst.Sessions != nil {
+		inst.Sessions.StartEvictionLoop(gctx,
+			10*time.Minute, inst.Config.SessionIdleTime)
+	}
 
 	var g errgroup.Group
 
@@ -108,6 +115,13 @@ func (inst *AgentInstance) processMessage(ctx context.Context, msg channel.Incom
 		return false
 	}
 
+	// Select the appropriate AgentLoop: per-chat session for remote channels,
+	// the shared loop for CLI.
+	loop := inst.Loop
+	if inst.Sessions != nil && msg.ChannelName != "cli" {
+		loop = inst.Sessions.GetOrCreate(msg.ChannelID)
+	}
+
 	if ch.SupportsStreaming() {
 		tokenCh := make(chan string, 100)
 
@@ -119,7 +133,7 @@ func (inst *AgentInstance) processMessage(ctx context.Context, msg channel.Incom
 			}
 		}()
 
-		err := inst.Loop.HandleInputStream(ctx, msg, tokenCh)
+		err := loop.HandleInputStream(ctx, msg, tokenCh)
 		close(tokenCh)
 		<-streamDone
 		if err != nil {
@@ -129,7 +143,7 @@ func (inst *AgentInstance) processMessage(ctx context.Context, msg channel.Incom
 			inst.logOrPrintError(ch, "Error: "+err.Error())
 		}
 	} else {
-		response, err := inst.Loop.HandleInput(ctx, msg)
+		response, err := loop.HandleInput(ctx, msg)
 		if err != nil {
 			if errors.Is(err, agent.ErrQuit) {
 				return true
@@ -249,11 +263,34 @@ func buildAgent(name string, cfg *config.Config, logger *zap.Logger) (*AgentInst
 	// 9. Create agent loop.
 	loop := agent.New(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
 
+	// 10. Create SessionManager for agents with remote channels.
+	// Each remote chat gets its own AgentLoop with isolated tape and tools.
+	var sessions *agent.SessionManager
+	if cfg.HasRemoteChannels() {
+		toolFactory := func() *tools.Registry {
+			return buildToolRegistry(cfg, exec, filesystem, larkCh, logger)
+		}
+		sessions = agent.NewSessionManager(agent.SessionFactory{
+			LLMClient:       llmClient,
+			Config:          cfg,
+			Logger:          logger,
+			ToolFactory:     toolFactory,
+			ContextStrategy: cfg.ContextStrategy,
+			AgentName:       name,
+		}, logger)
+
+		// Restore sessions from existing tape files.
+		if err := sessions.LoadExisting(cfg.TapeDir); err != nil {
+			logger.Warn("failed to restore sessions", zap.Error(err))
+		}
+	}
+
 	return &AgentInstance{
 		Name:     name,
 		Config:   cfg,
 		Logger:   logger,
 		Loop:     loop,
+		Sessions: sessions,
 		Channels: channels,
 		Registry: registry,
 		TapePath: tapePath,

@@ -62,6 +62,15 @@ func BuildMessages(entries []TapeEntry) []llm.Message {
 		if err := json.Unmarshal(data, &msg); err != nil {
 			continue
 		}
+
+		// For user messages with sender info, prepend [sender:xxx] so the
+		// LLM can distinguish speakers in group chats.
+		if msg.Role == llm.RoleUser {
+			if senderID, _ := e.Payload["sender_id"].(string); senderID != "" {
+				msg.Content = "[sender:" + senderID + "] " + msg.Content
+			}
+		}
+
 		msgs = append(msgs, msg)
 	}
 

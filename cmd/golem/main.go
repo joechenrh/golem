@@ -56,7 +56,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// 7. Run agents with a plain errgroup (no WithContext).
+	// 7. Track claimed Lark app IDs to avoid duplicate WebSocket connections.
+	claimedLarkApps := make(map[string]bool)
+	if defaultAgent.Config.LarkAppID != "" {
+		claimedLarkApps[defaultAgent.Config.LarkAppID] = true
+	}
+
+	// 8. Run agents with a plain errgroup (no WithContext).
 	// The CLI agent's goroutine calls defer cancel() so that when it exits
 	// for any reason, the shared context is cancelled and all background
 	// agents stop.
@@ -69,7 +75,7 @@ func main() {
 	})
 
 	// Background agents: errors logged, don't kill CLI.
-	for _, ba := range discoverAndBuildBackgroundAgents(cliCh, logger) {
+	for _, ba := range discoverAndBuildBackgroundAgents(cliCh, logger, claimedLarkApps) {
 		g.Go(func() error {
 			if err := ba.Run(ctx); err != nil && !errors.Is(err, ErrAgentQuit) {
 				logger.Error("background agent error", zap.String("agent", ba.Name), zap.Error(err))
@@ -84,7 +90,9 @@ func main() {
 
 // discoverAndBuildBackgroundAgents finds agent configs in ~/.golem/agents/,
 // loads each one, and builds an AgentInstance for those with remote channels.
-func discoverAndBuildBackgroundAgents(cliCh *cli.CLIChannel, logger *zap.Logger) []*AgentInstance {
+// claimedLarkApps tracks Lark app IDs already in use to avoid duplicate
+// WebSocket connections — agents whose LarkAppID is already claimed are skipped.
+func discoverAndBuildBackgroundAgents(cliCh *cli.CLIChannel, logger *zap.Logger, claimedLarkApps map[string]bool) []*AgentInstance {
 	names, err := config.DiscoverAgents()
 	if err != nil {
 		logger.Error("agent discovery", zap.Error(err))
@@ -108,10 +116,22 @@ func discoverAndBuildBackgroundAgents(cliCh *cli.CLIChannel, logger *zap.Logger)
 			continue
 		}
 
+		// Skip agents whose Lark app ID is already claimed by another agent.
+		if agentCfg.LarkAppID != "" && claimedLarkApps[agentCfg.LarkAppID] {
+			logger.Info("skipping agent: Lark app already claimed",
+				zap.String("agent", name), zap.String("app_id", agentCfg.LarkAppID))
+			continue
+		}
+
 		inst, err := buildAgent(name, agentCfg, logger.Named(name))
 		if err != nil {
 			logger.Error("building agent", zap.String("agent", name), zap.Error(err))
 			continue
+		}
+
+		// Claim the Lark app ID after successful build.
+		if inst.Config.LarkAppID != "" {
+			claimedLarkApps[inst.Config.LarkAppID] = true
 		}
 
 		cliCh.PrintSystem(fmt.Sprintf("Background agent %q started", name))
