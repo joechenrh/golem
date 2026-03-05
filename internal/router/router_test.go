@@ -20,6 +20,7 @@ func TestRouteUser_InternalCommands(t *testing.T) {
 		{"/tools", "tools", "", CommandInternal},
 		{"/skills", "skills", "", CommandInternal},
 		{"/model openai:gpt-4o", "model", "openai:gpt-4o", CommandInternal},
+		{"/reset context-reset", "reset", "context-reset", CommandInternal},
 		{"//reset context-reset", "/reset", "context-reset", CommandInternal},
 	}
 

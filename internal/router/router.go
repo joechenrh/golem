@@ -21,6 +21,7 @@ var internalCommands = map[string]bool{
 	"tools":       true,
 	"skills":      true,
 	"model":       true,
+	"reset":       true,
 	"/reset":      true,
 }
 

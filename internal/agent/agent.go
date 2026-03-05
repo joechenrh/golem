@@ -472,7 +472,7 @@ func (a *AgentLoop) handleInternalCommand(
 		// Model switching would require creating a new client — for now just report.
 		return fmt.Sprintf("Model switching is not yet supported. Current: %s", a.config.Model), nil
 
-	case "/reset":
+	case "reset", "/reset":
 		label := args
 		if label == "" {
 			label = "manual"
