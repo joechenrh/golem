@@ -84,6 +84,9 @@ func (l *LarkChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMes
 		larkws.WithLogger(sdkLogger),
 	)
 
+	// Start a single eviction ticker instead of spawning a goroutine per message.
+	go l.seenMsgsEvictionLoop(ctx, 5*time.Minute)
+
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- wsClient.Start(ctx)
@@ -120,8 +123,6 @@ func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh ch
 				zap.String("chat_id", *msg.ChatId))
 			return
 		}
-		// Evict old entries in the background so the map doesn't grow forever.
-		go l.evictSeenMsgs(5 * time.Minute)
 	}
 
 	text := extractTextContent(*msg.Content)
@@ -169,15 +170,25 @@ func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh ch
 	<-done
 }
 
-// evictSeenMsgs removes entries from seenMsgs that are older than maxAge.
-func (l *LarkChannel) evictSeenMsgs(maxAge time.Duration) {
-	cutoff := time.Now().Add(-maxAge)
-	l.seenMsgs.Range(func(key, value any) bool {
-		if ts, ok := value.(time.Time); ok && ts.Before(cutoff) {
-			l.seenMsgs.Delete(key)
+// seenMsgsEvictionLoop periodically removes old entries from seenMsgs.
+// Runs as a single goroutine started by Start(), stops when ctx is cancelled.
+func (l *LarkChannel) seenMsgsEvictionLoop(ctx context.Context, maxAge time.Duration) {
+	ticker := time.NewTicker(maxAge)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cutoff := time.Now().Add(-maxAge)
+			l.seenMsgs.Range(func(key, value any) bool {
+				if ts, ok := value.(time.Time); ok && ts.Before(cutoff) {
+					l.seenMsgs.Delete(key)
+				}
+				return true
+			})
 		}
-		return true
-	})
+	}
 }
 
 func truncateForLog(s string, maxLen int) string {
