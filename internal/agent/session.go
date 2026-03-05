@@ -18,15 +18,6 @@ import (
 	"github.com/joechenrh/golem/internal/tools"
 )
 
-// session holds a per-chat AgentLoop and tracks when it was last used.
-type session struct {
-	loop       *AgentLoop
-	ctx        context.Context    // cancelled on eviction or shutdown
-	cancel     context.CancelFunc // cancels ctx
-	lastAccess time.Time
-	tapePath   string
-}
-
 // SessionFactory contains everything needed to create a new per-chat session.
 type SessionFactory struct {
 	LLMClient       llm.Client
@@ -37,11 +28,11 @@ type SessionFactory struct {
 	AgentName       string
 }
 
-// SessionManager maintains isolated AgentLoop instances keyed by channel ID
+// SessionManager maintains isolated Session instances keyed by channel ID
 // (e.g. "lark:oc_xxx"). Each chat gets its own tape and tool registry.
 type SessionManager struct {
 	mu       sync.Mutex
-	sessions map[string]*session
+	sessions map[string]*Session
 	factory  SessionFactory
 	logger   *zap.Logger
 	baseCtx  context.Context // parent context for all session contexts
@@ -52,7 +43,7 @@ func NewSessionManager(
 	factory SessionFactory, logger *zap.Logger,
 ) *SessionManager {
 	return &SessionManager{
-		sessions: make(map[string]*session),
+		sessions: make(map[string]*Session),
 		factory:  factory,
 		logger:   logger,
 		baseCtx:  context.Background(),
@@ -67,18 +58,17 @@ func (sm *SessionManager) SetBaseContext(ctx context.Context) {
 	sm.baseCtx = ctx
 }
 
-// GetOrCreate returns the AgentLoop and session context for the given channelID,
-// creating a new session with its own tape file and tool registry if one doesn't
-// exist. The returned context is cancelled when the session is evicted or shut down.
+// GetOrCreate returns the Session for the given channelID, creating a new
+// one with its own tape file and tool registry if one doesn't exist.
 func (sm *SessionManager) GetOrCreate(
 	channelID string,
-) (*AgentLoop, context.Context) {
+) *Session {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
 	if s, ok := sm.sessions[channelID]; ok {
 		s.lastAccess = time.Now()
-		return s.loop, s.ctx
+		return s
 	}
 
 	// Enforce max sessions cap by evicting the oldest idle session.
@@ -87,31 +77,24 @@ func (sm *SessionManager) GetOrCreate(
 		sm.evictOldestLocked()
 	}
 
-	loop, tapePath, err := sm.createSession(channelID)
+	sess, err := sm.createSession(channelID)
 	if err != nil {
 		sm.logger.Error("failed to create session, using fallback",
 			zap.String("channel_id", channelID), zap.Error(err))
-		return loop, sm.baseCtx
+		return sess
 	}
 
-	ctx, cancel := context.WithCancel(sm.baseCtx)
-	sm.sessions[channelID] = &session{
-		loop:       loop,
-		ctx:        ctx,
-		cancel:     cancel,
-		lastAccess: time.Now(),
-		tapePath:   tapePath,
-	}
+	sm.sessions[channelID] = sess
 	sm.logger.Info("created new session",
-		zap.String("channel_id", channelID), zap.String("tape", tapePath))
+		zap.String("channel_id", channelID), zap.String("tape", sess.TapePath))
 
-	return loop, ctx
+	return sess
 }
 
-// createSession builds a new AgentLoop with a fresh tape and tool registry.
+// createSession builds a new Session with a fresh tape and tool registry.
 func (sm *SessionManager) createSession(
 	channelID string,
-) (*AgentLoop, string, error) {
+) (*Session, error) {
 	cfg := sm.factory.Config
 
 	// Sanitize channelID for use in filename (replace colons, slashes).
@@ -122,12 +105,12 @@ func (sm *SessionManager) createSession(
 
 	tapeStore, err := tape.NewFileStore(tapePath)
 	if err != nil {
-		return nil, "", fmt.Errorf("creating tape: %w", err)
+		return nil, fmt.Errorf("creating tape: %w", err)
 	}
 
 	ctxStrategy, err := ctxmgr.NewContextStrategy(sm.factory.ContextStrategy)
 	if err != nil {
-		return nil, "", fmt.Errorf("context strategy: %w", err)
+		return nil, fmt.Errorf("context strategy: %w", err)
 	}
 
 	hookBus := hooks.NewBus(sm.logger)
@@ -136,15 +119,20 @@ func (sm *SessionManager) createSession(
 
 	registry := sm.factory.ToolFactory()
 
-	loop := New(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger)
+	ctx, cancel := context.WithCancel(sm.baseCtx)
+	sess := NewSession(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger)
+	sess.ctx = ctx
+	sess.cancel = cancel
+	sess.lastAccess = time.Now()
+	sess.TapePath = tapePath
 
-	return loop, tapePath, nil
+	return sess, nil
 }
 
-// createSessionFromTape builds a new AgentLoop resuming from an existing tape file.
+// createSessionFromTape builds a new Session resuming from an existing tape file.
 func (sm *SessionManager) createSessionFromTape(
 	tapePath string,
-) (*AgentLoop, error) {
+) (*Session, error) {
 	cfg := sm.factory.Config
 
 	tapeStore, err := tape.NewFileStore(tapePath)
@@ -163,7 +151,10 @@ func (sm *SessionManager) createSessionFromTape(
 
 	registry := sm.factory.ToolFactory()
 
-	return New(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger), nil
+	sess := NewSession(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger)
+	sess.TapePath = tapePath
+
+	return sess, nil
 }
 
 // LoadExisting discovers and resumes sessions from existing tape files.
@@ -196,7 +187,7 @@ func (sm *SessionManager) LoadExisting(tapeDir string) error {
 			continue
 		}
 
-		loop, err := sm.createSessionFromTape(tapePath)
+		sess, err := sm.createSessionFromTape(tapePath)
 		if err != nil {
 			sm.logger.Warn("skipping session restore",
 				zap.String("chat_id", chatID), zap.Error(err))
@@ -204,13 +195,11 @@ func (sm *SessionManager) LoadExisting(tapeDir string) error {
 		}
 
 		ctx, cancel := context.WithCancel(sm.baseCtx)
-		sm.sessions[chatID] = &session{
-			loop:       loop,
-			ctx:        ctx,
-			cancel:     cancel,
-			lastAccess: info.ModTime(),
-			tapePath:   tapePath,
-		}
+		sess.ctx = ctx
+		sess.cancel = cancel
+		sess.lastAccess = info.ModTime()
+
+		sm.sessions[chatID] = sess
 		sm.logger.Info("restored session",
 			zap.String("chat_id", chatID), zap.String("tape", tapePath))
 	}
@@ -229,7 +218,9 @@ func (sm *SessionManager) evictOldestLocked() {
 		}
 	}
 	if oldestID != "" {
-		sm.sessions[oldestID].cancel()
+		if sm.sessions[oldestID].cancel != nil {
+			sm.sessions[oldestID].cancel()
+		}
 		delete(sm.sessions, oldestID)
 		sm.logger.Info("evicted oldest session to make room", zap.String("channel_id", oldestID))
 	}
@@ -244,7 +235,9 @@ func (sm *SessionManager) EvictIdle(maxAge time.Duration) int {
 	evicted := 0
 	for id, s := range sm.sessions {
 		if s.lastAccess.Before(cutoff) {
-			s.cancel()
+			if s.cancel != nil {
+				s.cancel()
+			}
 			delete(sm.sessions, id)
 			evicted++
 			sm.logger.Info("evicted idle session", zap.String("channel_id", id))
@@ -280,7 +273,9 @@ func (sm *SessionManager) Shutdown() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	for id, s := range sm.sessions {
-		s.cancel()
+		if s.cancel != nil {
+			s.cancel()
+		}
 		delete(sm.sessions, id)
 	}
 	sm.logger.Info("all sessions shut down")
@@ -291,6 +286,14 @@ func (sm *SessionManager) Len() int {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	return len(sm.sessions)
+}
+
+// Context returns the session's context. For sessions managed by
+// SessionManager, this is cancelled on eviction or shutdown.
+// For the default CLI session, this returns nil (callers should use
+// their own context).
+func (s *Session) Context() context.Context {
+	return s.ctx
 }
 
 // sanitizeForFilename replaces characters unsafe for filenames.

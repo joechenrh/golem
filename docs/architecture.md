@@ -9,7 +9,7 @@ golem/
 ├── cmd/golem/main.go                 # Entry point: flags, logger, signal handling
 ├── internal/
 │   ├── agent/                        # ReAct loop orchestration
-│   │   ├── agent.go                  # AgentLoop: core loop, LLM calls, tool dispatch
+│   │   ├── agent.go                  # Session: ReAct loop, LLM calls, tool dispatch
 │   │   └── session.go                # SessionManager: per-chat isolation
 │   ├── app/                          # Wiring layer (separate from main for testability)
 │   │   └── app.go                    # AgentInstance, BuildAgent, Run, message dispatch
@@ -245,7 +245,7 @@ type Store interface {
 
 ## Agent Loop (`internal/agent/agent.go`)
 
-The `AgentLoop` is the core orchestrator implementing the ReAct cycle.
+The `Session` is the core orchestrator implementing the ReAct cycle.
 
 ### Data Flow
 
@@ -332,13 +332,12 @@ Remote channels (Lark, Telegram) need per-chat isolation so concurrent conversat
 
 ```
 SessionManager
-    ├─ sessions: map[chatID] → session
-    │     └─ session { loop *AgentLoop, ctx, cancel, lastAccess, tapePath }
+    ├─ sessions: map[chatID] → *Session
     │
-    ├─ GetOrCreate(chatID) → (AgentLoop, ctx)
+    ├─ GetOrCreate(chatID) → *Session
     │     ├─ Return existing session (update lastAccess)
     │     ├─ Evict oldest if at MaxSessions cap
-    │     └─ Create new: fresh tape file, tool registry, AgentLoop
+    │     └─ Create new: fresh tape, tool registry, context
     │
     ├─ LoadExisting() → restore sessions from tape files on disk
     │     └─ Pattern: session-<agent>-<chatID>-<timestamp>.jsonl
@@ -349,11 +348,12 @@ SessionManager
     └─ Shutdown() → cancel all session contexts
 ```
 
-Each session has its own:
-- Tape file (conversation history)
+Each `Session` is self-contained with:
+- Tape file (conversation history, tracked by `TapePath`)
 - Tool registry (independent progressive disclosure state)
-- AgentLoop (own turn/session usage, tool failure tracking)
-- Context with cancellation (eviction cancels in-flight work)
+- Token tracking (turn/session usage, tool failure counts)
+- Lifecycle fields (`ctx`, `cancel`, `lastAccess`) managed by `SessionManager`
+- For the default CLI session, lifecycle fields are unused — callers pass their own context
 
 ---
 
@@ -363,7 +363,7 @@ The `app` package separates component assembly from `main` for testability.
 
 ### AgentInstance
 
-Bundles all runtime components: `AgentLoop` (CLI), `SessionManager` (remote), channels, config, logger. The `Run()` method starts channels, processes messages, and blocks.
+Bundles all runtime components: a default `Session` (CLI), a `SessionManager` (remote channels), channels, config, logger. The `Run()` method starts channels, processes messages, and blocks.
 
 ### Message Dispatch
 
@@ -388,7 +388,7 @@ processMessages()
 6. Create hook bus (logging, safety, metrics)
 7. Build tool registry: file tools, shell, web, Lark, memory, skills
 8. Register middleware: cache → redact
-9. Create `AgentLoop`
+9. Create default `Session` (for CLI)
 10. Create `SessionManager` (for remote channels)
 11. Return `AgentInstance`
 
@@ -502,7 +502,7 @@ Return result
 
 ### Sub-Agent (`spawn_agent`)
 
-Delegates a task to a fresh `AgentLoop` with its own context. The sub-agent has standard tools but **no spawn capability** (prevents recursive spawning). The parent can pass context via the `context` parameter, which is prepended to the prompt.
+Delegates a task to a fresh `Session` with its own context. The sub-agent has standard tools but **no spawn capability** (prevents recursive spawning). The parent can pass context via the `context` parameter, which is prepended to the prompt.
 
 ### Skills
 

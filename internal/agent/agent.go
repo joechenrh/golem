@@ -23,8 +23,10 @@ import (
 	"github.com/joechenrh/golem/internal/tools"
 )
 
-// AgentLoop orchestrates the ReAct loop: LLM calls, tool execution, routing.
-type AgentLoop struct {
+// Session orchestrates the ReAct loop for a single conversation: LLM calls,
+// tool execution, tape recording, command routing, and token tracking.
+// Each conversation (CLI or remote chat) gets its own Session.
+type Session struct {
 	llm             llm.Client
 	tools           *tools.Registry
 	tape            tape.Store
@@ -43,12 +45,19 @@ type AgentLoop struct {
 	// MetricsSummary is an optional function that returns metrics text.
 	// Set by the wiring layer when a MetricsHook is registered.
 	MetricsSummary func() string
+
+	// Lifecycle fields (managed by SessionManager for remote chats;
+	// unused for the default CLI session).
+	ctx        context.Context
+	cancel     context.CancelFunc
+	lastAccess time.Time
+	TapePath   string
 }
 
 const maxToolFailures = 3
 
-// New creates an AgentLoop with all dependencies wired in.
-func New(
+// NewSession creates a Session with all dependencies wired in.
+func NewSession(
 	llmClient llm.Client,
 	toolRegistry *tools.Registry,
 	tapeStore tape.Store,
@@ -56,8 +65,8 @@ func New(
 	hookBus *hooks.Bus,
 	cfg *config.Config,
 	logger *zap.Logger,
-) *AgentLoop {
-	return &AgentLoop{
+) *Session {
+	return &Session{
 		llm:             llmClient,
 		tools:           toolRegistry,
 		tape:            tapeStore,
@@ -70,28 +79,28 @@ func New(
 
 // HandleInput processes a user message and returns the final response.
 // Used by non-streaming channels.
-func (a *AgentLoop) HandleInput(
+func (s *Session) HandleInput(
 	ctx context.Context, msg channel.IncomingMessage,
 ) (string, error) {
 	// Route user input.
 	route := router.RouteUser(msg.Text)
 	if route.IsCommand {
-		return a.handleCommand(ctx, route)
+		return s.handleCommand(ctx, route)
 	}
 
-	return a.runReActLoop(ctx, false, nil, &msg)
+	return s.runReActLoop(ctx, false, nil, &msg)
 }
 
 // HandleInputStream processes a user message with streaming.
 // Tokens are sent to tokenCh as they arrive. Used by CLI.
-func (a *AgentLoop) HandleInputStream(
+func (s *Session) HandleInputStream(
 	ctx context.Context, msg channel.IncomingMessage,
 	tokenCh chan<- string,
 ) error {
 	// Route user input.
 	route := router.RouteUser(msg.Text)
 	if route.IsCommand {
-		result, err := a.handleCommand(ctx, route)
+		result, err := s.handleCommand(ctx, route)
 		if err != nil {
 			return err
 		}
@@ -99,7 +108,7 @@ func (a *AgentLoop) HandleInputStream(
 		return nil
 	}
 
-	_, err := a.runReActLoop(ctx, true, tokenCh, &msg)
+	_, err := s.runReActLoop(ctx, true, tokenCh, &msg)
 	return err
 }
 
@@ -107,31 +116,31 @@ func (a *AgentLoop) HandleInputStream(
 // or the iteration limit is reached. If pendingMsg is non-nil, the user message
 // is included in context but only persisted to the tape after the first
 // successful LLM call, so a failed API request doesn't leave a dangling entry.
-func (a *AgentLoop) runReActLoop(
+func (s *Session) runReActLoop(
 	ctx context.Context, stream bool,
 	tokenCh chan<- string,
 	pendingMsg *channel.IncomingMessage,
 ) (string, error) {
-	_, modelName := llm.ParseModelProvider(a.config.Model)
+	_, modelName := llm.ParseModelProvider(s.config.Model)
 	maxTokens := ctxmgr.ModelContextWindow(modelName)
 
 	// Reset per-turn tracking.
-	a.turnUsage = llm.Usage{}
-	a.toolFailures = make(map[string]int)
+	s.turnUsage = llm.Usage{}
+	s.toolFailures = make(map[string]int)
 
 	const maxNudges = 2
 	nudges := 0
 
-	for iter := range a.config.MaxToolIter {
-		resp, err := a.executeLLMCall(ctx, modelName, maxTokens, iter, stream, tokenCh, pendingMsg)
+	for iter := range s.config.MaxToolIter {
+		resp, err := s.executeLLMCall(ctx, modelName, maxTokens, iter, stream, tokenCh, pendingMsg)
 		if err != nil {
 			return "", err
 		}
 
 		// First successful LLM call — persist the pending user message.
 		if pendingMsg != nil {
-			a.appendMessage(llm.RoleUser, pendingMsg.Text, nil, pendingMsg.SenderID)
-			a.hooks.Emit(ctx, hooks.Event{
+			s.appendMessage(llm.RoleUser, pendingMsg.Text, nil, pendingMsg.SenderID)
+			s.hooks.Emit(ctx, hooks.Event{
 				Type:    hooks.EventUserMessage,
 				Payload: map[string]any{"text": pendingMsg.Text, "channel_id": pendingMsg.ChannelID},
 			})
@@ -140,14 +149,14 @@ func (a *AgentLoop) runReActLoop(
 
 		// Tool calls present — execute them and continue the loop.
 		if len(resp.ToolCalls) > 0 {
-			a.processToolCalls(ctx, resp)
+			s.processToolCalls(ctx, resp)
 			continue
 		}
 
 		// Empty response with no tool calls — retry instead of
 		// returning a blank answer to the user.
 		if strings.TrimSpace(resp.Content) == "" {
-			a.logger.Warn("LLM returned empty response, retrying",
+			s.logger.Warn("LLM returned empty response, retrying",
 				zap.Int("iter", iter))
 			continue
 		}
@@ -155,16 +164,16 @@ func (a *AgentLoop) runReActLoop(
 		// No tool calls. If the response looks like a plan rather than a
 		// final answer, nudge the LLM to actually use tools.
 		if nudges < maxNudges && looksLikePlan(resp.Content) {
-			a.appendMessage(llm.RoleAssistant, resp.Content, nil, "")
-			a.appendMessage(llm.RoleUser, "Don't just describe what you'll do — use the available tools now to proceed.", nil, "")
+			s.appendMessage(llm.RoleAssistant, resp.Content, nil, "")
+			s.appendMessage(llm.RoleUser, "Don't just describe what you'll do — use the available tools now to proceed.", nil, "")
 			nudges++
-			a.logger.Debug("nudging LLM to use tools",
+			s.logger.Debug("nudging LLM to use tools",
 				zap.Int("nudge", nudges), zap.Int("iter", iter))
 			continue
 		}
 
 		// Final answer — no tool calls.
-		content := a.processAssistantResponse(ctx, resp)
+		content := s.processAssistantResponse(ctx, resp)
 		return content, nil
 	}
 
@@ -207,17 +216,17 @@ func looksLikePlan(content string) bool {
 // If pendingMsg is non-nil, its text is appended to the context as a user
 // message without persisting to the tape, so that a failed API call
 // does not leave a dangling tape entry.
-func (a *AgentLoop) executeLLMCall(
+func (s *Session) executeLLMCall(
 	ctx context.Context, modelName string,
 	maxTokens, iter int, stream bool,
 	tokenCh chan<- string,
 	pendingMsg *channel.IncomingMessage,
 ) (*llm.ChatResponse, error) {
-	entries, err := a.tape.Entries()
+	entries, err := s.tape.Entries()
 	if err != nil {
 		return nil, fmt.Errorf("reading tape: %w", err)
 	}
-	messages, err := a.contextStrategy.BuildContext(ctx, entries, maxTokens)
+	messages, err := s.contextStrategy.BuildContext(ctx, entries, maxTokens)
 	if err != nil {
 		return nil, fmt.Errorf("building context: %w", err)
 	}
@@ -234,10 +243,10 @@ func (a *AgentLoop) executeLLMCall(
 		})
 	}
 
-	systemPrompt := a.buildSystemPrompt()
-	toolDefs := a.tools.ToolDefinitions()
+	systemPrompt := s.buildSystemPrompt()
+	toolDefs := s.tools.ToolDefinitions()
 
-	a.hooks.Emit(ctx, hooks.Event{
+	s.hooks.Emit(ctx, hooks.Event{
 		Type:    hooks.EventBeforeLLMCall,
 		Payload: map[string]any{"iteration": iter, "message_count": len(messages)},
 	})
@@ -247,17 +256,17 @@ func (a *AgentLoop) executeLLMCall(
 		SystemPrompt: systemPrompt,
 		Messages:     messages,
 		Tools:        toolDefs,
-		MaxTokens:    a.config.MaxOutputTokens,
+		MaxTokens:    s.config.MaxOutputTokens,
 	}
 
 	var resp *llm.ChatResponse
 	if stream && tokenCh != nil {
-		resp, err = a.doStreamingCall(ctx, req, tokenCh)
+		resp, err = s.doStreamingCall(ctx, req, tokenCh)
 	} else {
-		resp, err = a.llm.Chat(ctx, req)
+		resp, err = s.llm.Chat(ctx, req)
 	}
 	if err != nil {
-		a.hooks.Emit(ctx, hooks.Event{
+		s.hooks.Emit(ctx, hooks.Event{
 			Type:    hooks.EventError,
 			Payload: map[string]any{"error": err.Error()},
 		})
@@ -265,21 +274,21 @@ func (a *AgentLoop) executeLLMCall(
 	}
 
 	// Accumulate token usage.
-	a.turnUsage.PromptTokens += resp.Usage.PromptTokens
-	a.turnUsage.CompletionTokens += resp.Usage.CompletionTokens
-	a.turnUsage.TotalTokens += resp.Usage.TotalTokens
-	a.sessionUsage.PromptTokens += resp.Usage.PromptTokens
-	a.sessionUsage.CompletionTokens += resp.Usage.CompletionTokens
-	a.sessionUsage.TotalTokens += resp.Usage.TotalTokens
+	s.turnUsage.PromptTokens += resp.Usage.PromptTokens
+	s.turnUsage.CompletionTokens += resp.Usage.CompletionTokens
+	s.turnUsage.TotalTokens += resp.Usage.TotalTokens
+	s.sessionUsage.PromptTokens += resp.Usage.PromptTokens
+	s.sessionUsage.CompletionTokens += resp.Usage.CompletionTokens
+	s.sessionUsage.TotalTokens += resp.Usage.TotalTokens
 
-	a.hooks.Emit(ctx, hooks.Event{
+	s.hooks.Emit(ctx, hooks.Event{
 		Type: hooks.EventAfterLLMCall,
 		Payload: map[string]any{
 			"finish_reason":     resp.FinishReason,
 			"tool_call_count":   len(resp.ToolCalls),
 			"prompt_tokens":     resp.Usage.PromptTokens,
 			"completion_tokens": resp.Usage.CompletionTokens,
-			"turn_total_tokens": a.turnUsage.TotalTokens,
+			"turn_total_tokens": s.turnUsage.TotalTokens,
 		},
 	})
 
@@ -288,18 +297,18 @@ func (a *AgentLoop) executeLLMCall(
 
 // processToolCalls records the assistant message, expands tool schemas, and
 // executes each tool call in parallel, recording results to the tape in order.
-func (a *AgentLoop) processToolCalls(
+func (s *Session) processToolCalls(
 	ctx context.Context, resp *llm.ChatResponse,
 ) {
-	a.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "")
+	s.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "")
 
 	// Auto-expand any tool the model calls, so the next iteration
 	// sends the full parameter schema (progressive disclosure).
 	for _, tc := range resp.ToolCalls {
-		a.tools.Expand(tc.Name)
+		s.tools.Expand(tc.Name)
 	}
 	if resp.Content != "" {
-		a.tools.ExpandHints(resp.Content)
+		s.tools.ExpandHints(resp.Content)
 	}
 
 	// Execute tool calls in parallel and collect results in order.
@@ -313,7 +322,7 @@ func (a *AgentLoop) processToolCalls(
 	g, gctx := errgroup.WithContext(ctx)
 	for i, tc := range resp.ToolCalls {
 		g.Go(func() error {
-			res := a.executeTool(gctx, tc)
+			res := s.executeTool(gctx, tc)
 			mu.Lock()
 			results[i] = toolResultEntry{id: tc.ID, name: tc.Name, result: res}
 			mu.Unlock()
@@ -325,14 +334,14 @@ func (a *AgentLoop) processToolCalls(
 	// Append results in the original order so the tape is deterministic.
 	// Track per-tool failure counts for self-correction.
 	for _, r := range results {
-		a.appendToolResult(r.id, r.name, r.result)
+		s.appendToolResult(r.id, r.name, r.result)
 
 		if strings.HasPrefix(r.result, "Error:") {
-			a.toolFailures[r.name]++
-			if a.toolFailures[r.name] >= maxToolFailures {
-				a.appendMessage(llm.RoleUser,
+			s.toolFailures[r.name]++
+			if s.toolFailures[r.name] >= maxToolFailures {
+				s.appendMessage(llm.RoleUser,
 					fmt.Sprintf("Tool %q has failed %d times this turn. Reconsider your approach — try a different tool or method.",
-						r.name, a.toolFailures[r.name]), nil, "")
+						r.name, s.toolFailures[r.name]), nil, "")
 			}
 		}
 	}
@@ -340,7 +349,7 @@ func (a *AgentLoop) processToolCalls(
 
 // processAssistantResponse handles the final answer: runs any embedded comma
 // commands, records the response to the tape, and returns the content.
-func (a *AgentLoop) processAssistantResponse(
+func (s *Session) processAssistantResponse(
 	ctx context.Context, resp *llm.ChatResponse,
 ) string {
 	content := resp.Content
@@ -355,22 +364,22 @@ func (a *AgentLoop) processAssistantResponse(
 				Args:      cmd.Args,
 				Kind:      cmd.Kind,
 			}
-			cmdResult, _ := a.handleCommand(ctx, route)
+			cmdResult, _ := s.handleCommand(ctx, route)
 			content += "\n" + cmdResult
 		}
 	}
 
-	a.appendMessage(llm.RoleAssistant, content, nil, "")
+	s.appendMessage(llm.RoleAssistant, content, nil, "")
 	return content
 }
 
 // doStreamingCall performs a streaming LLM call, sending content tokens to tokenCh,
 // and returns the assembled full response.
-func (a *AgentLoop) doStreamingCall(
+func (s *Session) doStreamingCall(
 	ctx context.Context, req llm.ChatRequest,
 	tokenCh chan<- string,
 ) (*llm.ChatResponse, error) {
-	eventCh, err := a.llm.ChatStream(ctx, req)
+	eventCh, err := s.llm.ChatStream(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -438,11 +447,11 @@ func (a *AgentLoop) doStreamingCall(
 }
 
 // executeTool runs a single tool call with hook emission.
-func (a *AgentLoop) executeTool(
+func (s *Session) executeTool(
 	ctx context.Context, tc llm.ToolCall,
 ) string {
 	// Before tool exec hook — can block execution.
-	if err := a.hooks.Emit(ctx, hooks.Event{
+	if err := s.hooks.Emit(ctx, hooks.Event{
 		Type: hooks.EventBeforeToolExec,
 		Payload: map[string]any{
 			"tool_name": tc.Name,
@@ -453,12 +462,12 @@ func (a *AgentLoop) executeTool(
 		return "Tool execution blocked: " + err.Error()
 	}
 
-	result, err := a.tools.Execute(ctx, tc.Name, tc.Arguments)
+	result, err := s.tools.Execute(ctx, tc.Name, tc.Arguments)
 	if err != nil {
 		result = "Error: " + err.Error()
 	}
 
-	a.hooks.Emit(ctx, hooks.Event{
+	s.hooks.Emit(ctx, hooks.Event{
 		Type: hooks.EventAfterToolExec,
 		Payload: map[string]any{
 			"tool_name": tc.Name,
@@ -471,16 +480,16 @@ func (a *AgentLoop) executeTool(
 }
 
 // handleCommand dispatches an internal or shell colon-command.
-func (a *AgentLoop) handleCommand(
+func (s *Session) handleCommand(
 	ctx context.Context, route router.RouteResult,
 ) (string, error) {
 	switch route.Kind {
 	case router.CommandInternal:
-		return a.handleInternalCommand(ctx, route.Command, route.Args)
+		return s.handleInternalCommand(ctx, route.Command, route.Args)
 	case router.CommandShell:
 		// Shell commands are executed via the shell_exec tool.
 		args, _ := json.Marshal(map[string]string{"command": route.Command})
-		result, err := a.tools.Execute(ctx, "shell_exec", string(args))
+		result, err := s.tools.Execute(ctx, "shell_exec", string(args))
 		if err != nil {
 			return "Error: " + err.Error(), nil
 		}
@@ -490,18 +499,18 @@ func (a *AgentLoop) handleCommand(
 }
 
 // handleInternalCommand processes built-in colon-commands.
-func (a *AgentLoop) handleInternalCommand(
+func (s *Session) handleInternalCommand(
 	_ context.Context, cmd, args string,
 ) (string, error) {
 	switch cmd {
 	case "help":
-		return a.helpText(), nil
+		return s.helpText(), nil
 
 	case "quit":
 		return "", ErrQuit
 
 	case "tape.info":
-		info := a.tape.Info()
+		info := s.tape.Info()
 		return fmt.Sprintf("Tape: %s\nEntries: %d | Anchors: %d | Since last anchor: %d",
 			info.FilePath, info.TotalEntries, info.AnchorCount, info.EntriesSinceAnchor), nil
 
@@ -509,7 +518,7 @@ func (a *AgentLoop) handleInternalCommand(
 		if args == "" {
 			return "Usage: :tape.search <query>", nil
 		}
-		results, err := a.tape.Search(args)
+		results, err := s.tape.Search(args)
 		if err != nil {
 			return "Error: " + err.Error(), nil
 		}
@@ -524,10 +533,10 @@ func (a *AgentLoop) handleInternalCommand(
 		return b.String(), nil
 
 	case "tools":
-		return a.tools.List(), nil
+		return s.tools.List(), nil
 
 	case "skills":
-		list := a.tools.List()
+		list := s.tools.List()
 		// Extract just the skills section.
 		if idx := strings.Index(list, "Skills"); idx >= 0 {
 			return list[idx:], nil
@@ -536,19 +545,19 @@ func (a *AgentLoop) handleInternalCommand(
 
 	case "model":
 		if args == "" {
-			return fmt.Sprintf("Current model: %s (provider: %s)", a.config.Model, a.llm.Provider()), nil
+			return fmt.Sprintf("Current model: %s (provider: %s)", s.config.Model, s.llm.Provider()), nil
 		}
 		// Model switching would require creating a new client — for now just report.
-		return fmt.Sprintf("Model switching is not yet supported. Current: %s", a.config.Model), nil
+		return fmt.Sprintf("Model switching is not yet supported. Current: %s", s.config.Model), nil
 
 	case "usage":
 		return fmt.Sprintf("Session tokens: prompt=%d completion=%d total=%d\nLast turn:      prompt=%d completion=%d total=%d",
-			a.sessionUsage.PromptTokens, a.sessionUsage.CompletionTokens, a.sessionUsage.TotalTokens,
-			a.turnUsage.PromptTokens, a.turnUsage.CompletionTokens, a.turnUsage.TotalTokens), nil
+			s.sessionUsage.PromptTokens, s.sessionUsage.CompletionTokens, s.sessionUsage.TotalTokens,
+			s.turnUsage.PromptTokens, s.turnUsage.CompletionTokens, s.turnUsage.TotalTokens), nil
 
 	case "metrics":
-		if a.MetricsSummary != nil {
-			return a.MetricsSummary(), nil
+		if s.MetricsSummary != nil {
+			return s.MetricsSummary(), nil
 		}
 		return "Metrics not available.", nil
 
@@ -557,7 +566,7 @@ func (a *AgentLoop) handleInternalCommand(
 		if label == "" {
 			label = "manual"
 		}
-		if err := a.tape.AddAnchor(label); err != nil {
+		if err := s.tape.AddAnchor(label); err != nil {
 			return "Error: " + err.Error(), nil
 		}
 		return fmt.Sprintf("Anchor added: %s", label), nil
@@ -567,7 +576,7 @@ func (a *AgentLoop) handleInternalCommand(
 	}
 }
 
-func (a *AgentLoop) helpText() string {
+func (s *Session) helpText() string {
 	return `Available commands:
   :help              Show this help message
   :quit              Exit golem
@@ -583,7 +592,7 @@ func (a *AgentLoop) helpText() string {
 }
 
 // buildSystemPrompt constructs the system prompt for LLM calls.
-func (a *AgentLoop) buildSystemPrompt() string {
+func (s *Session) buildSystemPrompt() string {
 	var b strings.Builder
 
 	b.WriteString("You are golem, a helpful coding assistant.\n\n")
@@ -601,8 +610,8 @@ func (a *AgentLoop) buildSystemPrompt() string {
 
 	// Custom system prompt: prefer per-agent config, fall back to workspace file.
 	switch {
-	case a.config.SystemPrompt != "":
-		b.WriteString(a.config.SystemPrompt)
+	case s.config.SystemPrompt != "":
+		b.WriteString(s.config.SystemPrompt)
 		b.WriteByte('\n')
 	default:
 		if data, err := os.ReadFile(".agent/system-prompt.md"); err == nil {
@@ -616,7 +625,7 @@ func (a *AgentLoop) buildSystemPrompt() string {
 
 // appendMessage records a message to the tape.
 // senderID is optional and only set for user messages in group chats.
-func (a *AgentLoop) appendMessage(
+func (s *Session) appendMessage(
 	role llm.Role, content string,
 	toolCalls []llm.ToolCall, senderID string,
 ) {
@@ -631,17 +640,17 @@ func (a *AgentLoop) appendMessage(
 		payload["sender_id"] = senderID
 	}
 
-	a.tape.Append(tape.TapeEntry{
+	s.tape.Append(tape.TapeEntry{
 		Kind:    tape.KindMessage,
 		Payload: tape.MarshalPayload(payload),
 	})
 }
 
 // appendToolResult records a tool result to the tape with proper metadata.
-func (a *AgentLoop) appendToolResult(
+func (s *Session) appendToolResult(
 	toolCallID, toolName, result string,
 ) {
-	a.tape.Append(tape.TapeEntry{
+	s.tape.Append(tape.TapeEntry{
 		Kind: tape.KindMessage,
 		Payload: tape.MarshalPayload(map[string]any{
 			"role":         string(llm.RoleTool),

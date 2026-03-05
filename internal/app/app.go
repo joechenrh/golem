@@ -42,8 +42,8 @@ type AgentInstance struct {
 	Name     string
 	Config   *config.Config
 	Logger   *zap.Logger
-	Loop     *agent.AgentLoop      // used by CLI (single session)
-	Sessions *agent.SessionManager // used by remote channels (per-chat)
+	Session  *agent.Session        // default session (used by CLI)
+	Sessions *agent.SessionManager // per-chat sessions (used by remote channels)
 	Channels map[string]channel.Channel
 	Printer  channel.SystemPrinter // formatted output (e.g. CLI channel)
 	Registry *tools.Registry
@@ -161,13 +161,16 @@ func (inst *AgentInstance) processMessage(
 		return false
 	}
 
-	// Select the appropriate AgentLoop: per-chat session for remote channels,
-	// the shared loop for CLI. For sessions, use the session's context so that
-	// eviction cancels in-flight work.
-	loop := inst.Loop
-	loopCtx := ctx
+	// Select the appropriate Session: per-chat for remote channels, the
+	// default session for CLI. For managed sessions, use the session's
+	// context so that eviction cancels in-flight work.
+	sess := inst.Session
+	sessCtx := ctx
 	if inst.Sessions != nil && msg.ChannelName != "cli" {
-		loop, loopCtx = inst.Sessions.GetOrCreate(msg.ChannelID)
+		sess = inst.Sessions.GetOrCreate(msg.ChannelID)
+		if sess.Context() != nil {
+			sessCtx = sess.Context()
+		}
 	}
 
 	if ch.SupportsStreaming() {
@@ -176,12 +179,12 @@ func (inst *AgentInstance) processMessage(
 		streamDone := make(chan struct{})
 		go func() {
 			defer close(streamDone)
-			if err := ch.SendStream(loopCtx, msg.ChannelID, tokenCh); err != nil {
+			if err := ch.SendStream(sessCtx, msg.ChannelID, tokenCh); err != nil {
 				inst.Logger.Error("stream send error", zap.Error(err))
 			}
 		}()
 
-		err := loop.HandleInputStream(loopCtx, msg, tokenCh)
+		err := sess.HandleInputStream(sessCtx, msg, tokenCh)
 		close(tokenCh)
 		<-streamDone
 		if err != nil {
@@ -191,7 +194,7 @@ func (inst *AgentInstance) processMessage(
 			inst.logOrPrintError(ch, "Error: "+err.Error())
 		}
 	} else {
-		response, err := loop.HandleInput(loopCtx, msg)
+		response, err := sess.HandleInput(sessCtx, msg)
 		if err != nil {
 			if errors.Is(err, agent.ErrQuit) {
 				return true
@@ -199,7 +202,7 @@ func (inst *AgentInstance) processMessage(
 			inst.logOrPrintError(ch, "Error: "+err.Error())
 			return false
 		}
-		if err := ch.Send(loopCtx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response}); err != nil {
+		if err := ch.Send(sessCtx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response}); err != nil {
 			inst.Logger.Error("send error", zap.Error(err))
 		}
 	}
@@ -308,22 +311,22 @@ func BuildAgent(
 		// Build a registry without spawn_agent.
 		subRegistry := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
 
-		subLoop := agent.New(llmClient, subRegistry, subTape, subCtxStrategy, subHooks, cfg, logger.Named("sub-agent"))
+		subSess := agent.NewSession(llmClient, subRegistry, subTape, subCtxStrategy, subHooks, cfg, logger.Named("sub-agent"))
 
 		msg := channel.IncomingMessage{
 			ChannelName: "internal",
 			Text:        prompt,
 		}
-		return subLoop.HandleInput(ctx, msg)
+		return subSess.HandleInput(ctx, msg)
 	}
 	registry.Register(builtin.NewSpawnAgentTool(runner))
 
-	// 9. Create agent loop.
-	loop := agent.New(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
-	loop.MetricsSummary = metricsHook.Summary
+	// 9. Create default session.
+	defaultSess := agent.NewSession(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
+	defaultSess.MetricsSummary = metricsHook.Summary
 
 	// 10. Create SessionManager for agents with remote channels.
-	// Each remote chat gets its own AgentLoop with isolated tape and tools.
+	// Each remote chat gets its own Session with isolated tape and tools.
 	var sessions *agent.SessionManager
 	if cfg.HasRemoteChannels() {
 		toolFactory := func() *tools.Registry {
@@ -348,7 +351,7 @@ func BuildAgent(
 		Name:     name,
 		Config:   cfg,
 		Logger:   logger,
-		Loop:     loop,
+		Session:  defaultSess,
 		Sessions: sessions,
 		Channels: channels,
 		Printer:  printer,

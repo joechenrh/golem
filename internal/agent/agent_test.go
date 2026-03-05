@@ -81,7 +81,7 @@ func (m *mockTool) Execute(_ context.Context, _ string) (string, error) {
 
 // ── Test Helpers ─────────────────────────────────────────────────
 
-func newTestAgent(t *testing.T, client *mockLLMClient, extraTools ...tools.Tool) *AgentLoop {
+func newTestAgent(t *testing.T, client *mockLLMClient, extraTools ...tools.Tool) *Session {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -106,7 +106,7 @@ func newTestAgent(t *testing.T, client *mockLLMClient, extraTools ...tools.Tool)
 		MaxToolIter: 15,
 	}
 
-	return New(client, registry, store, strategy, bus, cfg, logger)
+	return NewSession(client, registry, store, strategy, bus, cfg, logger)
 }
 
 func cliMsg(text string) channel.IncomingMessage {

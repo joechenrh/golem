@@ -188,7 +188,7 @@ func (m *mockOpenAIServer) callCount() int {
 // ── Test harness ───────────────────────────────────────────────────
 
 type testHarness struct {
-	agent    *AgentLoop
+	agent    *Session
 	tape     tape.Store
 	registry *tools.Registry
 	mock     *mockOpenAIServer
@@ -241,7 +241,7 @@ func newTestHarness(t *testing.T, responses []mockResponse) *testHarness {
 		MaxToolIter: 15,
 	}
 
-	agentLoop := New(client, registry, tapeStore, strategy, bus, cfg, logger)
+	agentLoop := NewSession(client, registry, tapeStore, strategy, bus, cfg, logger)
 
 	return &testHarness{
 		agent:    agentLoop,
