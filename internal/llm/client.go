@@ -102,3 +102,67 @@ func WithBaseURL(url string) ClientOption {
 		o.baseURL = url
 	}
 }
+
+// RateLimitedClient wraps a Client with a concurrency semaphore to limit the
+// number of in-flight LLM calls across all sessions. This prevents bursts of
+// concurrent API requests from exhausting provider rate limits.
+type RateLimitedClient struct {
+	inner Client
+	sem   chan struct{}
+}
+
+// NewRateLimitedClient creates a Client that limits concurrent LLM calls to
+// maxConcurrent. If maxConcurrent <= 0, no limiting is applied.
+func NewRateLimitedClient(inner Client, maxConcurrent int) Client {
+	if maxConcurrent <= 0 {
+		return inner
+	}
+	return &RateLimitedClient{
+		inner: inner,
+		sem:   make(chan struct{}, maxConcurrent),
+	}
+}
+
+func (r *RateLimitedClient) Provider() Provider { return r.inner.Provider() }
+
+func (r *RateLimitedClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	select {
+	case r.sem <- struct{}{}:
+		defer func() { <-r.sem }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return r.inner.Chat(ctx, req)
+}
+
+func (r *RateLimitedClient) ChatStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+	select {
+	case r.sem <- struct{}{}:
+		// Note: we release the semaphore slot when the stream channel is closed,
+		// not when ChatStream returns. This ensures the slot is held for the
+		// duration of the streaming response.
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	ch, err := r.inner.ChatStream(ctx, req)
+	if err != nil {
+		<-r.sem
+		return nil, err
+	}
+
+	// Wrap the channel to release the semaphore when the stream completes.
+	wrapped := make(chan StreamEvent, streamBufferSize)
+	go func() {
+		defer func() { <-r.sem }()
+		defer close(wrapped)
+		for ev := range ch {
+			select {
+			case wrapped <- ev:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return wrapped, nil
+}

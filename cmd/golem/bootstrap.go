@@ -357,7 +357,11 @@ func buildLLMClient(cfg *config.Config) (llm.Client, error) {
 	if baseURL := cfg.BaseURLs[string(provider)]; baseURL != "" {
 		opts = append(opts, llm.WithBaseURL(baseURL))
 	}
-	return llm.NewClient(provider, apiKey, opts...)
+	client, err := llm.NewClient(provider, apiKey, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return llm.NewRateLimitedClient(client, cfg.MaxConcurrentLLM), nil
 }
 
 // buildToolRegistry creates and populates a tool registry with all built-in
