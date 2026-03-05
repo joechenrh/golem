@@ -107,6 +107,9 @@ func (a *AgentLoop) runReActLoop(ctx context.Context, stream bool, tokenCh chan<
 	_, modelName := llm.ParseModelProvider(a.config.Model)
 	maxTokens := ctxmgr.ModelContextWindow(modelName)
 
+	const maxNudges = 2
+	nudges := 0
+
 	for iter := range a.config.MaxToolIter {
 		resp, err := a.executeLLMCall(ctx, modelName, maxTokens, iter, stream, tokenCh)
 		if err != nil {
@@ -119,12 +122,42 @@ func (a *AgentLoop) runReActLoop(ctx context.Context, stream bool, tokenCh chan<
 			continue
 		}
 
+		// No tool calls. If the response looks like a plan rather than a
+		// final answer, nudge the LLM to actually use tools.
+		if nudges < maxNudges && looksLikePlan(resp.Content) {
+			a.appendMessage(llm.RoleAssistant, resp.Content, nil, "")
+			a.appendMessage(llm.RoleUser, "Don't just describe what you'll do — use the available tools now to proceed.", nil, "")
+			nudges++
+			a.logger.Debug("nudging LLM to use tools",
+				zap.Int("nudge", nudges), zap.Int("iter", iter))
+			continue
+		}
+
 		// Final answer — no tool calls.
 		content := a.processAssistantResponse(ctx, resp)
 		return content, nil
 	}
 
 	return "Tool calling limit reached. Please try a simpler request.", nil
+}
+
+// looksLikePlan returns true if the content appears to describe intended actions
+// rather than providing a final answer. Used to auto-nudge the LLM into actually
+// using tools instead of just planning.
+func looksLikePlan(content string) bool {
+	lower := strings.ToLower(content)
+	intentPhrases := []string{
+		"i'll ", "i will ", "let me ", "i'm going to ",
+		"i'll\n", "i will\n", "let me\n",
+		"first, i'll", "first, let me",
+		"i can help", "i can do",
+	}
+	for _, phrase := range intentPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 // executeLLMCall builds context, calls the LLM (streaming or not), and emits hooks.
@@ -431,8 +464,10 @@ func (a *AgentLoop) buildSystemPrompt() string {
 	}
 	fmt.Fprintf(&b, "Current time: %s\n\n", time.Now().Format(time.RFC3339))
 
-	b.WriteString("When you need to perform actions, use the available tools. ")
-	b.WriteString("Always explain what you're doing before using tools.\n\n")
+	b.WriteString("When you need to perform actions, use the available tools immediately. ")
+	b.WriteString("You may briefly explain your reasoning alongside tool calls, but always ")
+	b.WriteString("include the tool calls in the same response — never respond with only a ")
+	b.WriteString("plan or description of what you intend to do.\n\n")
 
 	// Custom system prompt: prefer per-agent config, fall back to workspace file.
 	switch {
