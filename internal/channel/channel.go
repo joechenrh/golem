@@ -29,3 +29,11 @@ type Channel interface {
 	SupportsStreaming() bool
 	SendStream(ctx context.Context, channelID string, tokenCh <-chan string) error
 }
+
+// SystemPrinter provides formatted output for system-level messages.
+// Implemented by channels that support direct user-facing output (e.g. CLI).
+type SystemPrinter interface {
+	PrintSystem(text string)
+	PrintError(text string)
+	PrintBanner(model string, toolCount int, tapePath string)
+}

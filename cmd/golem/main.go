@@ -18,7 +18,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/joechenrh/golem/internal/app"
-	"github.com/joechenrh/golem/internal/channel/cli"
 	"github.com/joechenrh/golem/internal/config"
 )
 
@@ -50,8 +49,7 @@ func main() {
 	}
 
 	// 5. Print banner before entering the run loop.
-	cliCh := defaultAgent.Channels["cli"].(*cli.CLIChannel)
-	cliCh.PrintBanner(cfg.Model, len(defaultAgent.Registry.ToolDefinitions()), defaultAgent.TapePath)
+	defaultAgent.Printer.PrintBanner(cfg.Model, len(defaultAgent.Registry.ToolDefinitions()), defaultAgent.TapePath)
 
 	// 6. Setup signal handling.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -76,7 +74,7 @@ func main() {
 	})
 
 	// Background agents: errors logged, don't kill CLI.
-	for _, ba := range app.DiscoverAndBuildBackgroundAgents(cliCh, logger, claimedLarkApps) {
+	for _, ba := range app.DiscoverAndBuildBackgroundAgents(defaultAgent.Printer, logger, claimedLarkApps) {
 		g.Go(func() error {
 			if err := ba.Run(ctx); err != nil && !errors.Is(err, app.ErrAgentQuit) {
 				logger.Error("background agent error", zap.String("agent", ba.Name), zap.Error(err))
@@ -86,7 +84,7 @@ func main() {
 	}
 
 	g.Wait()
-	cliCh.PrintSystem("Goodbye!")
+	defaultAgent.Printer.PrintSystem("Goodbye!")
 }
 
 // parseFlags parses CLI flags and returns overrides for config.Load.

@@ -45,6 +45,7 @@ type AgentInstance struct {
 	Loop     *agent.AgentLoop      // used by CLI (single session)
 	Sessions *agent.SessionManager // used by remote channels (per-chat)
 	Channels map[string]channel.Channel
+	Printer  channel.SystemPrinter // formatted output (e.g. CLI channel)
 	Registry *tools.Registry
 	TapePath string
 }
@@ -200,11 +201,11 @@ func (inst *AgentInstance) processMessage(ctx context.Context, msg channel.Incom
 	return false
 }
 
-// logOrPrintError uses CLIChannel.PrintError for colored output when available,
-// otherwise logs the error.
+// logOrPrintError uses PrintError for colored output when the channel supports
+// it, otherwise logs the error.
 func (inst *AgentInstance) logOrPrintError(ch channel.Channel, text string) {
-	if cliCh, ok := ch.(*cli.CLIChannel); ok {
-		cliCh.PrintError(text)
+	if p, ok := ch.(interface{ PrintError(string) }); ok {
+		p.PrintError(text)
 	} else {
 		inst.Logger.Error(text)
 	}
@@ -261,8 +262,11 @@ func BuildAgent(name string, cfg *config.Config, logger *zap.Logger) (*AgentInst
 	channels := make(map[string]channel.Channel)
 
 	// CLI channel only for the default (interactive) agent.
+	var printer channel.SystemPrinter
 	if name == "default" {
-		channels["cli"] = cli.New()
+		cliCh := cli.New()
+		channels["cli"] = cliCh
+		printer = cliCh
 	}
 
 	var larkCh *larkchan.LarkChannel
@@ -334,6 +338,7 @@ func BuildAgent(name string, cfg *config.Config, logger *zap.Logger) (*AgentInst
 		Loop:     loop,
 		Sessions: sessions,
 		Channels: channels,
+		Printer:  printer,
 		Registry: registry,
 		TapePath: tapePath,
 	}, nil
@@ -442,7 +447,7 @@ func BuildToolRegistry(
 // loads each one, and builds an AgentInstance for those with remote channels.
 // claimedLarkApps tracks Lark app IDs already in use to avoid duplicate
 // WebSocket connections — agents whose LarkAppID is already claimed are skipped.
-func DiscoverAndBuildBackgroundAgents(cliCh *cli.CLIChannel, logger *zap.Logger, claimedLarkApps map[string]bool) []*AgentInstance {
+func DiscoverAndBuildBackgroundAgents(printer channel.SystemPrinter, logger *zap.Logger, claimedLarkApps map[string]bool) []*AgentInstance {
 	names, err := config.DiscoverAgents()
 	if err != nil {
 		logger.Error("agent discovery", zap.Error(err))
@@ -484,7 +489,9 @@ func DiscoverAndBuildBackgroundAgents(cliCh *cli.CLIChannel, logger *zap.Logger,
 			claimedLarkApps[inst.Config.LarkAppID] = true
 		}
 
-		cliCh.PrintSystem(fmt.Sprintf("Background agent %q started", name))
+		if printer != nil {
+			printer.PrintSystem(fmt.Sprintf("Background agent %q started", name))
+		}
 		agents = append(agents, inst)
 	}
 	return agents
