@@ -220,19 +220,64 @@ func (l *LarkChannel) Send(
 // SendTyping is a no-op for Lark.
 func (l *LarkChannel) SendTyping(_ context.Context, _ string) error { return nil }
 
-// SupportsStreaming returns false; Lark uses non-streaming responses.
-func (l *LarkChannel) SupportsStreaming() bool { return false }
+// SupportsStreaming returns true; Lark updates cards progressively.
+func (l *LarkChannel) SupportsStreaming() bool { return true }
 
-// SendStream collects all tokens and sends as a single message.
+// streamUpdateInterval controls how often the Lark card is patched during streaming.
+const streamUpdateInterval = 800 * time.Millisecond
+
+// SendStream sends an initial card and patches it as tokens arrive.
 func (l *LarkChannel) SendStream(
 	ctx context.Context, channelID string,
 	tokenCh <-chan string,
 ) error {
+	chatID := strings.TrimPrefix(channelID, "lark:")
+	l.sentChats.Store(chatID, true)
+
 	var sb strings.Builder
-	for tok := range tokenCh {
-		sb.WriteString(tok)
+	var messageID string
+	ticker := time.NewTicker(streamUpdateInterval)
+	defer ticker.Stop()
+	dirty := false
+
+	for {
+		select {
+		case tok, ok := <-tokenCh:
+			if !ok {
+				// Stream done. Final update.
+				if messageID != "" && dirty {
+					l.patchCard(ctx, messageID, sb.String())
+				} else if messageID == "" && sb.Len() > 0 {
+					l.sendCard(ctx, chatID, sb.String())
+				}
+				return nil
+			}
+			sb.WriteString(tok)
+			dirty = true
+
+			// Send initial card after first token batch.
+			if messageID == "" && sb.Len() > 0 {
+				id, err := l.sendCardReturnID(ctx, chatID, sb.String()+" ▍")
+				if err != nil {
+					l.logger.Warn("lark stream: failed to send initial card", zap.Error(err))
+					// Fall back to collecting everything.
+					messageID = ""
+					continue
+				}
+				messageID = id
+				dirty = false
+			}
+
+		case <-ticker.C:
+			if messageID != "" && dirty {
+				l.patchCard(ctx, messageID, sb.String()+" ▍")
+				dirty = false
+			}
+
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	return l.Send(ctx, channel.OutgoingMessage{ChannelID: channelID, Text: sb.String()})
 }
 
 // SendToChat sends a message to a specific chat_id. Exported for use by tools.
@@ -245,11 +290,18 @@ func (l *LarkChannel) SendToChat(
 	return l.sendCard(ctx, chatID, text)
 }
 
-// sendCard sends a message as an interactive card with a markdown element,
-// which supports bold, italic, strikethrough, links, and code formatting.
+// sendCard sends a message as an interactive card with a markdown element.
 func (l *LarkChannel) sendCard(
 	ctx context.Context, chatID, text string,
 ) error {
+	_, err := l.sendCardReturnID(ctx, chatID, text)
+	return err
+}
+
+// sendCardReturnID sends a card and returns the message_id for later patching.
+func (l *LarkChannel) sendCardReturnID(
+	ctx context.Context, chatID, text string,
+) (string, error) {
 	l.logger.Info("sending lark card",
 		zap.String("chat_id", chatID),
 		zap.Int("text_len", len(text)))
@@ -273,12 +325,45 @@ func (l *LarkChannel) sendCard(
 
 	resp, err := l.client.Im.V1.Message.Create(ctx, req)
 	if err != nil {
-		return fmt.Errorf("lark send: %w", err)
+		return "", fmt.Errorf("lark send: %w", err)
 	}
 	if !resp.Success() {
-		return fmt.Errorf("lark send: code=%d msg=%s", resp.Code, resp.Msg)
+		return "", fmt.Errorf("lark send: code=%d msg=%s", resp.Code, resp.Msg)
 	}
-	return nil
+
+	var messageID string
+	if resp.Data != nil && resp.Data.MessageId != nil {
+		messageID = *resp.Data.MessageId
+	}
+	return messageID, nil
+}
+
+// patchCard updates an existing card message with new content.
+func (l *LarkChannel) patchCard(
+	ctx context.Context, messageID, text string,
+) {
+	card := map[string]any{
+		"elements": []map[string]string{
+			{"tag": "markdown", "content": sanitizeLarkMarkdown(text)},
+		},
+	}
+	content, _ := json.Marshal(card)
+
+	req := larkim.NewPatchMessageReqBuilder().
+		MessageId(messageID).
+		Body(larkim.NewPatchMessageReqBodyBuilder().
+			Content(string(content)).
+			Build()).
+		Build()
+
+	resp, err := l.client.Im.V1.Message.Patch(ctx, req)
+	if err != nil {
+		l.logger.Debug("lark patch card error", zap.Error(err))
+		return
+	}
+	if !resp.Success() {
+		l.logger.Debug("lark patch card failed", zap.Int("code", resp.Code), zap.String("msg", resp.Msg))
+	}
 }
 
 // ListChats returns the groups the bot is a member of (for discovering chat_ids).
