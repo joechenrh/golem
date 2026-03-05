@@ -64,16 +64,7 @@ func (a *AgentLoop) HandleInput(
 		return a.handleCommand(ctx, route)
 	}
 
-	// Record user message to tape.
-	a.appendMessage(llm.RoleUser, msg.Text, nil, msg.SenderID)
-
-	// Emit user message hook.
-	a.hooks.Emit(ctx, hooks.Event{
-		Type:    hooks.EventUserMessage,
-		Payload: map[string]any{"text": msg.Text, "channel_id": msg.ChannelID},
-	})
-
-	return a.runReActLoop(ctx, false, nil)
+	return a.runReActLoop(ctx, false, nil, &msg)
 }
 
 // HandleInputStream processes a user message with streaming.
@@ -93,24 +84,18 @@ func (a *AgentLoop) HandleInputStream(
 		return nil
 	}
 
-	// Record user message to tape.
-	a.appendMessage(llm.RoleUser, msg.Text, nil, msg.SenderID)
-
-	// Emit user message hook.
-	a.hooks.Emit(ctx, hooks.Event{
-		Type:    hooks.EventUserMessage,
-		Payload: map[string]any{"text": msg.Text, "channel_id": msg.ChannelID},
-	})
-
-	_, err := a.runReActLoop(ctx, true, tokenCh)
+	_, err := a.runReActLoop(ctx, true, tokenCh, &msg)
 	return err
 }
 
 // runReActLoop executes the tool-calling loop until the LLM produces a final answer
-// or the iteration limit is reached.
+// or the iteration limit is reached. If pendingMsg is non-nil, the user message
+// is included in context but only persisted to the tape after the first
+// successful LLM call, so a failed API request doesn't leave a dangling entry.
 func (a *AgentLoop) runReActLoop(
 	ctx context.Context, stream bool,
 	tokenCh chan<- string,
+	pendingMsg *channel.IncomingMessage,
 ) (string, error) {
 	_, modelName := llm.ParseModelProvider(a.config.Model)
 	maxTokens := ctxmgr.ModelContextWindow(modelName)
@@ -119,9 +104,19 @@ func (a *AgentLoop) runReActLoop(
 	nudges := 0
 
 	for iter := range a.config.MaxToolIter {
-		resp, err := a.executeLLMCall(ctx, modelName, maxTokens, iter, stream, tokenCh)
+		resp, err := a.executeLLMCall(ctx, modelName, maxTokens, iter, stream, tokenCh, pendingMsg)
 		if err != nil {
 			return "", err
+		}
+
+		// First successful LLM call — persist the pending user message.
+		if pendingMsg != nil {
+			a.appendMessage(llm.RoleUser, pendingMsg.Text, nil, pendingMsg.SenderID)
+			a.hooks.Emit(ctx, hooks.Event{
+				Type:    hooks.EventUserMessage,
+				Payload: map[string]any{"text": pendingMsg.Text, "channel_id": pendingMsg.ChannelID},
+			})
+			pendingMsg = nil
 		}
 
 		// Tool calls present — execute them and continue the loop.
@@ -182,10 +177,14 @@ func looksLikePlan(content string) bool {
 }
 
 // executeLLMCall builds context, calls the LLM (streaming or not), and emits hooks.
+// If pendingMsg is non-nil, its text is appended to the context as a user
+// message without persisting to the tape, so that a failed API call
+// does not leave a dangling tape entry.
 func (a *AgentLoop) executeLLMCall(
 	ctx context.Context, modelName string,
 	maxTokens, iter int, stream bool,
 	tokenCh chan<- string,
+	pendingMsg *channel.IncomingMessage,
 ) (*llm.ChatResponse, error) {
 	entries, err := a.tape.Entries()
 	if err != nil {
@@ -194,6 +193,18 @@ func (a *AgentLoop) executeLLMCall(
 	messages, err := a.contextStrategy.BuildContext(ctx, entries, maxTokens)
 	if err != nil {
 		return nil, fmt.Errorf("building context: %w", err)
+	}
+
+	// Include the not-yet-persisted user message in the context.
+	if pendingMsg != nil {
+		content := pendingMsg.Text
+		if pendingMsg.SenderID != "" {
+			content = "[sender:" + pendingMsg.SenderID + "] " + content
+		}
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: content,
+		})
 	}
 
 	systemPrompt := a.buildSystemPrompt()
