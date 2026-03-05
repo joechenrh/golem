@@ -121,63 +121,65 @@ curl -s -X POST 'https://open.feishu.cn/open-apis/drive/v1/import_tasks' \
 | 99991664 | Rate limited | Wait a moment and retry. |
 | 99991663 | Invalid token | The tenant_access_token has expired. Re-authenticate. |
 
-## Content Restrictions for Writing
+## Writing with Markdown Formatting
 
-The Feishu block API has strict content rules. **You MUST sanitize text before calling `lark_write_doc`**, or the API will reject the request.
+`lark_write_doc` accepts **markdown** content and automatically converts it to native Feishu blocks with proper formatting. This means headings, lists, code blocks, bold/italic, and links are preserved as rich document elements -- not plain text.
 
-### Character Sanitization Rules
+### Supported Markdown Syntax
 
-The API rejects certain Unicode characters. Before writing, replace them:
-
-| Problematic Character | Replacement |
+| Markdown | Feishu Result |
 |---|---|
-| `->` (arrow) | `->` |
-| `<-` (arrow) | `<-` |
-| Curly/smart double quotes `\u201c` `\u201d` | Straight quotes `"` |
-| Curly/smart single quotes `\u2018` `\u2019` | Straight quotes `'` |
-| Em-dash `\u2014` | `--` |
-| En-dash `\u2013` | `-` |
-| Ellipsis `\u2026` | `...` |
-| Bullet `\u2022` | `-` |
-| Non-ASCII symbols like (c), TM, (R) | Remove or spell out |
+| `# Heading 1` | Native H1 heading block |
+| `## Heading 2` | Native H2 heading block |
+| `### Heading 3` | Native H3 heading block |
+| `**bold**` | Bold inline style |
+| `*italic*` | Italic inline style |
+| `~~strikethrough~~` | Strikethrough inline style |
+| `` `inline code` `` | Inline code style |
+| Fenced code blocks | Code block |
+| `- bullet item` | Bullet list block |
+| `1. numbered item` | Ordered list block |
+| `[text](url)` | Hyperlink |
+| `> blockquote` | Quote block |
 
-**Safe characters**: All ASCII punctuation, CJK characters (Chinese/Japanese/Korean), standard Latin letters and digits.
+### Content Best Practices
 
-### Size Limits
+- **Always write markdown**, not plain text. Without markdown syntax, the document will have no headings, no lists, no formatting.
+- Use standard ASCII punctuation. Avoid curly/smart quotes, em-dashes, and other non-ASCII symbols.
+- CJK characters (Chinese, Japanese, Korean) work fine alongside markdown syntax.
+- The tool handles large documents automatically (batches of 50 blocks per API call).
+- A document can hold at most 40,000 blocks.
 
-- **Per block**: 100,000 characters max (each line in the content becomes one block)
-- **Per document**: 40,000 blocks max
-- **Per API call**: 50 blocks max (the tool handles batching automatically)
+### Character Cautions
 
-### Best Practice
-
-When doing read-modify-write:
-1. Read the document content
-2. Make your modifications using ONLY ASCII punctuation (no smart quotes, no arrows, no em-dashes)
-3. Double-check there are no special Unicode punctuation characters
-4. Write back the sanitized content
-
-If a write fails, the most likely cause is a special character in the content. Clean it and retry.
+If a write fails, it may be due to special Unicode characters. Use:
+- Straight quotes `"` `'` instead of curly quotes
+- `--` instead of em-dash
+- `...` instead of ellipsis character
+- `->` instead of arrow symbols
 
 ## Read-Modify-Write Workflow
 
 Use `lark_read_doc` and `lark_write_doc` together to update document content:
 
-1. **Read** the current content with `lark_read_doc`
-2. **Modify** the text as needed (fix errors, translate, restructure, etc.)
-3. **Sanitize** the text (see Content Restrictions above)
-4. **Write** the modified content back with `lark_write_doc`
+1. **Read** the current content with `lark_read_doc` (returns plain text)
+2. **Restructure** the content as proper markdown (add `#` headings, `- ` bullets, `**bold**`, etc.)
+3. **Write** the markdown back with `lark_write_doc` (automatically converted to rich Feishu blocks)
 
 **Warning**: `lark_write_doc` replaces ALL content in the document. Always read first to avoid data loss.
 
 Example flow:
 ```
 lark_read_doc(document_id: "ABC123")
--> "Original document text..."
-(modify and sanitize the text)
-lark_write_doc(document_id: "ABC123", content: "Updated document text...")
+-> "Bug Hunting by AI Agents\nPurpose\nDefine a repeatable process..."
+
+(restructure as markdown)
+
+lark_write_doc(document_id: "ABC123", content: "# Bug Hunting by AI Agents\n\n## Purpose\n\nDefine a **repeatable process** for AI-assisted bug hunting.\n\n## Workflow\n\n1. Read target system docs\n2. Generate bug hypotheses\n3. Reproduce and validate\n")
 -> "Document content updated successfully."
 ```
+
+The resulting Feishu document will have proper H1/H2 headings, bold text, and a numbered list.
 
 ## Workflow Examples
 

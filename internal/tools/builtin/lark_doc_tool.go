@@ -82,34 +82,36 @@ func NewLarkWriteDocTool(ch *larkchan.LarkChannel) *LarkWriteDocTool {
 
 func (t *LarkWriteDocTool) Name() string { return "lark_write_doc" }
 func (t *LarkWriteDocTool) Description() string {
-	return "Replace all content of a Feishu document with new text"
+	return "Replace all content of a Feishu document with markdown-formatted text"
 }
 func (t *LarkWriteDocTool) FullDescription() string {
-	return `Replace the entire content of a Feishu/Lark document with new plain text.
+	return `Replace the entire content of a Feishu/Lark document with new content.
+
+The content parameter accepts MARKDOWN format. The tool automatically converts markdown
+into native Feishu blocks, preserving rich formatting:
+- # Heading 1, ## Heading 2, ### Heading 3, etc. become native Feishu headings
+- **bold**, *italic*, ~~strikethrough~~ become inline styles
+- - bullet items become bullet list blocks
+- 1. numbered items become ordered list blocks
+- ` + "`" + `code` + "`" + ` and fenced code blocks become code blocks
+- [text](url) become hyperlinks
+- > blockquotes become quote blocks
+
+IMPORTANT: Always write content as standard markdown to get proper Feishu formatting.
+Do NOT write plain text without markdown syntax -- you will lose all document structure.
 
 WARNING: This tool REPLACES ALL existing content in the document. The previous content will be lost.
 
 Typical read-modify-write workflow:
-1. Use lark_read_doc to read the current content
-2. Modify the text as needed
-3. Use lark_write_doc to write the modified content back
+1. Use lark_read_doc to read the current content (returns plain text)
+2. Restructure and enhance the content as markdown
+3. Use lark_write_doc to write the markdown content back (formatting is preserved)
 
-CRITICAL — Content restrictions (Feishu block API):
-- Each text block supports up to 100,000 characters. Each line becomes one block.
+Content restrictions:
 - A document can hold at most 40,000 blocks.
-- The API creates blocks in batches of 50 per request; very large documents are handled automatically.
-- SPECIAL CHARACTERS: The Feishu API rejects certain Unicode characters in text content.
-  Before writing, you MUST sanitize the text:
-  - Replace arrow symbols: "→" with "->", "←" with "<-", "↑" with "^", "↓" with "v"
-  - Replace curly/smart quotes: use straight quotes " and ' instead of " " ' '
-  - Replace em-dash "—" with "--", en-dash "–" with "-"
-  - Replace ellipsis "…" with "..."
-  - Replace bullet "•" with "-"
-  - Remove or replace any other non-ASCII punctuation (e.g. ©, ™, ®)
-  - Keep CJK characters (Chinese, Japanese, Korean) — they work fine
-  - Keep standard ASCII punctuation — it all works
-  If the write fails with an API error, the most likely cause is a special character.
-  Clean the content and retry.
+- The API creates blocks in batches of 50 per request; large documents are handled automatically.
+- Avoid non-ASCII punctuation that may cause issues. Use straight quotes instead of curly quotes,
+  -- instead of em-dash, ... instead of ellipsis. CJK characters and ASCII punctuation are safe.
 
 How to get the document_id from a Feishu URL:
 - Document URL: https://xxx.feishu.cn/docx/ABC123 -- document_id is "ABC123"
@@ -129,7 +131,7 @@ var larkWriteDocParams = json.RawMessage(`{
 	"type": "object",
 	"properties": {
 		"document_id": {"type": "string", "description": "The document_id of the Feishu document, or a full Feishu document URL"},
-		"content": {"type": "string", "description": "The new plain text content to write to the document (replaces all existing content)"}
+		"content": {"type": "string", "description": "The new content in markdown format to write to the document (replaces all existing content). Use markdown syntax for headings, lists, bold, code blocks, etc."}
 	},
 	"required": ["document_id", "content"]
 }`)

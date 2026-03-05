@@ -311,11 +311,44 @@ func (l *LarkChannel) ReadDocContent(ctx context.Context, documentID string) (st
 // maxBlocksPerRequest is the Feishu API limit for creating blocks in one call.
 const maxBlocksPerRequest = 50
 
-// WriteDocContent replaces all content in a Feishu document with the given plain text.
-// It deletes all existing blocks and creates new text blocks from the content,
-// batching in chunks of 50 blocks per API call (Feishu API limit).
+// WriteDocContent replaces all content in a Feishu document with markdown content.
+// It uses Document.Convert() to parse markdown into properly typed blocks (headings,
+// bullets, code blocks, etc.), then replaces the document's children with those blocks.
 func (l *LarkChannel) WriteDocContent(ctx context.Context, documentID, content string) error {
-	// 1. Get root block to find children count.
+	// 1. Convert markdown content to Feishu blocks.
+	convReq := larkdocx.NewConvertDocumentReqBuilder().
+		Body(larkdocx.NewConvertDocumentReqBodyBuilder().
+			ContentType(larkdocx.ContentTypeMarkdown).
+			Content(content).
+			Build()).
+		Build()
+
+	convResp, err := l.client.Docx.V1.Document.Convert(ctx, convReq)
+	if err != nil {
+		return fmt.Errorf("lark write doc: convert markdown: %w", err)
+	}
+	if !convResp.Success() {
+		return fmt.Errorf("lark write doc: convert markdown: code=%d msg=%s", convResp.Code, convResp.Msg)
+	}
+
+	// Build a set of first-level block IDs for filtering.
+	firstLevel := make(map[string]bool, len(convResp.Data.FirstLevelBlockIds))
+	for _, id := range convResp.Data.FirstLevelBlockIds {
+		firstLevel[id] = true
+	}
+
+	// Collect first-level blocks in order, clearing temporary IDs.
+	var blocks []*larkdocx.Block
+	for _, b := range convResp.Data.Blocks {
+		if b.BlockId != nil && firstLevel[*b.BlockId] {
+			b.BlockId = nil
+			b.ParentId = nil
+			b.Children = nil
+			blocks = append(blocks, b)
+		}
+	}
+
+	// 2. Get root block to find existing children count.
 	getReq := larkdocx.NewGetDocumentBlockReqBuilder().
 		DocumentId(documentID).
 		BlockId(documentID).
@@ -330,7 +363,7 @@ func (l *LarkChannel) WriteDocContent(ctx context.Context, documentID, content s
 		return fmt.Errorf("lark write doc: get root block: code=%d msg=%s", getResp.Code, getResp.Msg)
 	}
 
-	// 2. Delete all existing children.
+	// 3. Delete all existing children.
 	childCount := len(getResp.Data.Block.Children)
 	if childCount > 0 {
 		startIdx := 0
@@ -354,25 +387,7 @@ func (l *LarkChannel) WriteDocContent(ctx context.Context, documentID, content s
 		}
 	}
 
-	// 3. Create new text blocks from content, batched in chunks of 50.
-	lines := strings.Split(content, "\n")
-	var blocks []*larkdocx.Block
-	for _, line := range lines {
-		block := larkdocx.NewBlockBuilder().
-			BlockType(2). // text block
-			Text(larkdocx.NewTextBuilder().
-				Elements([]*larkdocx.TextElement{
-					larkdocx.NewTextElementBuilder().
-						TextRun(larkdocx.NewTextRunBuilder().
-							Content(line).
-							Build()).
-						Build(),
-				}).
-				Build()).
-			Build()
-		blocks = append(blocks, block)
-	}
-
+	// 4. Create converted blocks in batches of 50.
 	for i := 0; i < len(blocks); i += maxBlocksPerRequest {
 		end := i + maxBlocksPerRequest
 		if end > len(blocks) {
