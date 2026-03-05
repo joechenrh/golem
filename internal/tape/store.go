@@ -21,33 +21,34 @@ type Store interface {
 	LastAnchor() (*TapeEntry, error)
 	AddAnchor(label string) error
 	Info() TapeInfo
+	Close() error
 }
 
 // FileStore is a JSONL-backed tape store with an in-memory cache.
 // Entries are loaded from disk once on creation and kept in sync by Append.
-// This avoids re-reading and re-parsing the entire file on every Entries() call.
+// A persistent file handle is used for appends to avoid open/close overhead.
 type FileStore struct {
 	path    string
 	mu      sync.Mutex
 	entries []TapeEntry // in-memory cache, authoritative after initial load
+	file    *os.File    // persistent append handle
 }
 
 // NewFileStore creates or opens a JSONL tape file at the given path.
 // If the file already contains entries (session restore), they are loaded
-// into the in-memory cache.
+// into the in-memory cache. The file is kept open for appends.
 func NewFileStore(path string) (*FileStore, error) {
-	// Ensure the file exists.
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("tape: open %s: %w", path, err)
 	}
-	f.Close()
 
-	s := &FileStore{path: path}
+	s := &FileStore{path: path, file: f}
 
 	// Load existing entries from disk into the cache.
 	entries, err := s.loadFromDisk()
 	if err != nil {
+		f.Close()
 		return nil, fmt.Errorf("tape: loading existing entries: %w", err)
 	}
 	s.entries = entries
@@ -71,18 +72,24 @@ func (s *FileStore) Append(entry TapeEntry) error {
 		return fmt.Errorf("tape: marshal entry: %w", err)
 	}
 
-	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("tape: open for append: %w", err)
-	}
-	defer f.Close()
-
-	if _, err := f.Write(append(data, '\n')); err != nil {
+	if _, err := s.file.Write(append(data, '\n')); err != nil {
 		return fmt.Errorf("tape: write entry: %w", err)
 	}
 
 	// Update in-memory cache after successful disk write.
 	s.entries = append(s.entries, entry)
+	return nil
+}
+
+// Close closes the underlying file handle. Safe to call multiple times.
+func (s *FileStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.file != nil {
+		err := s.file.Close()
+		s.file = nil
+		return err
+	}
 	return nil
 }
 
