@@ -220,14 +220,14 @@ func TestHandleInput_ToolCallLimit(t *testing.T) {
 func TestHandleInput_InternalCommand_Help(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
-	result, err := agent.HandleInput(context.Background(), cliMsg(",help"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("/help"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
-	if !strings.Contains(result, ",help") {
+	if !strings.Contains(result, "/help") {
 		t.Errorf("help output should list commands: %s", result)
 	}
-	if !strings.Contains(result, ",quit") {
+	if !strings.Contains(result, "/quit") {
 		t.Errorf("help output should mention quit: %s", result)
 	}
 }
@@ -235,7 +235,7 @@ func TestHandleInput_InternalCommand_Help(t *testing.T) {
 func TestHandleInput_InternalCommand_Quit(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
-	_, err := agent.HandleInput(context.Background(), cliMsg(",quit"))
+	_, err := agent.HandleInput(context.Background(), cliMsg("/quit"))
 	if err != ErrQuit {
 		t.Errorf("err = %v, want ErrQuit", err)
 	}
@@ -244,7 +244,7 @@ func TestHandleInput_InternalCommand_Quit(t *testing.T) {
 func TestHandleInput_InternalCommand_TapeInfo(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
-	result, err := agent.HandleInput(context.Background(), cliMsg(",tape.info"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("/tape.info"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
@@ -253,10 +253,10 @@ func TestHandleInput_InternalCommand_TapeInfo(t *testing.T) {
 	}
 }
 
-func TestHandleInput_InternalCommand_Anchor(t *testing.T) {
+func TestHandleInput_InternalCommand_Reset(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
-	result, err := agent.HandleInput(context.Background(), cliMsg(",anchor test-anchor"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("//reset test-anchor"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestHandleInput_InternalCommand_Anchor(t *testing.T) {
 func TestHandleInput_InternalCommand_Tools(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{}, &mockTool{name: "test_tool", result: "ok"})
 
-	result, err := agent.HandleInput(context.Background(), cliMsg(",tools"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("/tools"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestHandleInput_InternalCommand_Tools(t *testing.T) {
 func TestHandleInput_InternalCommand_Model(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
-	result, err := agent.HandleInput(context.Background(), cliMsg(",model"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("/model"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestHandleInputStream_Command(t *testing.T) {
 		}
 	}()
 
-	err := agent.HandleInputStream(context.Background(), cliMsg(",help"), tokenCh)
+	err := agent.HandleInputStream(context.Background(), cliMsg("/help"), tokenCh)
 	close(tokenCh)
 	<-done
 
@@ -347,7 +347,7 @@ func TestHandleInputStream_Command(t *testing.T) {
 		t.Fatalf("HandleInputStream: %v", err)
 	}
 	result := strings.Join(tokens, "")
-	if !strings.Contains(result, ",help") {
+	if !strings.Contains(result, "/help") {
 		t.Errorf("result = %q, should contain help text", result)
 	}
 }
@@ -399,7 +399,7 @@ func TestHandleInput_InternalCommand_TapeSearch(t *testing.T) {
 	// Add a message to search through.
 	agent.HandleInput(context.Background(), cliMsg("Hello world"))
 
-	result, err := agent.HandleInput(context.Background(), cliMsg(",tape.search hello"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("/tape.search hello"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestHandleInput_InternalCommand_TapeSearch(t *testing.T) {
 func TestHandleInput_InternalCommand_TapeSearchEmpty(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
-	result, err := agent.HandleInput(context.Background(), cliMsg(",tape.search"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("/tape.search"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestHandleInput_InternalCommand_TapeSearchEmpty(t *testing.T) {
 func TestHandleInput_InternalCommand_TapeSearchNoMatch(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
-	result, err := agent.HandleInput(context.Background(), cliMsg(",tape.search nonexistent"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("/tape.search nonexistent"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestHandleInput_InternalCommand_TapeSearchNoMatch(t *testing.T) {
 func TestHandleInput_InternalCommand_Skills(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
-	result, err := agent.HandleInput(context.Background(), cliMsg(",skills"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("/skills"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
@@ -444,10 +444,10 @@ func TestHandleInput_InternalCommand_Skills(t *testing.T) {
 	}
 }
 
-func TestHandleInput_InternalCommand_AnchorDefaultLabel(t *testing.T) {
+func TestHandleInput_InternalCommand_ResetDefaultLabel(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
-	result, err := agent.HandleInput(context.Background(), cliMsg(",anchor"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("//reset"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
@@ -459,7 +459,7 @@ func TestHandleInput_InternalCommand_AnchorDefaultLabel(t *testing.T) {
 func TestHandleInput_InternalCommand_ModelWithArg(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
-	result, err := agent.HandleInput(context.Background(), cliMsg(",model openai:gpt-3.5"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("/model openai:gpt-3.5"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
@@ -471,9 +471,9 @@ func TestHandleInput_InternalCommand_ModelWithArg(t *testing.T) {
 func TestHandleInput_ShellCommand(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
-	// ,foobar is routed as a shell command (not internal).
+	// /foobar is routed as a shell command (not internal).
 	// Without shell_exec tool registered, it should return an error.
-	result, err := agent.HandleInput(context.Background(), cliMsg(",echo hello"))
+	result, err := agent.HandleInput(context.Background(), cliMsg("/echo hello"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}

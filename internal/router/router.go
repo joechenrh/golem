@@ -8,8 +8,8 @@ import (
 type CommandKind int
 
 const (
-	CommandInternal CommandKind = iota // ,help, ,tape.info, ,tools, ,quit, ,model
-	CommandShell                       // ,git status, ,ls -la
+	CommandInternal CommandKind = iota // /help, /tape.info, /tools, /quit, /model
+	CommandShell                       // /git status, /ls -la
 )
 
 // internalCommands is the set of recognized internal command names.
@@ -21,7 +21,7 @@ var internalCommands = map[string]bool{
 	"tools":       true,
 	"skills":      true,
 	"model":       true,
-	"anchor":      true,
+	"/reset":      true,
 }
 
 // RouteResult is the outcome of routing user input.
@@ -33,14 +33,14 @@ type RouteResult struct {
 }
 
 // RouteUser classifies user input.
-// Lines starting with "," are commands; everything else goes to the LLM.
+// Lines starting with "/" are commands; everything else goes to the LLM.
 func RouteUser(input string) RouteResult {
 	input = strings.TrimSpace(input)
-	if !strings.HasPrefix(input, ",") {
+	if !strings.HasPrefix(input, "/") {
 		return RouteResult{}
 	}
 
-	// Strip the comma prefix.
+	// Strip the slash prefix.
 	rest := input[1:]
 	if rest == "" {
 		return RouteResult{}
@@ -73,7 +73,7 @@ func RouteUser(input string) RouteResult {
 	}
 }
 
-// DetectedCommand represents a comma command found in assistant output.
+// DetectedCommand represents a slash command found in assistant output.
 type DetectedCommand struct {
 	Command string
 	Args    string
@@ -81,7 +81,7 @@ type DetectedCommand struct {
 	Line    int // 0-indexed line number where the command was found
 }
 
-// RouteAssistant scans assistant output for comma commands at line starts.
+// RouteAssistant scans assistant output for slash commands at line starts.
 // Skips commands inside code fences (``` blocks).
 // Returns detected commands and the cleaned text (command lines removed).
 func RouteAssistant(
@@ -107,8 +107,8 @@ func RouteAssistant(
 			continue
 		}
 
-		// Check for comma command at line start.
-		if strings.HasPrefix(trimmed, ",") && len(trimmed) > 1 {
+		// Check for slash command at line start.
+		if strings.HasPrefix(trimmed, "/") && len(trimmed) > 1 {
 			result := RouteUser(trimmed)
 			if result.IsCommand {
 				commands = append(commands, DetectedCommand{

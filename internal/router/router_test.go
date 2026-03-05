@@ -13,14 +13,14 @@ func TestRouteUser_InternalCommands(t *testing.T) {
 		wantArgs    string
 		wantKind    CommandKind
 	}{
-		{",help", "help", "", CommandInternal},
-		{",quit", "quit", "", CommandInternal},
-		{",tape.info", "tape.info", "", CommandInternal},
-		{",tape.search hello", "tape.search", "hello", CommandInternal},
-		{",tools", "tools", "", CommandInternal},
-		{",skills", "skills", "", CommandInternal},
-		{",model openai:gpt-4o", "model", "openai:gpt-4o", CommandInternal},
-		{",anchor context-reset", "anchor", "context-reset", CommandInternal},
+		{"/help", "help", "", CommandInternal},
+		{"/quit", "quit", "", CommandInternal},
+		{"/tape.info", "tape.info", "", CommandInternal},
+		{"/tape.search hello", "tape.search", "hello", CommandInternal},
+		{"/tools", "tools", "", CommandInternal},
+		{"/skills", "skills", "", CommandInternal},
+		{"/model openai:gpt-4o", "model", "openai:gpt-4o", CommandInternal},
+		{"//reset context-reset", "/reset", "context-reset", CommandInternal},
 	}
 
 	for _, tt := range tests {
@@ -47,9 +47,9 @@ func TestRouteUser_ShellCommands(t *testing.T) {
 		input       string
 		wantCommand string
 	}{
-		{",git status", "git status"},
-		{",ls -la", "ls -la"},
-		{",echo hello world", "echo hello world"},
+		{"/git status", "git status"},
+		{"/ls -la", "ls -la"},
+		{"/echo hello world", "echo hello world"},
 	}
 
 	for _, tt := range tests {
@@ -85,15 +85,15 @@ func TestRouteUser_NotCommand(t *testing.T) {
 	}
 }
 
-func TestRouteUser_BareComma(t *testing.T) {
-	result := RouteUser(",")
+func TestRouteUser_BareSlash(t *testing.T) {
+	result := RouteUser("/")
 	if result.IsCommand {
-		t.Error("bare comma should not be a command")
+		t.Error("bare slash should not be a command")
 	}
 }
 
 func TestRouteUser_WhitespaceHandling(t *testing.T) {
-	result := RouteUser("  ,help  ")
+	result := RouteUser("  /help  ")
 	if !result.IsCommand {
 		t.Fatal("expected IsCommand=true with leading/trailing whitespace")
 	}
@@ -105,7 +105,7 @@ func TestRouteUser_WhitespaceHandling(t *testing.T) {
 // ─── RouteAssistant Tests ────────────────────────────────────────
 
 func TestRouteAssistant_DetectsCommands(t *testing.T) {
-	output := "Here is some text\n,git log\nmore text"
+	output := "Here is some text\n/git log\nmore text"
 	commands, cleanText := RouteAssistant(output)
 
 	if len(commands) != 1 {
@@ -128,19 +128,19 @@ func TestRouteAssistant_DetectsCommands(t *testing.T) {
 }
 
 func TestRouteAssistant_SkipsCodeFences(t *testing.T) {
-	output := "Here's code:\n```\n,ls\n```\n,git log"
+	output := "Here's code:\n```\n/ls\n```\n/git log"
 	commands, _ := RouteAssistant(output)
 
 	if len(commands) != 1 {
 		t.Fatalf("len(commands) = %d, want 1", len(commands))
 	}
 	if commands[0].Command != "git log" {
-		t.Errorf("Command = %q, want %q (should skip ,ls inside fence)", commands[0].Command, "git log")
+		t.Errorf("Command = %q, want %q (should skip /ls inside fence)", commands[0].Command, "git log")
 	}
 }
 
 func TestRouteAssistant_MultipleCodeFences(t *testing.T) {
-	output := "text\n```\n,inside1\n```\nmiddle\n```\n,inside2\n```\n,outside"
+	output := "text\n```\n/inside1\n```\nmiddle\n```\n/inside2\n```\n/outside"
 	commands, _ := RouteAssistant(output)
 
 	if len(commands) != 1 {
@@ -164,7 +164,7 @@ func TestRouteAssistant_NoCommands(t *testing.T) {
 }
 
 func TestRouteAssistant_InternalCommand(t *testing.T) {
-	output := "Let me check\n,tape.info\nDone"
+	output := "Let me check\n/tape.info\nDone"
 	commands, _ := RouteAssistant(output)
 
 	if len(commands) != 1 {
@@ -179,7 +179,7 @@ func TestRouteAssistant_InternalCommand(t *testing.T) {
 }
 
 func TestRouteAssistant_CodeFenceWithLang(t *testing.T) {
-	output := "```go\n,help\n```\n,tools"
+	output := "```go\n/help\n```\n/tools"
 	commands, _ := RouteAssistant(output)
 
 	if len(commands) != 1 {
