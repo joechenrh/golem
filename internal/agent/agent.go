@@ -32,6 +32,10 @@ type AgentLoop struct {
 	hooks           *hooks.Bus
 	config          *config.Config
 	logger          *zap.Logger
+
+	// Token tracking: accumulated across the session lifetime.
+	sessionUsage llm.Usage
+	turnUsage    llm.Usage // reset each turn
 }
 
 // New creates an AgentLoop with all dependencies wired in.
@@ -101,6 +105,9 @@ func (a *AgentLoop) runReActLoop(
 ) (string, error) {
 	_, modelName := llm.ParseModelProvider(a.config.Model)
 	maxTokens := ctxmgr.ModelContextWindow(modelName)
+
+	// Reset per-turn usage tracking.
+	a.turnUsage = llm.Usage{}
 
 	const maxNudges = 2
 	nudges := 0
@@ -247,6 +254,14 @@ func (a *AgentLoop) executeLLMCall(
 		return nil, fmt.Errorf("LLM call: %w", err)
 	}
 
+	// Accumulate token usage.
+	a.turnUsage.PromptTokens += resp.Usage.PromptTokens
+	a.turnUsage.CompletionTokens += resp.Usage.CompletionTokens
+	a.turnUsage.TotalTokens += resp.Usage.TotalTokens
+	a.sessionUsage.PromptTokens += resp.Usage.PromptTokens
+	a.sessionUsage.CompletionTokens += resp.Usage.CompletionTokens
+	a.sessionUsage.TotalTokens += resp.Usage.TotalTokens
+
 	a.hooks.Emit(ctx, hooks.Event{
 		Type: hooks.EventAfterLLMCall,
 		Payload: map[string]any{
@@ -254,6 +269,7 @@ func (a *AgentLoop) executeLLMCall(
 			"tool_call_count":   len(resp.ToolCalls),
 			"prompt_tokens":     resp.Usage.PromptTokens,
 			"completion_tokens": resp.Usage.CompletionTokens,
+			"turn_total_tokens": a.turnUsage.TotalTokens,
 		},
 	})
 
@@ -505,6 +521,11 @@ func (a *AgentLoop) handleInternalCommand(
 		// Model switching would require creating a new client — for now just report.
 		return fmt.Sprintf("Model switching is not yet supported. Current: %s", a.config.Model), nil
 
+	case "usage":
+		return fmt.Sprintf("Session tokens: prompt=%d completion=%d total=%d\nLast turn:      prompt=%d completion=%d total=%d",
+			a.sessionUsage.PromptTokens, a.sessionUsage.CompletionTokens, a.sessionUsage.TotalTokens,
+			a.turnUsage.PromptTokens, a.turnUsage.CompletionTokens, a.turnUsage.TotalTokens), nil
+
 	case "reset":
 		label := args
 		if label == "" {
@@ -524,6 +545,7 @@ func (a *AgentLoop) helpText() string {
 	return `Available commands:
   :help              Show this help message
   :quit              Exit golem
+  :usage             Show token usage statistics
   :tape.info         Show tape statistics
   :tape.search <q>   Search tape history
   :tools             List registered tools
