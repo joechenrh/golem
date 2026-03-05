@@ -65,7 +65,7 @@ type Config struct {
 	SessionIdleTime time.Duration // evict sessions idle longer than this (default: 24h)
 
 	// Rate limiting
-	MaxConcurrentLLM int // max concurrent in-flight LLM API calls (default: 10, 0=unlimited)
+	LLMRateLimit int // max LLM API requests per second (default: 10, 0=unlimited)
 
 	// Web
 	WebSearchBackend string // "bing", "stub" (default: "bing")
@@ -98,7 +98,7 @@ func Load(agentName string, flagOverrides map[string]string) (*Config, error) {
 		SkillsDir:        env("GOLEM_SKILLS_DIR", ".agent/skills"),
 		MaxSessions:      envInt("GOLEM_MAX_SESSIONS", 100),
 		SessionIdleTime:  envDuration("GOLEM_SESSION_IDLE_TIME", 24*time.Hour),
-		MaxConcurrentLLM: envInt("GOLEM_MAX_CONCURRENT_LLM", 10),
+		LLMRateLimit:     envInt("GOLEM_LLM_RATE_LIMIT", 10),
 		WebSearchBackend: env("GOLEM_WEB_SEARCH_BACKEND", "bing"),
 		LogLevel:         env("GOLEM_LOG_LEVEL", "info"),
 

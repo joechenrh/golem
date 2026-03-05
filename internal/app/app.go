@@ -372,7 +372,7 @@ func BuildLLMClient(cfg *config.Config) (llm.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return llm.NewRateLimitedClient(client, cfg.MaxConcurrentLLM), nil
+	return llm.NewRateLimitedClient(client, cfg.LLMRateLimit), nil
 }
 
 // BuildToolRegistry creates and populates a tool registry with all built-in

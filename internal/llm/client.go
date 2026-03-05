@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"golang.org/x/time/rate"
 )
 
 // Client is the unified interface for calling LLMs.
@@ -103,66 +105,38 @@ func WithBaseURL(url string) ClientOption {
 	}
 }
 
-// RateLimitedClient wraps a Client with a concurrency semaphore to limit the
-// number of in-flight LLM calls across all sessions. This prevents bursts of
-// concurrent API requests from exhausting provider rate limits.
+// RateLimitedClient wraps a Client with a token-bucket rate limiter to prevent
+// bursts of API requests from exhausting provider rate limits.
 type RateLimitedClient struct {
-	inner Client
-	sem   chan struct{}
+	inner   Client
+	limiter *rate.Limiter
 }
 
-// NewRateLimitedClient creates a Client that limits concurrent LLM calls to
-// maxConcurrent. If maxConcurrent <= 0, no limiting is applied.
-func NewRateLimitedClient(inner Client, maxConcurrent int) Client {
-	if maxConcurrent <= 0 {
+// NewRateLimitedClient creates a Client that rate-limits LLM calls to rps
+// requests per second with a burst size equal to rps. If rps <= 0, no
+// limiting is applied.
+func NewRateLimitedClient(inner Client, rps int) Client {
+	if rps <= 0 {
 		return inner
 	}
 	return &RateLimitedClient{
-		inner: inner,
-		sem:   make(chan struct{}, maxConcurrent),
+		inner:   inner,
+		limiter: rate.NewLimiter(rate.Limit(rps), rps),
 	}
 }
 
 func (r *RateLimitedClient) Provider() Provider { return r.inner.Provider() }
 
 func (r *RateLimitedClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	select {
-	case r.sem <- struct{}{}:
-		defer func() { <-r.sem }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if err := r.limiter.Wait(ctx); err != nil {
+		return nil, err
 	}
 	return r.inner.Chat(ctx, req)
 }
 
 func (r *RateLimitedClient) ChatStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
-	select {
-	case r.sem <- struct{}{}:
-		// Note: we release the semaphore slot when the stream channel is closed,
-		// not when ChatStream returns. This ensures the slot is held for the
-		// duration of the streaming response.
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-
-	ch, err := r.inner.ChatStream(ctx, req)
-	if err != nil {
-		<-r.sem
+	if err := r.limiter.Wait(ctx); err != nil {
 		return nil, err
 	}
-
-	// Wrap the channel to release the semaphore when the stream completes.
-	wrapped := make(chan StreamEvent, streamBufferSize)
-	go func() {
-		defer func() { <-r.sem }()
-		defer close(wrapped)
-		for ev := range ch {
-			select {
-			case wrapped <- ev:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return wrapped, nil
+	return r.inner.ChatStream(ctx, req)
 }
