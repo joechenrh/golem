@@ -94,51 +94,51 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 		return err
 	})
 
-	// Message processor: CLI messages are handled inline (single user),
-	// remote channel messages are dispatched concurrently per channel ID
-	// so that different chats are processed in parallel while messages
-	// within the same chat remain serialized.
 	g.Go(func() error {
-		chatQueues := make(map[string]chan channel.IncomingMessage)
-		var chatGroup errgroup.Group
-		defer func() {
-			// Close all per-chat queues and wait for workers to drain.
-			for _, q := range chatQueues {
-				close(q)
-			}
-			chatGroup.Wait()
-		}()
-
-		for msg := range inCh {
-			// CLI messages are processed inline — single user, no concurrency.
-			if msg.ChannelName == "cli" {
-				if inst.processMessage(gctx, msg) {
-					gcancel()
-					return ErrAgentQuit
-				}
-				continue
-			}
-
-			// Remote messages: dispatch to a per-channelID goroutine.
-			q, ok := chatQueues[msg.ChannelID]
-			if !ok {
-				q = make(chan channel.IncomingMessage, 16)
-				chatQueues[msg.ChannelID] = q
-				chatGroup.Go(func() error {
-					for m := range q {
-						if inst.processMessage(gctx, m) {
-							gcancel()
-						}
-					}
-					return nil
-				})
-			}
-			q <- msg
-		}
-		return nil
+		return inst.processMessages(gctx, gcancel, inCh)
 	})
 
 	return g.Wait()
+}
+
+// processMessages reads from inCh and dispatches messages. CLI messages are
+// handled inline; remote messages are fanned out to per-channelID workers so
+// different chats run in parallel while messages within a chat stay serialized.
+func (inst *AgentInstance) processMessages(ctx context.Context, cancel context.CancelFunc, inCh <-chan channel.IncomingMessage) error {
+	chatQueues := make(map[string]chan channel.IncomingMessage)
+	var chatGroup errgroup.Group
+	defer func() {
+		for _, q := range chatQueues {
+			close(q)
+		}
+		chatGroup.Wait()
+	}()
+
+	for msg := range inCh {
+		if msg.ChannelName == "cli" {
+			if inst.processMessage(ctx, msg) {
+				cancel()
+				return ErrAgentQuit
+			}
+			continue
+		}
+
+		q, ok := chatQueues[msg.ChannelID]
+		if !ok {
+			q = make(chan channel.IncomingMessage, 16)
+			chatQueues[msg.ChannelID] = q
+			chatGroup.Go(func() error {
+				for m := range q {
+					if inst.processMessage(ctx, m) {
+						cancel()
+					}
+				}
+				return nil
+			})
+		}
+		q <- msg
+	}
+	return nil
 }
 
 // processMessage handles a single incoming message through the agent loop.
