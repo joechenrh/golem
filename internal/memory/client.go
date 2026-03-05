@@ -133,8 +133,8 @@ func (c *Client) doInitSchema(ctx context.Context) {
 
 	// Probe FTS availability (LIMIT 1 to actually exercise the index).
 	probeSQL := fmt.Sprintf(
-		"SELECT fts_match_word('probe', content) FROM %s.memories WHERE space_id = '%s' AND fts_match_word('probe', content) LIMIT 1",
-		c.dbName, defaultSpaceID,
+		"SELECT fts_match_word('probe', content) FROM %s.memories WHERE space_id = %s AND fts_match_word('probe', content) LIMIT 1",
+		c.dbName, sqlQ(defaultSpaceID),
 	)
 	_, err := c.execSQL(ctx, probeSQL)
 	c.ftsAvailable = err == nil
@@ -266,6 +266,21 @@ func sqlEscape(s string) string {
 	return b.String()
 }
 
+// sqlQ returns a single-quoted, escaped SQL string literal: 'escaped_value'.
+// Use this for all user-controlled values in SQL queries to ensure escaping
+// is never accidentally omitted.
+func sqlQ(s string) string {
+	return "'" + sqlEscape(s) + "'"
+}
+
+// sqlNullableQ returns NULL if s is empty, otherwise a quoted escaped literal.
+func sqlNullableQ(s string) string {
+	if s == "" {
+		return "NULL"
+	}
+	return sqlQ(s)
+}
+
 func parseRows(result *sqlResponse) []Memory {
 	if result == nil || len(result.Rows) == 0 {
 		return nil
@@ -288,23 +303,15 @@ func (c *Client) Store(ctx context.Context, content, key, source string, tags []
 
 	id := uuid.New().String()
 
-	keyVal := "NULL"
-	if key != "" {
-		keyVal = "'" + sqlEscape(key) + "'"
-	}
-	sourceVal := "NULL"
-	if source != "" {
-		sourceVal = "'" + sqlEscape(source) + "'"
-	}
 	tagsVal := "NULL"
 	if tags != nil {
 		tagsJSON, _ := json.Marshal(tags)
-		tagsVal = "'" + sqlEscape(string(tagsJSON)) + "'"
+		tagsVal = sqlQ(string(tagsJSON))
 	}
 
 	query := fmt.Sprintf(
-		"INSERT INTO %s.memories (id, space_id, content, key_name, source, tags, version, updated_by) VALUES ('%s', '%s', '%s', %s, %s, %s, 1, %s)",
-		c.dbName, sqlEscape(id), defaultSpaceID, sqlEscape(content), keyVal, sourceVal, tagsVal, sourceVal,
+		"INSERT INTO %s.memories (id, space_id, content, key_name, source, tags, version, updated_by) VALUES (%s, %s, %s, %s, %s, %s, 1, %s)",
+		c.dbName, sqlQ(id), sqlQ(defaultSpaceID), sqlQ(content), sqlNullableQ(key), sqlNullableQ(source), tagsVal, sqlNullableQ(source),
 	)
 
 	if _, err := c.execSQL(ctx, query); err != nil {
@@ -336,26 +343,28 @@ func (c *Client) Search(ctx context.Context, queryText string, limit int) ([]Mem
 		limit = 10
 	}
 	fetch := limit * 3
-	eq := sqlEscape(queryText)
+	escaped := sqlEscape(queryText)
 
 	// If auto-embed is configured, run hybrid search (vector + keyword).
 	if c.autoEmbedModel != "" {
-		return c.hybridSearch(ctx, eq, limit, fetch)
+		return c.hybridSearch(ctx, escaped, limit, fetch)
 	}
 
 	// Otherwise, keyword-only search.
-	return c.keywordSearch(ctx, eq, limit, fetch)
+	return c.keywordSearch(ctx, escaped, limit, fetch)
 }
 
-func (c *Client) hybridSearch(ctx context.Context, eq string, limit, fetch int) ([]Memory, error) {
+func (c *Client) hybridSearch(ctx context.Context, escaped string, limit, fetch int) ([]Memory, error) {
 	// Vector leg: cosine distance via auto-embed.
+	// Note: escaped is already sqlEscape'd; wrap in quotes via concatenation.
+	qv := "'" + escaped + "'"
 	vecSQL := fmt.Sprintf(
-		"SELECT id, content, key_name, source, tags, version, updated_by, created_at, updated_at, VEC_EMBED_COSINE_DISTANCE(embedding, '%s') AS distance FROM %s.memories WHERE space_id = '%s' AND embedding IS NOT NULL ORDER BY VEC_EMBED_COSINE_DISTANCE(embedding, '%s') LIMIT %d",
-		eq, c.dbName, defaultSpaceID, eq, fetch,
+		"SELECT id, content, key_name, source, tags, version, updated_by, created_at, updated_at, VEC_EMBED_COSINE_DISTANCE(embedding, %s) AS distance FROM %s.memories WHERE space_id = %s AND embedding IS NOT NULL ORDER BY VEC_EMBED_COSINE_DISTANCE(embedding, %s) LIMIT %d",
+		qv, c.dbName, sqlQ(defaultSpaceID), qv, fetch,
 	)
 
 	// Keyword leg.
-	kwSQL := c.keywordSQL(eq, fetch)
+	kwSQL := c.keywordSQL(escaped, fetch)
 
 	// Execute both legs (sequentially — TiDB HTTP API is one query at a time).
 	vecResult, _ := c.execSQL(ctx, vecSQL)
@@ -367,8 +376,8 @@ func (c *Client) hybridSearch(ctx context.Context, eq string, limit, fetch int) 
 	return rrfMerge(vecRows, kwRows, limit), nil
 }
 
-func (c *Client) keywordSearch(ctx context.Context, eq string, limit, fetch int) ([]Memory, error) {
-	kwSQL := c.keywordSQL(eq, fetch)
+func (c *Client) keywordSearch(ctx context.Context, escaped string, limit, fetch int) ([]Memory, error) {
+	kwSQL := c.keywordSQL(escaped, fetch)
 
 	result, err := c.execSQL(ctx, kwSQL)
 	if err != nil {
@@ -382,16 +391,19 @@ func (c *Client) keywordSearch(ctx context.Context, eq string, limit, fetch int)
 	return memories, nil
 }
 
-func (c *Client) keywordSQL(eq string, fetch int) string {
+func (c *Client) keywordSQL(escaped string, fetch int) string {
+	// escaped is already sqlEscape'd; wrap in quotes.
+	qv := "'" + escaped + "'"
+	qs := sqlQ(defaultSpaceID)
 	if c.ftsAvailable {
 		return fmt.Sprintf(
-			"SELECT id, content, key_name, source, tags, version, updated_by, created_at, updated_at, fts_match_word('%s', content) AS fts_score FROM %s.memories WHERE space_id = '%s' AND fts_match_word('%s', content) ORDER BY fts_match_word('%s', content) DESC LIMIT %d",
-			eq, c.dbName, defaultSpaceID, eq, eq, fetch,
+			"SELECT id, content, key_name, source, tags, version, updated_by, created_at, updated_at, fts_match_word(%s, content) AS fts_score FROM %s.memories WHERE space_id = %s AND fts_match_word(%s, content) ORDER BY fts_match_word(%s, content) DESC LIMIT %d",
+			qv, c.dbName, qs, qv, qv, fetch,
 		)
 	}
 	return fmt.Sprintf(
-		"SELECT id, content, key_name, source, tags, version, updated_by, created_at, updated_at FROM %s.memories WHERE space_id = '%s' AND content LIKE CONCAT('%%', '%s', '%%') ORDER BY updated_at DESC LIMIT %d",
-		c.dbName, defaultSpaceID, eq, fetch,
+		"SELECT id, content, key_name, source, tags, version, updated_by, created_at, updated_at FROM %s.memories WHERE space_id = %s AND content LIKE CONCAT('%%', %s, '%%') ORDER BY updated_at DESC LIMIT %d",
+		c.dbName, qs, qv, fetch,
 	)
 }
 

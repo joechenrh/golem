@@ -185,12 +185,79 @@ func TestSQLEscape(t *testing.T) {
 		{"hello", "hello"},
 		{"it's", "it''s"},
 		{"a''b", "a''''b"},
+		{"back\\slash", "back\\\\slash"},
+		{"null\x00byte", "nullbyte"},
+		{"new\nline", "new\\nline"},
 	}
 	for _, tt := range tests {
 		got := sqlEscape(tt.input)
 		if got != tt.want {
 			t.Errorf("sqlEscape(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestSQLQ(t *testing.T) {
+	if got := sqlQ("hello"); got != "'hello'" {
+		t.Errorf("sqlQ(hello) = %s, want 'hello'", got)
+	}
+	if got := sqlQ("it's"); got != "'it''s'" {
+		t.Errorf("sqlQ(it's) = %s, want 'it''s'", got)
+	}
+}
+
+func TestSQLNullableQ(t *testing.T) {
+	if got := sqlNullableQ(""); got != "NULL" {
+		t.Errorf("sqlNullableQ('') = %s, want NULL", got)
+	}
+	if got := sqlNullableQ("val"); got != "'val'" {
+		t.Errorf("sqlNullableQ(val) = %s, want 'val'", got)
+	}
+}
+
+func TestStore_SQLInjection(t *testing.T) {
+	var capturedQuery string
+	srv := mockTiDB(t, func(query string) (interface{}, int) {
+		capturedQuery = query
+		return sqlResponse{}, http.StatusOK
+	})
+	defer srv.Close()
+
+	c := newTestClient(srv)
+
+	// Attempt SQL injection via content.
+	_, err := c.Store(context.Background(), "'; DROP TABLE memories; --", "", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The injection attempt must be escaped: single quotes doubled.
+	if strings.Contains(capturedQuery, "DROP TABLE") && !strings.Contains(capturedQuery, "''") {
+		t.Errorf("SQL injection not escaped in query: %s", capturedQuery)
+	}
+	// The dangerous single-quote must be doubled.
+	if !strings.Contains(capturedQuery, "''") {
+		t.Errorf("expected escaped quotes in query: %s", capturedQuery)
+	}
+}
+
+func TestSearch_SQLInjection(t *testing.T) {
+	var capturedQuery string
+	srv := mockTiDB(t, func(query string) (interface{}, int) {
+		capturedQuery = query
+		return sqlResponse{Types: testColumns, Rows: [][]interface{}{}}, http.StatusOK
+	})
+	defer srv.Close()
+
+	c := newTestClient(srv)
+
+	_, err := c.Search(context.Background(), "'; DROP TABLE memories; --", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(capturedQuery, "DROP TABLE") && !strings.Contains(capturedQuery, "''") {
+		t.Errorf("SQL injection not escaped in search query: %s", capturedQuery)
 	}
 }
 
