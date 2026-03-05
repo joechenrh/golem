@@ -62,16 +62,44 @@ func (s *MaskingStrategy) BuildContext(_ context.Context, entries []tape.TapeEnt
 	return trimToFit(msgs, maxTokens), nil
 }
 
-// EstimateTokens roughly estimates token count using ~4 chars per token.
+// EstimateTokens roughly estimates token count.
+// ASCII/Latin text uses ~4 chars per token; CJK characters are ~1 token each.
 func EstimateTokens(msgs []llm.Message) int {
 	total := 0
 	for _, m := range msgs {
-		total += len(m.Content)
+		total += estimateStringTokens(m.Content)
 		for _, tc := range m.ToolCalls {
-			total += len(tc.Arguments)
+			total += estimateStringTokens(tc.Arguments)
 		}
 	}
-	return total / 4
+	return total
+}
+
+// estimateStringTokens estimates token count for a single string,
+// distinguishing CJK characters (~1 token each) from Latin text (~4 chars/token).
+func estimateStringTokens(s string) int {
+	ascii := 0
+	cjk := 0
+	for _, r := range s {
+		if isCJK(r) {
+			cjk++
+		} else {
+			ascii++
+		}
+	}
+	return ascii/4 + cjk
+}
+
+// isCJK returns true for CJK Unified Ideographs and common CJK ranges.
+func isCJK(r rune) bool {
+	return (r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
+		(r >= 0x3400 && r <= 0x4DBF) || // CJK Extension A
+		(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
+		(r >= 0x3000 && r <= 0x303F) || // CJK Symbols and Punctuation
+		(r >= 0xFF00 && r <= 0xFFEF) || // Fullwidth Forms
+		(r >= 0xAC00 && r <= 0xD7AF) || // Hangul Syllables (Korean)
+		(r >= 0x3040 && r <= 0x309F) || // Hiragana
+		(r >= 0x30A0 && r <= 0x30FF) // Katakana
 }
 
 // MaskObservations truncates tool result messages exceeding maxChars.

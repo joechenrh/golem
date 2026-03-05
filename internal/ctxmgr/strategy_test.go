@@ -182,7 +182,31 @@ func TestEstimateTokens(t *testing.T) {
 	}
 	got := EstimateTokens(msgs)
 	if got != 100 {
-		t.Errorf("EstimateTokens = %d, want 100", got)
+		t.Errorf("EstimateTokens (ASCII) = %d, want 100", got)
+	}
+}
+
+func TestEstimateTokens_CJK(t *testing.T) {
+	// 4 CJK characters should be ~4 tokens (1 token each).
+	msgs := []llm.Message{
+		{Role: llm.RoleUser, Content: "你好世界"},
+	}
+	got := EstimateTokens(msgs)
+	if got != 4 {
+		t.Errorf("EstimateTokens (CJK) = %d, want 4", got)
+	}
+}
+
+func TestEstimateTokens_Mixed(t *testing.T) {
+	// 8 ASCII chars (2 tokens) + 4 CJK chars (4 tokens) = 6 tokens
+	msgs := []llm.Message{
+		{Role: llm.RoleUser, Content: "hello!! 你好世界测"},
+	}
+	// "hello!! " = 8 ASCII chars = 2 tokens, "你好世界测" = 5 CJK = 5 tokens
+	got := EstimateTokens(msgs)
+	want := 8/4 + 5 // 2 + 5 = 7
+	if got != want {
+		t.Errorf("EstimateTokens (mixed) = %d, want %d", got, want)
 	}
 }
 
