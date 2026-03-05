@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -94,7 +96,35 @@ func buildAgent(cfg *config.Config, logger *zap.Logger) (*AgentInstance, error) 
 	// 7. Build tool registry.
 	registry := buildToolRegistry(cfg, exec, filesystem, larkCh, logger)
 
-	// 8. Create agent loop.
+	// 8. Register spawn_agent tool. The runner creates a sub-agent that
+	//    shares the LLM client and infra but has its own tape and registry
+	//    WITHOUT spawn capability (prevents recursive spawning).
+	var subAgentSeq atomic.Int64
+	runner := func(ctx context.Context, prompt string) (string, error) {
+		seq := subAgentSeq.Add(1)
+		subTapePath := filepath.Join(cfg.TapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
+		subTape, err := tape.NewFileStore(subTapePath)
+		if err != nil {
+			return "", fmt.Errorf("sub-agent tape: %w", err)
+		}
+		subCtxStrategy, _ := ctxmgr.NewContextStrategy(cfg.ContextStrategy)
+		subHooks := hooks.NewBus(logger.Named("sub-agent"))
+		subHooks.Register(hooks.NewLoggingHook(logger.Named("sub-agent")))
+
+		// Build a registry without spawn_agent.
+		subRegistry := buildToolRegistry(cfg, exec, filesystem, larkCh, logger)
+
+		subLoop := agent.New(llmClient, subRegistry, subTape, subCtxStrategy, subHooks, cfg, logger.Named("sub-agent"))
+
+		msg := channel.IncomingMessage{
+			ChannelName: "internal",
+			Text:        prompt,
+		}
+		return subLoop.HandleInput(ctx, msg)
+	}
+	registry.Register(builtin.NewSpawnAgentTool(runner))
+
+	// 9. Create agent loop.
 	loop := agent.New(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
 
 	return &AgentInstance{
@@ -134,6 +164,8 @@ func buildLLMClient(cfg *config.Config) (llm.Client, error) {
 
 // buildToolRegistry creates and populates a tool registry with all built-in
 // tools, channel-specific tools, and discovered skills.
+// The registry intentionally does NOT include spawn_agent — that is added
+// separately by buildAgent to prevent sub-agents from spawning recursively.
 func buildToolRegistry(
 	cfg *config.Config,
 	exec executor.Executor,
