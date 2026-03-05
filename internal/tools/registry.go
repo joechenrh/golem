@@ -61,7 +61,9 @@ func (r *Registry) Get(name string) Tool {
 }
 
 // Execute runs a tool by name with raw JSON args, applying any registered middlewares.
-func (r *Registry) Execute(ctx context.Context, name string, args string) (string, error) {
+func (r *Registry) Execute(
+	ctx context.Context, name string, args string,
+) (string, error) {
 	t, ok := r.tools[name]
 	if !ok {
 		return "", fmt.Errorf("unknown tool: %q", name)

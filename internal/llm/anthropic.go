@@ -113,7 +113,9 @@ func (c *anthropicClient) Provider() Provider {
 	return ProviderAnthropic
 }
 
-func (c *anthropicClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+func (c *anthropicClient) Chat(
+	ctx context.Context, req ChatRequest,
+) (*ChatResponse, error) {
 	wireReq := c.buildRequest(req, false)
 
 	body, err := json.Marshal(wireReq)
@@ -146,7 +148,9 @@ func (c *anthropicClient) Chat(ctx context.Context, req ChatRequest) (*ChatRespo
 	return c.convertResponse(wireResp), nil
 }
 
-func (c *anthropicClient) ChatStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+func (c *anthropicClient) ChatStream(
+	ctx context.Context, req ChatRequest,
+) (<-chan StreamEvent, error) {
 	wireReq := c.buildRequest(req, true)
 
 	body, err := json.Marshal(wireReq)
@@ -175,7 +179,10 @@ func (c *anthropicClient) ChatStream(ctx context.Context, req ChatRequest) (<-ch
 	return ch, nil
 }
 
-func (c *anthropicClient) readStream(ctx context.Context, body io.ReadCloser, ch chan<- StreamEvent) {
+func (c *anthropicClient) readStream(
+	ctx context.Context, body io.ReadCloser,
+	ch chan<- StreamEvent,
+) {
 	defer close(ch)
 	defer body.Close()
 
@@ -247,7 +254,9 @@ func (c *anthropicClient) setHeaders(req *http.Request) {
 	req.Header.Set("anthropic-version", "2023-06-01")
 }
 
-func (c *anthropicClient) buildRequest(req ChatRequest, stream bool) anthropicRequest {
+func (c *anthropicClient) buildRequest(
+	req ChatRequest, stream bool,
+) anthropicRequest {
 	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = 4096
@@ -348,7 +357,9 @@ func convertMessages(msgs []Message) []anthropicMessage {
 	return result
 }
 
-func (c *anthropicClient) convertResponse(resp anthropicResponse) *ChatResponse {
+func (c *anthropicClient) convertResponse(
+	resp anthropicResponse,
+) *ChatResponse {
 	cr := &ChatResponse{
 		Usage: Usage{
 			PromptTokens:     resp.Usage.InputTokens,

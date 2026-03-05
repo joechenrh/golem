@@ -39,7 +39,9 @@ func (f *LocalFS) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(safe)
 }
 
-func (f *LocalFS) WriteFile(path string, data []byte, perm os.FileMode) error {
+func (f *LocalFS) WriteFile(
+	path string, data []byte, perm os.FileMode,
+) error {
 	safe, err := f.resolve(path)
 	if err != nil {
 		return err
@@ -67,7 +69,9 @@ func (f *LocalFS) ReadDir(path string) ([]os.DirEntry, error) {
 	return os.ReadDir(safe)
 }
 
-func (f *LocalFS) MkdirAll(path string, perm os.FileMode) error {
+func (f *LocalFS) MkdirAll(
+	path string, perm os.FileMode,
+) error {
 	safe, err := f.resolve(path)
 	if err != nil {
 		return err
@@ -120,7 +124,9 @@ func (f *LocalFS) resolve(path string) (string, error) {
 
 // resolveNewPath handles paths where the target doesn't exist yet.
 // It resolves the existing parent directory and verifies the sandbox.
-func (f *LocalFS) resolveNewPath(abs, original string) (string, error) {
+func (f *LocalFS) resolveNewPath(
+	abs, original string,
+) (string, error) {
 	dir := filepath.Dir(abs)
 	base := filepath.Base(abs)
 

@@ -44,7 +44,10 @@ type LarkChannel struct {
 }
 
 // New creates a LarkChannel with the given credentials.
-func New(appID, appSecret, verifyToken string, logger *zap.Logger) *LarkChannel {
+func New(
+	appID, appSecret, verifyToken string,
+	logger *zap.Logger,
+) *LarkChannel {
 	sdkLogger := &zapLarkLogger{z: logger.Named("lark-sdk")}
 
 	client := lark.NewClient(appID, appSecret,
@@ -68,7 +71,10 @@ func (l *LarkChannel) Name() string { return "lark" }
 
 // Start connects to Lark via WebSocket and dispatches incoming messages to inCh.
 // Blocks until the context is cancelled or the connection is permanently lost.
-func (l *LarkChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMessage) error {
+func (l *LarkChannel) Start(
+	ctx context.Context,
+	inCh chan<- channel.IncomingMessage,
+) error {
 	sdkLogger := &zapLarkLogger{z: l.logger.Named("lark-ws")}
 
 	l.dispatcher.OnP2MessageReceiveV1(func(_ context.Context, event *larkim.P2MessageReceiveV1) error {
@@ -93,7 +99,10 @@ func (l *LarkChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMes
 	return g.Wait()
 }
 
-func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh chan<- channel.IncomingMessage) {
+func (l *LarkChannel) onMessageReceive(
+	event *larkim.P2MessageReceiveV1,
+	inCh chan<- channel.IncomingMessage,
+) {
 	msg := event.Event.Message
 	if msg == nil || msg.MessageType == nil || *msg.MessageType != "text" {
 		return
@@ -165,7 +174,9 @@ func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh ch
 
 // seenMsgsEvictionLoop periodically removes old entries from seenMsgs.
 // Runs as a single goroutine started by Start(), stops when ctx is cancelled.
-func (l *LarkChannel) seenMsgsEvictionLoop(ctx context.Context, maxAge time.Duration) {
+func (l *LarkChannel) seenMsgsEvictionLoop(
+	ctx context.Context, maxAge time.Duration,
+) {
 	ticker := time.NewTicker(maxAge)
 	defer ticker.Stop()
 	for {
@@ -194,7 +205,9 @@ func truncateForLog(s string, maxLen int) string {
 // Send sends a message to the chat identified in msg.ChannelID.
 // If the chat was already sent to during this cycle (e.g. by a tool call),
 // the send is skipped to avoid duplicate replies.
-func (l *LarkChannel) Send(ctx context.Context, msg channel.OutgoingMessage) error {
+func (l *LarkChannel) Send(
+	ctx context.Context, msg channel.OutgoingMessage,
+) error {
 	chatID := strings.TrimPrefix(msg.ChannelID, "lark:")
 
 	if _, alreadySent := l.sentChats.LoadOrStore(chatID, true); alreadySent {
@@ -211,7 +224,10 @@ func (l *LarkChannel) SendTyping(_ context.Context, _ string) error { return nil
 func (l *LarkChannel) SupportsStreaming() bool { return false }
 
 // SendStream collects all tokens and sends as a single message.
-func (l *LarkChannel) SendStream(ctx context.Context, channelID string, tokenCh <-chan string) error {
+func (l *LarkChannel) SendStream(
+	ctx context.Context, channelID string,
+	tokenCh <-chan string,
+) error {
 	var sb strings.Builder
 	for tok := range tokenCh {
 		sb.WriteString(tok)
@@ -221,7 +237,9 @@ func (l *LarkChannel) SendStream(ctx context.Context, channelID string, tokenCh 
 
 // SendToChat sends a message to a specific chat_id. Exported for use by tools.
 // It records the chat_id so that a subsequent Send to the same chat is skipped.
-func (l *LarkChannel) SendToChat(ctx context.Context, chatID, text string) error {
+func (l *LarkChannel) SendToChat(
+	ctx context.Context, chatID, text string,
+) error {
 	l.sentChats.Store(chatID, true)
 
 	return l.sendCard(ctx, chatID, text)
@@ -229,7 +247,9 @@ func (l *LarkChannel) SendToChat(ctx context.Context, chatID, text string) error
 
 // sendCard sends a message as an interactive card with a markdown element,
 // which supports bold, italic, strikethrough, links, and code formatting.
-func (l *LarkChannel) sendCard(ctx context.Context, chatID, text string) error {
+func (l *LarkChannel) sendCard(
+	ctx context.Context, chatID, text string,
+) error {
 	l.logger.Info("sending lark card",
 		zap.String("chat_id", chatID),
 		zap.Int("text_len", len(text)))
@@ -262,7 +282,9 @@ func (l *LarkChannel) sendCard(ctx context.Context, chatID, text string) error {
 }
 
 // ListChats returns the groups the bot is a member of (for discovering chat_ids).
-func (l *LarkChannel) ListChats(ctx context.Context) ([]ChatInfo, error) {
+func (l *LarkChannel) ListChats(
+	ctx context.Context,
+) ([]ChatInfo, error) {
 	req := larkim.NewListChatReqBuilder().
 		PageSize(50).
 		Build()
@@ -293,7 +315,9 @@ func (l *LarkChannel) ListChats(ctx context.Context) ([]ChatInfo, error) {
 }
 
 // ReadDocContent returns the plain text content of a Feishu document.
-func (l *LarkChannel) ReadDocContent(ctx context.Context, documentID string) (string, error) {
+func (l *LarkChannel) ReadDocContent(
+	ctx context.Context, documentID string,
+) (string, error) {
 	req := larkdocx.NewRawContentDocumentReqBuilder().
 		DocumentId(documentID).
 		Lang(0).
@@ -318,7 +342,9 @@ const maxBlocksPerRequest = 50
 // WriteDocContent replaces all content in a Feishu document with markdown content.
 // It uses Document.Convert() to parse markdown into properly typed blocks (headings,
 // bullets, code blocks, etc.), then replaces the document's children with those blocks.
-func (l *LarkChannel) WriteDocContent(ctx context.Context, documentID, content string) error {
+func (l *LarkChannel) WriteDocContent(
+	ctx context.Context, documentID, content string,
+) error {
 	// 1. Convert markdown content to Feishu blocks.
 	convReq := larkdocx.NewConvertDocumentReqBuilder().
 		Body(larkdocx.NewConvertDocumentReqBodyBuilder().

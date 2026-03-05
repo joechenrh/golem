@@ -25,7 +25,9 @@ type ShellTool struct {
 }
 
 // NewShellTool creates a shell execution tool backed by the given executor.
-func NewShellTool(exec executor.Executor, defaultTimeout time.Duration) *ShellTool {
+func NewShellTool(
+	exec executor.Executor, defaultTimeout time.Duration,
+) *ShellTool {
 	return &ShellTool{exec: exec, defaultTimeout: defaultTimeout}
 }
 
@@ -36,7 +38,9 @@ func (t *ShellTool) FullDescription() string {
 }
 func (t *ShellTool) Parameters() json.RawMessage { return shellParams }
 
-func (t *ShellTool) Execute(ctx context.Context, args string) (string, error) {
+func (t *ShellTool) Execute(
+	ctx context.Context, args string,
+) (string, error) {
 	var params struct {
 		Command string `json:"command"`
 		Timeout int    `json:"timeout"`

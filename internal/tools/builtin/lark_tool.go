@@ -15,7 +15,9 @@ type LarkSendTool struct {
 	ch *larkchan.LarkChannel
 }
 
-func NewLarkSendTool(ch *larkchan.LarkChannel) *LarkSendTool {
+func NewLarkSendTool(
+	ch *larkchan.LarkChannel,
+) *LarkSendTool {
 	return &LarkSendTool{ch: ch}
 }
 
@@ -37,7 +39,9 @@ var larkSendParams = json.RawMessage(`{
 
 func (t *LarkSendTool) Parameters() json.RawMessage { return larkSendParams }
 
-func (t *LarkSendTool) Execute(ctx context.Context, args string) (string, error) {
+func (t *LarkSendTool) Execute(
+	ctx context.Context, args string,
+) (string, error) {
 	var params struct {
 		ChatID  string `json:"chat_id"`
 		Message string `json:"message"`
@@ -63,7 +67,9 @@ type LarkListChatsTool struct {
 	ch *larkchan.LarkChannel
 }
 
-func NewLarkListChatsTool(ch *larkchan.LarkChannel) *LarkListChatsTool {
+func NewLarkListChatsTool(
+	ch *larkchan.LarkChannel,
+) *LarkListChatsTool {
 	return &LarkListChatsTool{ch: ch}
 }
 
@@ -82,7 +88,9 @@ var larkListChatsParams = json.RawMessage(`{
 
 func (t *LarkListChatsTool) Parameters() json.RawMessage { return larkListChatsParams }
 
-func (t *LarkListChatsTool) Execute(ctx context.Context, args string) (string, error) {
+func (t *LarkListChatsTool) Execute(
+	ctx context.Context, args string,
+) (string, error) {
 	chats, err := t.ch.ListChats(ctx)
 	if err != nil {
 		return "Error: " + err.Error(), nil

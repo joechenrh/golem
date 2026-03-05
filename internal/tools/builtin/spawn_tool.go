@@ -19,7 +19,9 @@ type SpawnAgentTool struct {
 // NewSpawnAgentTool creates a spawn tool using the provided runner function.
 // The runner is responsible for constructing a sub-agent without spawn_agent
 // in its tool registry.
-func NewSpawnAgentTool(runner SubAgentRunner) *SpawnAgentTool {
+func NewSpawnAgentTool(
+	runner SubAgentRunner,
+) *SpawnAgentTool {
 	return &SpawnAgentTool{runner: runner}
 }
 
@@ -45,7 +47,9 @@ var spawnAgentParams = json.RawMessage(`{
 
 func (t *SpawnAgentTool) Parameters() json.RawMessage { return spawnAgentParams }
 
-func (t *SpawnAgentTool) Execute(ctx context.Context, args string) (string, error) {
+func (t *SpawnAgentTool) Execute(
+	ctx context.Context, args string,
+) (string, error) {
 	var params struct {
 		Prompt string `json:"prompt"`
 	}

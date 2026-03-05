@@ -104,7 +104,11 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 // processMessages reads from inCh and dispatches messages. CLI messages are
 // handled inline; remote messages are fanned out to per-channelID workers so
 // different chats run in parallel while messages within a chat stay serialized.
-func (inst *AgentInstance) processMessages(ctx context.Context, cancel context.CancelFunc, inCh <-chan channel.IncomingMessage) error {
+func (inst *AgentInstance) processMessages(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	inCh <-chan channel.IncomingMessage,
+) error {
 	chatQueues := make(map[string]chan channel.IncomingMessage)
 	var chatGroup errgroup.Group
 	defer func() {
@@ -143,7 +147,9 @@ func (inst *AgentInstance) processMessages(ctx context.Context, cancel context.C
 
 // processMessage handles a single incoming message through the agent loop.
 // Returns true if the user requested quit.
-func (inst *AgentInstance) processMessage(ctx context.Context, msg channel.IncomingMessage) bool {
+func (inst *AgentInstance) processMessage(
+	ctx context.Context, msg channel.IncomingMessage,
+) bool {
 	if msg.Done != nil {
 		defer close(msg.Done)
 	}
@@ -201,7 +207,9 @@ func (inst *AgentInstance) processMessage(ctx context.Context, msg channel.Incom
 
 // logOrPrintError uses PrintError for colored output when the channel supports
 // it, otherwise logs the error.
-func (inst *AgentInstance) logOrPrintError(ch channel.Channel, text string) {
+func (inst *AgentInstance) logOrPrintError(
+	ch channel.Channel, text string,
+) {
 	if p, ok := ch.(interface{ PrintError(string) }); ok {
 		p.PrintError(text)
 	} else {
@@ -213,7 +221,9 @@ func (inst *AgentInstance) logOrPrintError(ch channel.Channel, text string) {
 // When name is "default", a CLI channel is created for interactive use.
 // Otherwise, no CLI channel is added (background agent).
 // Lark/Telegram channels are always conditional on config credentials.
-func BuildAgent(name string, cfg *config.Config, logger *zap.Logger) (*AgentInstance, error) {
+func BuildAgent(
+	name string, cfg *config.Config, logger *zap.Logger,
+) (*AgentInstance, error) {
 	// 1. Initialize LLM client.
 	llmClient, err := BuildLLMClient(cfg)
 	if err != nil {
@@ -445,7 +455,11 @@ func BuildToolRegistry(
 // loads each one, and builds an AgentInstance for those with remote channels.
 // claimedLarkApps tracks Lark app IDs already in use to avoid duplicate
 // WebSocket connections — agents whose LarkAppID is already claimed are skipped.
-func DiscoverAndBuildBackgroundAgents(printer channel.SystemPrinter, logger *zap.Logger, claimedLarkApps map[string]bool) []*AgentInstance {
+func DiscoverAndBuildBackgroundAgents(
+	printer channel.SystemPrinter,
+	logger *zap.Logger,
+	claimedLarkApps map[string]bool,
+) []*AgentInstance {
 	names, err := config.DiscoverAgents()
 	if err != nil {
 		logger.Error("agent discovery", zap.Error(err))

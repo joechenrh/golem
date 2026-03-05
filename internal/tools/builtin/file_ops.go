@@ -68,7 +68,9 @@ func (t *ReadFileTool) FullDescription() string {
 }
 func (t *ReadFileTool) Parameters() json.RawMessage { return readFileParams }
 
-func (t *ReadFileTool) Execute(_ context.Context, args string) (string, error) {
+func (t *ReadFileTool) Execute(
+	_ context.Context, args string,
+) (string, error) {
 	var params struct {
 		Path   string `json:"path"`
 		Offset int    `json:"offset"`
@@ -140,7 +142,9 @@ func (t *WriteFileTool) FullDescription() string {
 }
 func (t *WriteFileTool) Parameters() json.RawMessage { return writeFileParams }
 
-func (t *WriteFileTool) Execute(_ context.Context, args string) (string, error) {
+func (t *WriteFileTool) Execute(
+	_ context.Context, args string,
+) (string, error) {
 	var params struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -188,7 +192,9 @@ func (t *EditFileTool) FullDescription() string {
 }
 func (t *EditFileTool) Parameters() json.RawMessage { return editFileParams }
 
-func (t *EditFileTool) Execute(_ context.Context, args string) (string, error) {
+func (t *EditFileTool) Execute(
+	_ context.Context, args string,
+) (string, error) {
 	var params struct {
 		Path    string `json:"path"`
 		OldText string `json:"old_text"`
@@ -239,7 +245,9 @@ type ListDirectoryTool struct {
 	filesystem fs.FS
 }
 
-func NewListDirectoryTool(filesystem fs.FS) *ListDirectoryTool {
+func NewListDirectoryTool(
+	filesystem fs.FS,
+) *ListDirectoryTool {
 	return &ListDirectoryTool{filesystem: filesystem}
 }
 
@@ -250,7 +258,9 @@ func (t *ListDirectoryTool) FullDescription() string {
 }
 func (t *ListDirectoryTool) Parameters() json.RawMessage { return listDirParams }
 
-func (t *ListDirectoryTool) Execute(_ context.Context, args string) (string, error) {
+func (t *ListDirectoryTool) Execute(
+	_ context.Context, args string,
+) (string, error) {
 	var params struct {
 		Path string `json:"path"`
 	}
@@ -323,7 +333,9 @@ type SearchFilesTool struct {
 	filesystem fs.FS
 }
 
-func NewSearchFilesTool(filesystem fs.FS) *SearchFilesTool {
+func NewSearchFilesTool(
+	filesystem fs.FS,
+) *SearchFilesTool {
 	return &SearchFilesTool{filesystem: filesystem}
 }
 
@@ -334,7 +346,9 @@ func (t *SearchFilesTool) FullDescription() string {
 }
 func (t *SearchFilesTool) Parameters() json.RawMessage { return searchFilesParams }
 
-func (t *SearchFilesTool) Execute(_ context.Context, args string) (string, error) {
+func (t *SearchFilesTool) Execute(
+	_ context.Context, args string,
+) (string, error) {
 	var params struct {
 		Path     string `json:"path"`
 		Pattern  string `json:"pattern"`
@@ -356,7 +370,9 @@ func (t *SearchFilesTool) Execute(_ context.Context, args string) (string, error
 	return strings.Join(results, "\n"), nil
 }
 
-func (t *SearchFilesTool) searchDir(dir, pattern, glob string, results *[]string) {
+func (t *SearchFilesTool) searchDir(
+	dir, pattern, glob string, results *[]string,
+) {
 	if len(*results) >= maxSearchHits {
 		return
 	}
@@ -398,7 +414,9 @@ func (t *SearchFilesTool) searchDir(dir, pattern, glob string, results *[]string
 	}
 }
 
-func (t *SearchFilesTool) searchFile(path, pattern string, results *[]string) {
+func (t *SearchFilesTool) searchFile(
+	path, pattern string, results *[]string,
+) {
 	data, err := t.filesystem.ReadFile(path)
 	if err != nil {
 		return

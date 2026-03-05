@@ -30,7 +30,10 @@ func defaultRetryConfig() retryConfig {
 }
 
 // doWithRetry executes fn with exponential backoff and jitter for retryable failures.
-func doWithRetry(ctx context.Context, cfg retryConfig, fn func() (*http.Response, error)) (*http.Response, error) {
+func doWithRetry(
+	ctx context.Context, cfg retryConfig,
+	fn func() (*http.Response, error),
+) (*http.Response, error) {
 	if cfg.maxAttempts <= 0 {
 		cfg.maxAttempts = defaultMaxAttempts
 	}
@@ -82,7 +85,10 @@ func doWithRetry(ctx context.Context, cfg retryConfig, fn func() (*http.Response
 }
 
 // backoff sleeps with exponential backoff and jitter. Respects Retry-After header on 429 responses.
-func backoff(ctx context.Context, cfg retryConfig, attempt int, resp *http.Response) error {
+func backoff(
+	ctx context.Context, cfg retryConfig,
+	attempt int, resp *http.Response,
+) error {
 	wait := cfg.baseBackoff * (1 << uint(attempt))
 
 	if wait > maxBackoffCap {

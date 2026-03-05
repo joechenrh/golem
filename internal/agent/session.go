@@ -48,7 +48,9 @@ type SessionManager struct {
 }
 
 // NewSessionManager creates a SessionManager with the given factory settings.
-func NewSessionManager(factory SessionFactory, logger *zap.Logger) *SessionManager {
+func NewSessionManager(
+	factory SessionFactory, logger *zap.Logger,
+) *SessionManager {
 	return &SessionManager{
 		sessions: make(map[string]*session),
 		factory:  factory,
@@ -68,7 +70,9 @@ func (sm *SessionManager) SetBaseContext(ctx context.Context) {
 // GetOrCreate returns the AgentLoop and session context for the given channelID,
 // creating a new session with its own tape file and tool registry if one doesn't
 // exist. The returned context is cancelled when the session is evicted or shut down.
-func (sm *SessionManager) GetOrCreate(channelID string) (*AgentLoop, context.Context) {
+func (sm *SessionManager) GetOrCreate(
+	channelID string,
+) (*AgentLoop, context.Context) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -105,7 +109,9 @@ func (sm *SessionManager) GetOrCreate(channelID string) (*AgentLoop, context.Con
 }
 
 // createSession builds a new AgentLoop with a fresh tape and tool registry.
-func (sm *SessionManager) createSession(channelID string) (*AgentLoop, string, error) {
+func (sm *SessionManager) createSession(
+	channelID string,
+) (*AgentLoop, string, error) {
 	cfg := sm.factory.Config
 
 	// Sanitize channelID for use in filename (replace colons, slashes).
@@ -135,7 +141,9 @@ func (sm *SessionManager) createSession(channelID string) (*AgentLoop, string, e
 }
 
 // createSessionFromTape builds a new AgentLoop resuming from an existing tape file.
-func (sm *SessionManager) createSessionFromTape(tapePath string) (*AgentLoop, error) {
+func (sm *SessionManager) createSessionFromTape(
+	tapePath string,
+) (*AgentLoop, error) {
 	cfg := sm.factory.Config
 
 	tapeStore, err := tape.NewFileStore(tapePath)
@@ -245,7 +253,9 @@ func (sm *SessionManager) EvictIdle(maxAge time.Duration) int {
 
 // StartEvictionLoop runs periodic idle session eviction in a background goroutine.
 // It stops when ctx is cancelled.
-func (sm *SessionManager) StartEvictionLoop(ctx context.Context, interval, maxAge time.Duration) {
+func (sm *SessionManager) StartEvictionLoop(
+	ctx context.Context, interval, maxAge time.Duration,
+) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()

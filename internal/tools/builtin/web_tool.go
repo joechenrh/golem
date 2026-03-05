@@ -35,7 +35,9 @@ type WebSearchTool struct {
 
 // NewWebSearchTool creates a web search tool.
 // backend is "bing" (default) or "stub".
-func NewWebSearchTool(client *http.Client, backend string) *WebSearchTool {
+func NewWebSearchTool(
+	client *http.Client, backend string,
+) *WebSearchTool {
 	if backend == "" {
 		backend = "bing"
 	}
@@ -64,7 +66,9 @@ var webSearchParams = json.RawMessage(`{
 
 func (t *WebSearchTool) Parameters() json.RawMessage { return webSearchParams }
 
-func (t *WebSearchTool) Execute(ctx context.Context, args string) (string, error) {
+func (t *WebSearchTool) Execute(
+	ctx context.Context, args string,
+) (string, error) {
 	var params struct {
 		Query string `json:"query"`
 		Count int    `json:"count"`
@@ -102,7 +106,9 @@ func (t *WebSearchTool) Execute(ctx context.Context, args string) (string, error
 	return sb.String(), nil
 }
 
-func (t *WebSearchTool) search(ctx context.Context, query string, count int) ([]searchResult, error) {
+func (t *WebSearchTool) search(
+	ctx context.Context, query string, count int,
+) ([]searchResult, error) {
 	switch t.backend {
 	case "stub":
 		return t.searchStub(query)
@@ -111,7 +117,9 @@ func (t *WebSearchTool) search(ctx context.Context, query string, count int) ([]
 	}
 }
 
-func (t *WebSearchTool) searchStub(query string) ([]searchResult, error) {
+func (t *WebSearchTool) searchStub(
+	query string,
+) ([]searchResult, error) {
 	return []searchResult{{
 		Title:   "Search URL",
 		URL:     fmt.Sprintf("https://duckduckgo.com/?q=%s", url.QueryEscape(query)),
@@ -119,7 +127,9 @@ func (t *WebSearchTool) searchStub(query string) ([]searchResult, error) {
 	}}, nil
 }
 
-func (t *WebSearchTool) searchBing(ctx context.Context, query string, count int) ([]searchResult, error) {
+func (t *WebSearchTool) searchBing(
+	ctx context.Context, query string, count int,
+) ([]searchResult, error) {
 	u := fmt.Sprintf("%s?q=%s&count=%d", t.searchURL, url.QueryEscape(query), count)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -148,7 +158,9 @@ func (t *WebSearchTool) searchBing(ctx context.Context, query string, count int)
 // parseBingResults extracts search results from Bing HTML.
 // Results live in <li class="b_algo"> blocks with <h2><a href="...">title</a></h2>
 // and a <p> snippet.
-func parseBingResults(htmlStr string, count int) []searchResult {
+func parseBingResults(
+	htmlStr string, count int,
+) []searchResult {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlStr))
 	var results []searchResult
 	var inAlgo, inH2, inLink, inSnippetP bool
@@ -311,7 +323,9 @@ var webFetchParams = json.RawMessage(`{
 
 func (t *WebFetchTool) Parameters() json.RawMessage { return webFetchParams }
 
-func (t *WebFetchTool) Execute(ctx context.Context, args string) (string, error) {
+func (t *WebFetchTool) Execute(
+	ctx context.Context, args string,
+) (string, error) {
 	var params struct {
 		URL       string `json:"url"`
 		MaxLength int    `json:"max_length"`

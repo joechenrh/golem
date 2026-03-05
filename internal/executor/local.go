@@ -23,7 +23,10 @@ func NewLocal(workDir string) *LocalExecutor {
 
 func (e *LocalExecutor) Name() string { return "local" }
 
-func (e *LocalExecutor) Execute(ctx context.Context, command string, timeout time.Duration) (*Result, error) {
+func (e *LocalExecutor) Execute(
+	ctx context.Context, command string,
+	timeout time.Duration,
+) (*Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

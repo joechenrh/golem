@@ -46,7 +46,11 @@ type Client struct {
 }
 
 // NewClient creates a new mnemos direct-mode client.
-func NewClient(httpClient *http.Client, host, user, pass, dbName, autoEmbedModel string, autoEmbedDims int) *Client {
+func NewClient(
+	httpClient *http.Client,
+	host, user, pass, dbName string,
+	autoEmbedModel string, autoEmbedDims int,
+) *Client {
 	if dbName == "" {
 		dbName = "mnemos"
 	}
@@ -65,7 +69,10 @@ func NewClient(httpClient *http.Client, host, user, pass, dbName, autoEmbedModel
 }
 
 // NewClientForTest creates a Client with a custom apiURL for testing.
-func NewClientForTest(httpClient *http.Client, apiURL, user, pass, dbName string) *Client {
+func NewClientForTest(
+	httpClient *http.Client,
+	apiURL, user, pass, dbName string,
+) *Client {
 	return &Client{
 		httpClient: httpClient,
 		apiURL:     apiURL,
@@ -154,7 +161,9 @@ type sqlColumn struct {
 	Name string `json:"name"`
 }
 
-func (c *Client) execSQL(ctx context.Context, query string) (*sqlResponse, error) {
+func (c *Client) execSQL(
+	ctx context.Context, query string,
+) (*sqlResponse, error) {
 	body, err := json.Marshal(map[string]string{
 		"database": c.dbName,
 		"query":    query,
@@ -298,7 +307,10 @@ func parseRows(result *sqlResponse) []Memory {
 // ---------------------------------------------------------------------------
 
 // Store creates a new memory (mirrors mnemo_post_memory from common.sh).
-func (c *Client) Store(ctx context.Context, content, key, source string, tags []string) (*Memory, error) {
+func (c *Client) Store(
+	ctx context.Context,
+	content, key, source string, tags []string,
+) (*Memory, error) {
 	c.InitSchema(ctx)
 
 	id := uuid.New().String()
@@ -336,7 +348,9 @@ const rrfK = 60.0
 
 // Search queries memories using hybrid search (vector + keyword with RRF merge).
 // Falls back to keyword-only or LIKE depending on available features.
-func (c *Client) Search(ctx context.Context, queryText string, limit int) ([]Memory, error) {
+func (c *Client) Search(
+	ctx context.Context, queryText string, limit int,
+) ([]Memory, error) {
 	c.InitSchema(ctx)
 
 	if limit <= 0 {
@@ -354,7 +368,10 @@ func (c *Client) Search(ctx context.Context, queryText string, limit int) ([]Mem
 	return c.keywordSearch(ctx, escaped, limit, fetch)
 }
 
-func (c *Client) hybridSearch(ctx context.Context, escaped string, limit, fetch int) ([]Memory, error) {
+func (c *Client) hybridSearch(
+	ctx context.Context, escaped string,
+	limit, fetch int,
+) ([]Memory, error) {
 	// Vector leg: cosine distance via auto-embed.
 	// Note: escaped is already sqlEscape'd; wrap in quotes via concatenation.
 	qv := "'" + escaped + "'"
@@ -376,7 +393,10 @@ func (c *Client) hybridSearch(ctx context.Context, escaped string, limit, fetch 
 	return rrfMerge(vecRows, kwRows, limit), nil
 }
 
-func (c *Client) keywordSearch(ctx context.Context, escaped string, limit, fetch int) ([]Memory, error) {
+func (c *Client) keywordSearch(
+	ctx context.Context, escaped string,
+	limit, fetch int,
+) ([]Memory, error) {
 	kwSQL := c.keywordSQL(escaped, fetch)
 
 	result, err := c.execSQL(ctx, kwSQL)

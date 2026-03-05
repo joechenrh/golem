@@ -50,7 +50,9 @@ var (
 
 // RegisterProvider registers a new LLM provider factory.
 // This allows third-party providers to be plugged in without modifying this package.
-func RegisterProvider(name Provider, defaultURL string, factory ClientFactory) {
+func RegisterProvider(
+	name Provider, defaultURL string, factory ClientFactory,
+) {
 	providersMu.Lock()
 	defer providersMu.Unlock()
 	providers[name] = struct {
@@ -60,7 +62,9 @@ func RegisterProvider(name Provider, defaultURL string, factory ClientFactory) {
 }
 
 // NewClient creates a Client based on the provider string.
-func NewClient(provider Provider, apiKey string, opts ...ClientOption) (Client, error) {
+func NewClient(
+	provider Provider, apiKey string, opts ...ClientOption,
+) (Client, error) {
 	o := &clientOptions{}
 	for _, opt := range opts {
 		opt(o)
@@ -127,14 +131,18 @@ func NewRateLimitedClient(inner Client, rps int) Client {
 
 func (r *RateLimitedClient) Provider() Provider { return r.inner.Provider() }
 
-func (r *RateLimitedClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+func (r *RateLimitedClient) Chat(
+	ctx context.Context, req ChatRequest,
+) (*ChatResponse, error) {
 	if err := r.limiter.Wait(ctx); err != nil {
 		return nil, err
 	}
 	return r.inner.Chat(ctx, req)
 }
 
-func (r *RateLimitedClient) ChatStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+func (r *RateLimitedClient) ChatStream(
+	ctx context.Context, req ChatRequest,
+) (<-chan StreamEvent, error) {
 	if err := r.limiter.Wait(ctx); err != nil {
 		return nil, err
 	}

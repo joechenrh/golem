@@ -84,7 +84,9 @@ type DetectedCommand struct {
 // RouteAssistant scans assistant output for comma commands at line starts.
 // Skips commands inside code fences (``` blocks).
 // Returns detected commands and the cleaned text (command lines removed).
-func RouteAssistant(output string) (commands []DetectedCommand, cleanText string) {
+func RouteAssistant(
+	output string,
+) (commands []DetectedCommand, cleanText string) {
 	lines := strings.Split(output, "\n")
 	inFence := false
 	var cleanLines []string

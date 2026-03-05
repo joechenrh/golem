@@ -19,7 +19,9 @@ type MemoryStoreTool struct {
 	client *memory.Client
 }
 
-func NewMemoryStoreTool(client *memory.Client) *MemoryStoreTool {
+func NewMemoryStoreTool(
+	client *memory.Client,
+) *MemoryStoreTool {
 	return &MemoryStoreTool{client: client}
 }
 
@@ -45,7 +47,9 @@ var memoryStoreParams = json.RawMessage(`{
 
 func (t *MemoryStoreTool) Parameters() json.RawMessage { return memoryStoreParams }
 
-func (t *MemoryStoreTool) Execute(ctx context.Context, args string) (string, error) {
+func (t *MemoryStoreTool) Execute(
+	ctx context.Context, args string,
+) (string, error) {
 	var params struct {
 		Content string   `json:"content"`
 		Tags    []string `json:"tags"`
@@ -78,7 +82,9 @@ type MemoryRecallTool struct {
 	client *memory.Client
 }
 
-func NewMemoryRecallTool(client *memory.Client) *MemoryRecallTool {
+func NewMemoryRecallTool(
+	client *memory.Client,
+) *MemoryRecallTool {
 	return &MemoryRecallTool{client: client}
 }
 
@@ -103,7 +109,9 @@ var memoryRecallParams = json.RawMessage(`{
 
 func (t *MemoryRecallTool) Parameters() json.RawMessage { return memoryRecallParams }
 
-func (t *MemoryRecallTool) Execute(ctx context.Context, args string) (string, error) {
+func (t *MemoryRecallTool) Execute(
+	ctx context.Context, args string,
+) (string, error) {
 	var params struct {
 		Query string `json:"query"`
 		Limit int    `json:"limit"`

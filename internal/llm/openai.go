@@ -122,7 +122,9 @@ func (c *openaiClient) Provider() Provider {
 	return ProviderOpenAI
 }
 
-func (c *openaiClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+func (c *openaiClient) Chat(
+	ctx context.Context, req ChatRequest,
+) (*ChatResponse, error) {
 	wireReq := c.buildRequest(req, false)
 
 	body, err := json.Marshal(wireReq)
@@ -156,7 +158,9 @@ func (c *openaiClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse
 	return c.convertResponse(wireResp), nil
 }
 
-func (c *openaiClient) ChatStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+func (c *openaiClient) ChatStream(
+	ctx context.Context, req ChatRequest,
+) (<-chan StreamEvent, error) {
 	wireReq := c.buildRequest(req, true)
 
 	body, err := json.Marshal(wireReq)
@@ -186,7 +190,10 @@ func (c *openaiClient) ChatStream(ctx context.Context, req ChatRequest) (<-chan 
 	return ch, nil
 }
 
-func (c *openaiClient) readStream(ctx context.Context, body io.ReadCloser, ch chan<- StreamEvent) {
+func (c *openaiClient) readStream(
+	ctx context.Context, body io.ReadCloser,
+	ch chan<- StreamEvent,
+) {
 	defer close(ch)
 	defer body.Close()
 
@@ -233,7 +240,9 @@ func (c *openaiClient) readStream(ctx context.Context, body io.ReadCloser, ch ch
 	}
 }
 
-func (c *openaiClient) buildRequest(req ChatRequest, stream bool) openaiChatRequest {
+func (c *openaiClient) buildRequest(
+	req ChatRequest, stream bool,
+) openaiChatRequest {
 	var msgs []openaiMessage
 
 	if req.SystemPrompt != "" {
@@ -287,7 +296,9 @@ func (c *openaiClient) buildRequest(req ChatRequest, stream bool) openaiChatRequ
 	return wireReq
 }
 
-func (c *openaiClient) convertResponse(resp openaiChatResponse) *ChatResponse {
+func (c *openaiClient) convertResponse(
+	resp openaiChatResponse,
+) *ChatResponse {
 	cr := &ChatResponse{
 		Usage: Usage{
 			PromptTokens:     resp.Usage.PromptTokens,
@@ -335,7 +346,10 @@ func (c *openaiClient) parseError(resp *http.Response) error {
 }
 
 // sendEvent sends an event to the channel, respecting context cancellation.
-func sendEvent(ctx context.Context, ch chan<- StreamEvent, ev StreamEvent) {
+func sendEvent(
+	ctx context.Context, ch chan<- StreamEvent,
+	ev StreamEvent,
+) {
 	select {
 	case ch <- ev:
 	case <-ctx.Done():

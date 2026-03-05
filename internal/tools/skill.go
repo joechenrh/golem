@@ -26,7 +26,9 @@ func (s *skillTool) Parameters() json.RawMessage { return skillParams }
 
 // Execute returns the skill body as context for the LLM.
 // Skills are prompt injections, not executable code.
-func (s *skillTool) Execute(_ context.Context, _ string) (string, error) {
+func (s *skillTool) Execute(
+	_ context.Context, _ string,
+) (string, error) {
 	return s.body, nil
 }
 
@@ -54,7 +56,9 @@ func ParseSkill(path string) (Tool, error) {
 
 // parseFrontmatter extracts name, description, and body from a SKILL.md file.
 // Expects YAML-like frontmatter delimited by "---" lines.
-func parseFrontmatter(content string) (name, description, body string, err error) {
+func parseFrontmatter(
+	content string,
+) (name, description, body string, err error) {
 	// Trim leading whitespace/newlines.
 	content = strings.TrimLeft(content, " \t\r\n")
 

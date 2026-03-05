@@ -63,7 +63,10 @@ func (c *CLIChannel) Name() string { return "cli" }
 
 // Start runs the REPL loop, sending each line to inCh. Blocks until context
 // is cancelled or EOF is reached.
-func (c *CLIChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMessage) error {
+func (c *CLIChannel) Start(
+	ctx context.Context,
+	inCh chan<- channel.IncomingMessage,
+) error {
 	scanner := bufio.NewScanner(c.reader)
 
 	for {
@@ -119,14 +122,18 @@ func (c *CLIChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMess
 }
 
 // Send prints a message to the terminal, clearing any pending indicator first.
-func (c *CLIChannel) Send(_ context.Context, msg channel.OutgoingMessage) error {
+func (c *CLIChannel) Send(
+	_ context.Context, msg channel.OutgoingMessage,
+) error {
 	fmt.Fprintf(c.writer, "\r\033[K%s\n", msg.Text)
 	c.thinkingCleared = true
 	return nil
 }
 
 // SendTyping is a no-op for CLI.
-func (c *CLIChannel) SendTyping(_ context.Context, _ string) error {
+func (c *CLIChannel) SendTyping(
+	_ context.Context, _ string,
+) error {
 	return nil
 }
 
@@ -134,7 +141,10 @@ func (c *CLIChannel) SendTyping(_ context.Context, _ string) error {
 func (c *CLIChannel) SupportsStreaming() bool { return true }
 
 // SendStream reads tokens from tokenCh and prints them incrementally.
-func (c *CLIChannel) SendStream(_ context.Context, _ string, tokenCh <-chan string) error {
+func (c *CLIChannel) SendStream(
+	_ context.Context, _ string,
+	tokenCh <-chan string,
+) error {
 	first := true
 	for tok := range tokenCh {
 		if first {
@@ -162,7 +172,9 @@ func (c *CLIChannel) PrintError(text string) {
 }
 
 // PrintBanner prints the startup banner.
-func (c *CLIChannel) PrintBanner(model string, toolCount int, tapePath string) {
+func (c *CLIChannel) PrintBanner(
+	model string, toolCount int, tapePath string,
+) {
 	fmt.Fprintf(c.writer, "%sgolem%s v0.1.0\n", colorBold, colorReset)
 	fmt.Fprintf(c.writer, "Model: %s\n", model)
 	fmt.Fprintf(c.writer, "Tools: %d registered\n", toolCount)

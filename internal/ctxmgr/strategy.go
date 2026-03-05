@@ -37,7 +37,10 @@ type AnchorStrategy struct{}
 
 func (s *AnchorStrategy) Name() string { return "anchor" }
 
-func (s *AnchorStrategy) BuildContext(_ context.Context, entries []tape.TapeEntry, maxTokens int) ([]llm.Message, error) {
+func (s *AnchorStrategy) BuildContext(
+	_ context.Context, entries []tape.TapeEntry,
+	maxTokens int,
+) ([]llm.Message, error) {
 	msgs := tape.BuildMessages(entries)
 	return trimToFit(msgs, maxTokens), nil
 }
@@ -51,7 +54,10 @@ type MaskingStrategy struct {
 
 func (s *MaskingStrategy) Name() string { return "masking" }
 
-func (s *MaskingStrategy) BuildContext(_ context.Context, entries []tape.TapeEntry, maxTokens int) ([]llm.Message, error) {
+func (s *MaskingStrategy) BuildContext(
+	_ context.Context, entries []tape.TapeEntry,
+	maxTokens int,
+) ([]llm.Message, error) {
 	msgs := tape.BuildMessages(entries)
 
 	threshold := int(float64(maxTokens) * s.MaskThreshold)
@@ -104,7 +110,9 @@ func isCJK(r rune) bool {
 
 // MaskObservations truncates tool result messages exceeding maxChars.
 // Preserves the first and last portions with a truncation marker.
-func MaskObservations(msgs []llm.Message, maxChars int) []llm.Message {
+func MaskObservations(
+	msgs []llm.Message, maxChars int,
+) []llm.Message {
 	result := make([]llm.Message, len(msgs))
 	for i, m := range msgs {
 		result[i] = m

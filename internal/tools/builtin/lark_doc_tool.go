@@ -15,7 +15,9 @@ type LarkReadDocTool struct {
 	ch *larkchan.LarkChannel
 }
 
-func NewLarkReadDocTool(ch *larkchan.LarkChannel) *LarkReadDocTool {
+func NewLarkReadDocTool(
+	ch *larkchan.LarkChannel,
+) *LarkReadDocTool {
 	return &LarkReadDocTool{ch: ch}
 }
 
@@ -48,7 +50,9 @@ var larkReadDocParams = json.RawMessage(`{
 
 func (t *LarkReadDocTool) Parameters() json.RawMessage { return larkReadDocParams }
 
-func (t *LarkReadDocTool) Execute(ctx context.Context, args string) (string, error) {
+func (t *LarkReadDocTool) Execute(
+	ctx context.Context, args string,
+) (string, error) {
 	var params struct {
 		DocumentID string `json:"document_id"`
 	}
@@ -76,7 +80,9 @@ type LarkWriteDocTool struct {
 	ch *larkchan.LarkChannel
 }
 
-func NewLarkWriteDocTool(ch *larkchan.LarkChannel) *LarkWriteDocTool {
+func NewLarkWriteDocTool(
+	ch *larkchan.LarkChannel,
+) *LarkWriteDocTool {
 	return &LarkWriteDocTool{ch: ch}
 }
 
@@ -138,7 +144,9 @@ var larkWriteDocParams = json.RawMessage(`{
 
 func (t *LarkWriteDocTool) Parameters() json.RawMessage { return larkWriteDocParams }
 
-func (t *LarkWriteDocTool) Execute(ctx context.Context, args string) (string, error) {
+func (t *LarkWriteDocTool) Execute(
+	ctx context.Context, args string,
+) (string, error) {
 	var params struct {
 		DocumentID string `json:"document_id"`
 		Content    string `json:"content"`

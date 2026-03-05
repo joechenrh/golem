@@ -84,7 +84,9 @@ type Config struct {
 //  6. Hardcoded defaults
 //
 // agentName selects the per-agent directory; pass "" for defaults only.
-func Load(agentName string, flagOverrides map[string]string) (*Config, error) {
+func Load(
+	agentName string, flagOverrides map[string]string,
+) (*Config, error) {
 	loadDotenvFiles(agentName)
 
 	cfg := &Config{
@@ -189,7 +191,9 @@ func loadDotenvFiles(agentName string) {
 }
 
 // applyFlagOverrides applies CLI flag overrides (highest precedence).
-func applyFlagOverrides(cfg *Config, flags map[string]string) {
+func applyFlagOverrides(
+	cfg *Config, flags map[string]string,
+) {
 	if flags == nil {
 		return
 	}
@@ -231,7 +235,9 @@ func envInt(key string, defaultVal int) int {
 }
 
 // envDuration returns the environment variable as time.Duration, or defaultVal.
-func envDuration(key string, defaultVal time.Duration) time.Duration {
+func envDuration(
+	key string, defaultVal time.Duration,
+) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d

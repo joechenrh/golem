@@ -17,7 +17,9 @@ func (s *stubTool) Description() string         { return s.desc }
 func (s *stubTool) FullDescription() string     { return s.desc }
 func (s *stubTool) Parameters() json.RawMessage { return s.params }
 
-func (s *stubTool) Execute(_ context.Context, _ string) (string, error) {
+func (s *stubTool) Execute(
+	_ context.Context, _ string,
+) (string, error) {
 	return "This tool is not yet implemented.", nil
 }
 

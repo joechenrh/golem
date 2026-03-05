@@ -15,16 +15,25 @@ func New() *TelegramChannel { return &TelegramChannel{} }
 
 func (t *TelegramChannel) Name() string { return "telegram" }
 
-func (t *TelegramChannel) Start(_ context.Context, _ chan<- channel.IncomingMessage) error {
+func (t *TelegramChannel) Start(
+	_ context.Context,
+	_ chan<- channel.IncomingMessage,
+) error {
 	return fmt.Errorf("telegram channel not implemented")
 }
 
-func (t *TelegramChannel) Send(_ context.Context, _ channel.OutgoingMessage) error { return nil }
+func (t *TelegramChannel) Send(
+	_ context.Context, _ channel.OutgoingMessage,
+) error {
+	return nil
+}
 
 func (t *TelegramChannel) SendTyping(_ context.Context, _ string) error { return nil }
 
 func (t *TelegramChannel) SupportsStreaming() bool { return false }
 
-func (t *TelegramChannel) SendStream(_ context.Context, _ string, _ <-chan string) error {
+func (t *TelegramChannel) SendStream(
+	_ context.Context, _ string, _ <-chan string,
+) error {
 	return nil
 }

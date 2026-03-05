@@ -55,7 +55,9 @@ func New(
 
 // HandleInput processes a user message and returns the final response.
 // Used by non-streaming channels.
-func (a *AgentLoop) HandleInput(ctx context.Context, msg channel.IncomingMessage) (string, error) {
+func (a *AgentLoop) HandleInput(
+	ctx context.Context, msg channel.IncomingMessage,
+) (string, error) {
 	// Route user input.
 	route := router.RouteUser(msg.Text)
 	if route.IsCommand {
@@ -76,7 +78,10 @@ func (a *AgentLoop) HandleInput(ctx context.Context, msg channel.IncomingMessage
 
 // HandleInputStream processes a user message with streaming.
 // Tokens are sent to tokenCh as they arrive. Used by CLI.
-func (a *AgentLoop) HandleInputStream(ctx context.Context, msg channel.IncomingMessage, tokenCh chan<- string) error {
+func (a *AgentLoop) HandleInputStream(
+	ctx context.Context, msg channel.IncomingMessage,
+	tokenCh chan<- string,
+) error {
 	// Route user input.
 	route := router.RouteUser(msg.Text)
 	if route.IsCommand {
@@ -103,7 +108,10 @@ func (a *AgentLoop) HandleInputStream(ctx context.Context, msg channel.IncomingM
 
 // runReActLoop executes the tool-calling loop until the LLM produces a final answer
 // or the iteration limit is reached.
-func (a *AgentLoop) runReActLoop(ctx context.Context, stream bool, tokenCh chan<- string) (string, error) {
+func (a *AgentLoop) runReActLoop(
+	ctx context.Context, stream bool,
+	tokenCh chan<- string,
+) (string, error) {
 	_, modelName := llm.ParseModelProvider(a.config.Model)
 	maxTokens := ctxmgr.ModelContextWindow(modelName)
 
@@ -174,7 +182,11 @@ func looksLikePlan(content string) bool {
 }
 
 // executeLLMCall builds context, calls the LLM (streaming or not), and emits hooks.
-func (a *AgentLoop) executeLLMCall(ctx context.Context, modelName string, maxTokens, iter int, stream bool, tokenCh chan<- string) (*llm.ChatResponse, error) {
+func (a *AgentLoop) executeLLMCall(
+	ctx context.Context, modelName string,
+	maxTokens, iter int, stream bool,
+	tokenCh chan<- string,
+) (*llm.ChatResponse, error) {
 	entries, err := a.tape.Entries()
 	if err != nil {
 		return nil, fmt.Errorf("reading tape: %w", err)
@@ -228,7 +240,9 @@ func (a *AgentLoop) executeLLMCall(ctx context.Context, modelName string, maxTok
 
 // processToolCalls records the assistant message, expands tool schemas, and
 // executes each tool call, recording results to the tape.
-func (a *AgentLoop) processToolCalls(ctx context.Context, resp *llm.ChatResponse) {
+func (a *AgentLoop) processToolCalls(
+	ctx context.Context, resp *llm.ChatResponse,
+) {
 	a.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "")
 
 	// Auto-expand any tool the model calls, so the next iteration
@@ -248,7 +262,9 @@ func (a *AgentLoop) processToolCalls(ctx context.Context, resp *llm.ChatResponse
 
 // processAssistantResponse handles the final answer: runs any embedded comma
 // commands, records the response to the tape, and returns the content.
-func (a *AgentLoop) processAssistantResponse(ctx context.Context, resp *llm.ChatResponse) string {
+func (a *AgentLoop) processAssistantResponse(
+	ctx context.Context, resp *llm.ChatResponse,
+) string {
 	content := resp.Content
 
 	commands, cleanText := router.RouteAssistant(content)
@@ -272,7 +288,10 @@ func (a *AgentLoop) processAssistantResponse(ctx context.Context, resp *llm.Chat
 
 // doStreamingCall performs a streaming LLM call, sending content tokens to tokenCh,
 // and returns the assembled full response.
-func (a *AgentLoop) doStreamingCall(ctx context.Context, req llm.ChatRequest, tokenCh chan<- string) (*llm.ChatResponse, error) {
+func (a *AgentLoop) doStreamingCall(
+	ctx context.Context, req llm.ChatRequest,
+	tokenCh chan<- string,
+) (*llm.ChatResponse, error) {
 	eventCh, err := a.llm.ChatStream(ctx, req)
 	if err != nil {
 		return nil, err
@@ -339,7 +358,9 @@ func (a *AgentLoop) doStreamingCall(ctx context.Context, req llm.ChatRequest, to
 }
 
 // executeTool runs a single tool call with hook emission.
-func (a *AgentLoop) executeTool(ctx context.Context, tc llm.ToolCall) string {
+func (a *AgentLoop) executeTool(
+	ctx context.Context, tc llm.ToolCall,
+) string {
 	// Before tool exec hook — can block execution.
 	if err := a.hooks.Emit(ctx, hooks.Event{
 		Type: hooks.EventBeforeToolExec,
@@ -370,7 +391,9 @@ func (a *AgentLoop) executeTool(ctx context.Context, tc llm.ToolCall) string {
 }
 
 // handleCommand dispatches an internal or shell comma-command.
-func (a *AgentLoop) handleCommand(ctx context.Context, route router.RouteResult) (string, error) {
+func (a *AgentLoop) handleCommand(
+	ctx context.Context, route router.RouteResult,
+) (string, error) {
 	switch route.Kind {
 	case router.CommandInternal:
 		return a.handleInternalCommand(ctx, route.Command, route.Args)
@@ -387,7 +410,9 @@ func (a *AgentLoop) handleCommand(ctx context.Context, route router.RouteResult)
 }
 
 // handleInternalCommand processes built-in comma-commands.
-func (a *AgentLoop) handleInternalCommand(_ context.Context, cmd, args string) (string, error) {
+func (a *AgentLoop) handleInternalCommand(
+	_ context.Context, cmd, args string,
+) (string, error) {
 	switch cmd {
 	case "help":
 		return a.helpText(), nil
@@ -498,7 +523,10 @@ func (a *AgentLoop) buildSystemPrompt() string {
 
 // appendMessage records a message to the tape.
 // senderID is optional and only set for user messages in group chats.
-func (a *AgentLoop) appendMessage(role llm.Role, content string, toolCalls []llm.ToolCall, senderID string) {
+func (a *AgentLoop) appendMessage(
+	role llm.Role, content string,
+	toolCalls []llm.ToolCall, senderID string,
+) {
 	payload := map[string]any{
 		"role":    string(role),
 		"content": content,
@@ -517,7 +545,9 @@ func (a *AgentLoop) appendMessage(role llm.Role, content string, toolCalls []llm
 }
 
 // appendToolResult records a tool result to the tape with proper metadata.
-func (a *AgentLoop) appendToolResult(toolCallID, toolName, result string) {
+func (a *AgentLoop) appendToolResult(
+	toolCallID, toolName, result string,
+) {
 	a.tape.Append(tape.TapeEntry{
 		Kind: tape.KindMessage,
 		Payload: tape.MarshalPayload(map[string]any{
