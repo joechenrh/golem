@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/joechenrh/golem/internal/channel"
 	"github.com/joechenrh/golem/internal/config"
@@ -258,7 +260,7 @@ func (a *AgentLoop) executeLLMCall(
 }
 
 // processToolCalls records the assistant message, expands tool schemas, and
-// executes each tool call, recording results to the tape.
+// executes each tool call in parallel, recording results to the tape in order.
 func (a *AgentLoop) processToolCalls(
 	ctx context.Context, resp *llm.ChatResponse,
 ) {
@@ -273,9 +275,29 @@ func (a *AgentLoop) processToolCalls(
 		a.tools.ExpandHints(resp.Content)
 	}
 
-	for _, tc := range resp.ToolCalls {
-		toolResult := a.executeTool(ctx, tc)
-		a.appendToolResult(tc.ID, tc.Name, toolResult)
+	// Execute tool calls in parallel and collect results in order.
+	type toolResult struct {
+		id     string
+		name   string
+		result string
+	}
+	results := make([]toolResult, len(resp.ToolCalls))
+	var mu sync.Mutex
+	g, gctx := errgroup.WithContext(ctx)
+	for i, tc := range resp.ToolCalls {
+		g.Go(func() error {
+			res := a.executeTool(gctx, tc)
+			mu.Lock()
+			results[i] = toolResult{id: tc.ID, name: tc.Name, result: res}
+			mu.Unlock()
+			return nil
+		})
+	}
+	g.Wait()
+
+	// Append results in the original order so the tape is deterministic.
+	for _, r := range results {
+		a.appendToolResult(r.id, r.name, r.result)
 	}
 }
 
