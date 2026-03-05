@@ -446,6 +446,12 @@ func BuildToolRegistry(
 		logger.Debug("skills discovery", zap.Error(err))
 	}
 
+	// Cache read-only tool results to avoid redundant calls.
+	cache := tools.NewCacheMiddleware(60*time.Second, []string{
+		"read_file", "list_directory", "search_files", "web_search", "web_fetch",
+	})
+	registry.Use(cache.Middleware())
+
 	// Redact secrets from tool outputs before they reach the tape/LLM.
 	registry.Use(redact.Middleware(redact.New()))
 
