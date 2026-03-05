@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -101,13 +100,13 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 	// within the same chat remain serialized.
 	g.Go(func() error {
 		chatQueues := make(map[string]chan channel.IncomingMessage)
-		var chatWG sync.WaitGroup
+		var chatGroup errgroup.Group
 		defer func() {
-			// Close all per-chat queues and wait for goroutines to drain.
+			// Close all per-chat queues and wait for workers to drain.
 			for _, q := range chatQueues {
 				close(q)
 			}
-			chatWG.Wait()
+			chatGroup.Wait()
 		}()
 
 		for msg := range inCh {
@@ -125,15 +124,14 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 			if !ok {
 				q = make(chan channel.IncomingMessage, 16)
 				chatQueues[msg.ChannelID] = q
-				chatWG.Add(1)
-				go func(ch <-chan channel.IncomingMessage) {
-					defer chatWG.Done()
-					for m := range ch {
+				chatGroup.Go(func() error {
+					for m := range q {
 						if inst.processMessage(gctx, m) {
 							gcancel()
 						}
 					}
-				}(q)
+					return nil
+				})
 			}
 			q <- msg
 		}
