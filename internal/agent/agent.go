@@ -125,6 +125,14 @@ func (a *AgentLoop) runReActLoop(
 			continue
 		}
 
+		// Empty response with no tool calls — retry instead of
+		// returning a blank answer to the user.
+		if strings.TrimSpace(resp.Content) == "" {
+			a.logger.Warn("LLM returned empty response, retrying",
+				zap.Int("iter", iter))
+			continue
+		}
+
 		// No tool calls. If the response looks like a plan rather than a
 		// final answer, nudge the LLM to actually use tools.
 		if nudges < maxNudges && looksLikePlan(resp.Content) {

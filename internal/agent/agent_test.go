@@ -142,6 +142,28 @@ func TestHandleInput_SimpleResponse(t *testing.T) {
 	}
 }
 
+func TestHandleInput_EmptyResponseRetry(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			{Content: "", FinishReason: "stop"},
+			{Content: "  ", FinishReason: "stop"},
+			{Content: "Here is the actual answer.", FinishReason: "stop"},
+		},
+	}
+	agent := newTestAgent(t, client)
+
+	result, err := agent.HandleInput(context.Background(), cliMsg("Hello"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if result != "Here is the actual answer." {
+		t.Errorf("result = %q, want non-empty answer", result)
+	}
+	if client.callCount != 3 {
+		t.Errorf("callCount = %d, want 3 (two retries + success)", client.callCount)
+	}
+}
+
 func TestHandleInput_WithToolCalls(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.ChatResponse{
