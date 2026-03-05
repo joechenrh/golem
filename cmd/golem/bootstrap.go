@@ -322,9 +322,11 @@ func buildToolRegistry(
 		registry.RegisterAll(
 			builtin.NewLarkSendTool(larkCh),
 			builtin.NewLarkListChatsTool(larkCh),
+			builtin.NewLarkReadDocTool(larkCh),
 		)
 		registry.Expand("lark_send")
 		registry.Expand("lark_list_chats")
+		registry.Expand("lark_read_doc")
 	}
 
 	// Memory tools (mnemos direct mode).

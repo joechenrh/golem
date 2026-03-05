@@ -14,6 +14,7 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	larkdocx "github.com/larksuite/oapi-sdk-go/v3/service/docx/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
@@ -285,6 +286,26 @@ func (l *LarkChannel) ListChats(ctx context.Context) ([]ChatInfo, error) {
 		chats = append(chats, ci)
 	}
 	return chats, nil
+}
+
+// ReadDocContent returns the plain text content of a Feishu document.
+func (l *LarkChannel) ReadDocContent(ctx context.Context, documentID string) (string, error) {
+	req := larkdocx.NewRawContentDocumentReqBuilder().
+		DocumentId(documentID).
+		Lang(0).
+		Build()
+
+	resp, err := l.client.Docx.V1.Document.RawContent(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("lark read doc: %w", err)
+	}
+	if !resp.Success() {
+		return "", fmt.Errorf("lark read doc: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	if resp.Data == nil || resp.Data.Content == nil {
+		return "", nil
+	}
+	return *resp.Data.Content, nil
 }
 
 // ChatInfo holds basic group chat metadata.
