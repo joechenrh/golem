@@ -10,17 +10,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/sync/errgroup"
 
-	"github.com/joechenrh/golem/internal/agent"
-	"github.com/joechenrh/golem/internal/channel"
 	"github.com/joechenrh/golem/internal/channel/cli"
-	larkchan "github.com/joechenrh/golem/internal/channel/lark"
 	"github.com/joechenrh/golem/internal/config"
 )
 
@@ -33,8 +30,8 @@ func main() {
 		return // --help or --version handled
 	}
 
-	// 2. Load config.
-	cfg, err := config.Load("", flags)
+	// 2. Load config for the default (CLI) agent.
+	cfg, err := config.Load("default", flags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		os.Exit(1)
@@ -44,116 +41,83 @@ func main() {
 	logger := initLogger(cfg.LogLevel, cfg.TapeDir)
 	defer logger.Sync()
 
-	// 4. Build the agent instance (LLM client, tape, tools, channels).
-	inst, err := buildAgent(cfg, logger)
+	// 4. Build the default (interactive) agent.
+	defaultAgent, err := buildAgent("default", cfg, logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent init error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// 5. Setup signal handling.
+	// 5. Print banner before entering the run loop.
+	cliCh := defaultAgent.Channels["cli"].(*cli.CLIChannel)
+	cliCh.PrintBanner(cfg.Model, len(defaultAgent.Registry.ToolDefinitions()), defaultAgent.TapePath)
+
+	// 6. Setup signal handling.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	cliCh := inst.Channels["cli"].(*cli.CLIChannel)
-	cliCh.PrintBanner(cfg.Model, len(inst.Registry.ToolDefinitions()), inst.TapePath)
+	// 7. Run agents with a plain errgroup (no WithContext).
+	// The CLI agent's goroutine calls defer cancel() so that when it exits
+	// for any reason, the shared context is cancelled and all background
+	// agents stop.
+	g := new(errgroup.Group)
 
-	inCh := make(chan channel.IncomingMessage, 100)
+	// CLI agent: when it exits, cancel everything.
+	g.Go(func() error {
+		defer cancel()
+		return defaultAgent.Run(ctx)
+	})
 
-	var wg sync.WaitGroup
-
-	// Message processing goroutine.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for msg := range inCh {
-			if processMessage(ctx, inst.Loop, inst.Channels, msg, logger) {
-				cancel()
-				return
+	// Background agents: errors logged, don't kill CLI.
+	for _, ba := range discoverAndBuildBackgroundAgents(cliCh, logger) {
+		g.Go(func() error {
+			if err := ba.Run(ctx); err != nil && !errors.Is(err, ErrAgentQuit) {
+				logger.Error("background agent error", zap.String("agent", ba.Name), zap.Error(err))
 			}
-		}
-	}()
-
-	// Start Lark channel in background if configured.
-	if larkCh, ok := inst.Channels["lark"].(*larkchan.LarkChannel); ok {
-		cliCh.PrintSystem("Lark channel enabled (WebSocket mode)")
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := larkCh.Start(ctx, inCh); err != nil && !errors.Is(err, context.Canceled) {
-				logger.Error("Lark channel error", zap.Error(err))
-			}
-		}()
+			return nil
+		})
 	}
 
-	// Start REPL (blocks until EOF or context cancel).
-	if err := cliCh.Start(ctx, inCh); err != nil && !errors.Is(err, context.Canceled) {
-		logger.Error("CLI channel error", zap.Error(err))
-	}
-
-	cancel()
-	close(inCh)
-	wg.Wait()
+	g.Wait()
 	cliCh.PrintSystem("Goodbye!")
 }
 
-// processMessage handles a single incoming message through the agent loop.
-// Returns true if the user requested quit.
-func processMessage(ctx context.Context, agentLoop *agent.AgentLoop, channels map[string]channel.Channel, msg channel.IncomingMessage, logger *zap.Logger) bool {
-	if msg.Done != nil {
-		defer close(msg.Done)
+// discoverAndBuildBackgroundAgents finds agent configs in ~/.golem/agents/,
+// loads each one, and builds an AgentInstance for those with remote channels.
+func discoverAndBuildBackgroundAgents(cliCh *cli.CLIChannel, logger *zap.Logger) []*AgentInstance {
+	names, err := config.DiscoverAgents()
+	if err != nil {
+		logger.Error("agent discovery", zap.Error(err))
+		return nil
 	}
 
-	ch, ok := channels[msg.ChannelName]
-	if !ok {
-		logger.Error("unknown channel", zap.String("channel", msg.ChannelName))
-		return false
-	}
+	var agents []*AgentInstance
+	for _, name := range names {
+		if name == "default" {
+			continue // already used by the CLI agent
+		}
 
-	if ch.SupportsStreaming() {
-		tokenCh := make(chan string, 100)
-
-		streamDone := make(chan struct{})
-		go func() {
-			defer close(streamDone)
-			if err := ch.SendStream(ctx, msg.ChannelID, tokenCh); err != nil {
-				logger.Error("stream send error", zap.Error(err))
-			}
-		}()
-
-		err := agentLoop.HandleInputStream(ctx, msg, tokenCh)
-		close(tokenCh)
-		<-streamDone
+		agentCfg, err := config.Load(name, nil)
 		if err != nil {
-			if errors.Is(err, agent.ErrQuit) {
-				return true
-			}
-			logOrPrintError(ch, logger, "Error: "+err.Error())
+			logger.Error("loading agent config", zap.String("agent", name), zap.Error(err))
+			continue
 		}
-	} else {
-		response, err := agentLoop.HandleInput(ctx, msg)
-		if err != nil {
-			if errors.Is(err, agent.ErrQuit) {
-				return true
-			}
-			logOrPrintError(ch, logger, "Error: "+err.Error())
-			return false
-		}
-		if err := ch.Send(ctx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response}); err != nil {
-			logger.Error("send error", zap.Error(err))
-		}
-	}
-	return false
-}
 
-// logOrPrintError uses CLIChannel.PrintError for colored output when available,
-// otherwise logs the error.
-func logOrPrintError(ch channel.Channel, logger *zap.Logger, text string) {
-	if cliCh, ok := ch.(*cli.CLIChannel); ok {
-		cliCh.PrintError(text)
-	} else {
-		logger.Error(text)
+		if !agentCfg.HasRemoteChannels() {
+			logger.Debug("skipping agent without remote channels", zap.String("agent", name))
+			continue
+		}
+
+		inst, err := buildAgent(name, agentCfg, logger.Named(name))
+		if err != nil {
+			logger.Error("building agent", zap.String("agent", name), zap.Error(err))
+			continue
+		}
+
+		cliCh.PrintSystem(fmt.Sprintf("Background agent %q started", name))
+		agents = append(agents, inst)
 	}
+	return agents
 }
 
 // parseFlags parses CLI flags and returns overrides for config.Load.

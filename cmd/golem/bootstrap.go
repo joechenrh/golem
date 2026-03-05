@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/joechenrh/golem/internal/agent"
 	"github.com/joechenrh/golem/internal/channel"
@@ -28,19 +30,127 @@ import (
 	"github.com/joechenrh/golem/internal/tools/builtin"
 )
 
+// ErrAgentQuit is returned by Run when the user requests quit via the CLI.
+var ErrAgentQuit = errors.New("agent quit")
+
 // AgentInstance bundles a running agent with its channels and metadata.
 type AgentInstance struct {
+	Name     string
+	Config   *config.Config
+	Logger   *zap.Logger
 	Loop     *agent.AgentLoop
 	Channels map[string]channel.Channel
 	Registry *tools.Registry
 	TapePath string
 }
 
+// Run starts all channels, processes incoming messages, and blocks until the
+// agent is done. It uses two errgroups:
+//   - An inner plain errgroup tracks channel goroutines; when all channels
+//     exit, inCh is closed so the message processor drains and returns.
+//   - An outer WithContext errgroup ties the message processor and the channel
+//     closer together; if processMessage signals quit, gctx is cancelled,
+//     stopping all channels.
+func (inst *AgentInstance) Run(ctx context.Context) error {
+	inCh := make(chan channel.IncomingMessage, 100)
+	g, gctx := errgroup.WithContext(ctx)
+
+	// Inner errgroup: tracks when all channel writers finish.
+	var cg errgroup.Group
+	for _, ch := range inst.Channels {
+		cg.Go(func() error {
+			err := ch.Start(gctx, inCh)
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		})
+	}
+
+	// When all channels exit, close inCh so the message processor drains.
+	g.Go(func() error {
+		err := cg.Wait()
+		close(inCh)
+		return err
+	})
+
+	// Message processor.
+	g.Go(func() error {
+		for msg := range inCh {
+			if inst.processMessage(gctx, msg) {
+				return ErrAgentQuit
+			}
+		}
+		return nil
+	})
+
+	return g.Wait()
+}
+
+// processMessage handles a single incoming message through the agent loop.
+// Returns true if the user requested quit.
+func (inst *AgentInstance) processMessage(ctx context.Context, msg channel.IncomingMessage) bool {
+	if msg.Done != nil {
+		defer close(msg.Done)
+	}
+
+	ch, ok := inst.Channels[msg.ChannelName]
+	if !ok {
+		inst.Logger.Error("unknown channel", zap.String("channel", msg.ChannelName))
+		return false
+	}
+
+	if ch.SupportsStreaming() {
+		tokenCh := make(chan string, 100)
+
+		streamDone := make(chan struct{})
+		go func() {
+			defer close(streamDone)
+			if err := ch.SendStream(ctx, msg.ChannelID, tokenCh); err != nil {
+				inst.Logger.Error("stream send error", zap.Error(err))
+			}
+		}()
+
+		err := inst.Loop.HandleInputStream(ctx, msg, tokenCh)
+		close(tokenCh)
+		<-streamDone
+		if err != nil {
+			if errors.Is(err, agent.ErrQuit) {
+				return true
+			}
+			inst.logOrPrintError(ch, "Error: "+err.Error())
+		}
+	} else {
+		response, err := inst.Loop.HandleInput(ctx, msg)
+		if err != nil {
+			if errors.Is(err, agent.ErrQuit) {
+				return true
+			}
+			inst.logOrPrintError(ch, "Error: "+err.Error())
+			return false
+		}
+		if err := ch.Send(ctx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response}); err != nil {
+			inst.Logger.Error("send error", zap.Error(err))
+		}
+	}
+	return false
+}
+
+// logOrPrintError uses CLIChannel.PrintError for colored output when available,
+// otherwise logs the error.
+func (inst *AgentInstance) logOrPrintError(ch channel.Channel, text string) {
+	if cliCh, ok := ch.(*cli.CLIChannel); ok {
+		cliCh.PrintError(text)
+	} else {
+		inst.Logger.Error(text)
+	}
+}
+
 // buildAgent creates a fully wired AgentInstance from config.
-// The returned instance owns its own LLM client, tape store, tool registry,
-// channels, and agent loop — making it safe to call multiple times for
-// multi-agent setups.
-func buildAgent(cfg *config.Config, logger *zap.Logger) (*AgentInstance, error) {
+// When name is "default", a CLI channel is created for interactive use.
+// Otherwise, no CLI channel is added (background agent).
+// Lark/Telegram channels are always conditional on config credentials.
+func buildAgent(name string, cfg *config.Config, logger *zap.Logger) (*AgentInstance, error) {
 	// 1. Initialize LLM client.
 	llmClient, err := buildLLMClient(cfg)
 	if err != nil {
@@ -51,7 +161,7 @@ func buildAgent(cfg *config.Config, logger *zap.Logger) (*AgentInstance, error) 
 	if err := os.MkdirAll(cfg.TapeDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating tape dir: %w", err)
 	}
-	tapePath := filepath.Join(cfg.TapeDir, fmt.Sprintf("session-%s.jsonl", time.Now().Format("20060102-150405")))
+	tapePath := filepath.Join(cfg.TapeDir, fmt.Sprintf("session-%s-%s.jsonl", name, time.Now().Format("20060102-150405")))
 	tapeStore, err := tape.NewFileStore(tapePath)
 	if err != nil {
 		return nil, fmt.Errorf("tape store: %w", err)
@@ -84,8 +194,12 @@ func buildAgent(cfg *config.Config, logger *zap.Logger) (*AgentInstance, error) 
 	hookBus.Register(hooks.NewLoggingHook(logger))
 
 	// 6. Build channel registry.
-	cliCh := cli.New()
-	channels := map[string]channel.Channel{"cli": cliCh}
+	channels := make(map[string]channel.Channel)
+
+	// CLI channel only for the default (interactive) agent.
+	if name == "default" {
+		channels["cli"] = cli.New()
+	}
 
 	var larkCh *larkchan.LarkChannel
 	if cfg.LarkAppID != "" && cfg.LarkAppSecret != "" {
@@ -128,6 +242,9 @@ func buildAgent(cfg *config.Config, logger *zap.Logger) (*AgentInstance, error) 
 	loop := agent.New(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
 
 	return &AgentInstance{
+		Name:     name,
+		Config:   cfg,
+		Logger:   logger,
 		Loop:     loop,
 		Channels: channels,
 		Registry: registry,

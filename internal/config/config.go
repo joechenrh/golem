@@ -246,6 +246,39 @@ func envInt64List(key string) []int64 {
 	return result
 }
 
+// HasRemoteChannels returns true if any remote channel credentials are configured
+// (Lark or Telegram), meaning this agent can receive messages without the CLI.
+func (c *Config) HasRemoteChannels() bool {
+	if c.LarkAppID != "" && c.LarkAppSecret != "" {
+		return true
+	}
+	if c.TelegramToken != "" {
+		return true
+	}
+	return false
+}
+
+// DiscoverAgents reads ~/.golem/agents/ and returns the names of all
+// subdirectories. Each subdirectory represents a named agent configuration.
+// Returns nil (not an error) if the directory does not exist.
+func DiscoverAgents() ([]string, error) {
+	agentsDir := filepath.Join(GolemHome(), "agents")
+	entries, err := os.ReadDir(agentsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading agents dir: %w", err)
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names, nil
+}
+
 func expandHome(path string) string {
 	if strings.HasPrefix(path, "~/") || path == "~" {
 		home, err := os.UserHomeDir()

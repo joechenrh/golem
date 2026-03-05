@@ -226,6 +226,91 @@ func TestLoadAgentConfig(t *testing.T) {
 	}
 }
 
+func TestHasRemoteChannels(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{
+			name: "no credentials",
+			cfg:  Config{},
+			want: false,
+		},
+		{
+			name: "lark credentials",
+			cfg:  Config{LarkAppID: "app-id", LarkAppSecret: "secret"},
+			want: true,
+		},
+		{
+			name: "lark app id only",
+			cfg:  Config{LarkAppID: "app-id"},
+			want: false,
+		},
+		{
+			name: "telegram token",
+			cfg:  Config{TelegramToken: "bot-token"},
+			want: true,
+		},
+		{
+			name: "both lark and telegram",
+			cfg:  Config{LarkAppID: "app-id", LarkAppSecret: "secret", TelegramToken: "bot-token"},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.HasRemoteChannels(); got != tt.want {
+				t.Errorf("HasRemoteChannels() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDiscoverAgents(t *testing.T) {
+	// Use a temp directory as HOME so GolemHome() points there.
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	t.Run("no agents dir", func(t *testing.T) {
+		names, err := DiscoverAgents()
+		if err != nil {
+			t.Fatalf("DiscoverAgents() error: %v", err)
+		}
+		if names != nil {
+			t.Errorf("DiscoverAgents() = %v, want nil", names)
+		}
+	})
+
+	t.Run("with agent subdirs", func(t *testing.T) {
+		agentsDir := filepath.Join(tmpHome, ".golem", "agents")
+		for _, name := range []string{"default", "lark-bot", "telegram-bot"} {
+			if err := os.MkdirAll(filepath.Join(agentsDir, name), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Create a regular file that should be ignored.
+		if err := os.WriteFile(filepath.Join(agentsDir, "not-a-dir.txt"), []byte("hi"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		names, err := DiscoverAgents()
+		if err != nil {
+			t.Fatalf("DiscoverAgents() error: %v", err)
+		}
+
+		want := map[string]bool{"default": true, "lark-bot": true, "telegram-bot": true}
+		if len(names) != len(want) {
+			t.Fatalf("DiscoverAgents() returned %d names, want %d: %v", len(names), len(want), names)
+		}
+		for _, n := range names {
+			if !want[n] {
+				t.Errorf("unexpected agent name %q", n)
+			}
+		}
+	})
+}
+
 func TestExpandHome(t *testing.T) {
 	home, _ := os.UserHomeDir()
 
