@@ -74,68 +74,76 @@ type Config struct {
 	LogLevel string // "debug", "info", "warn", "error"
 }
 
-// Load reads config from all sources with the following precedence:
+// Load reads config from two distinct sources with strict boundaries:
 //
+// Global config (~/.golem/config.env) provides:
+//   - LLM settings: model, API keys, base URLs, rate limit
+//   - Skills directory, web search backend
+//
+// Agent config (~/.golem/agents/<agentName>/config.env) provides:
+//   - Agent behavior: max tool iter, shell timeout, context strategy, executor
+//   - Channel credentials: Lark, Telegram
+//   - Sessions, memory, tape dir, log level
+//   - System prompt from system-prompt.md in the agent dir
+//
+// Precedence within each tier:
 //  1. flagOverrides (CLI flags, only non-empty values)
 //  2. Environment variables set in the shell
-//  3. Per-agent config: ~/.golem/agents/<agentName>/config.env
-//  4. Global config:    ~/.golem/.env
-//  5. Local workspace:  .env
-//  6. Hardcoded defaults
+//  3. The tier's config.env file
+//  4. Hardcoded defaults
 //
 // agentName selects the per-agent directory; pass "" for defaults only.
 func Load(
 	agentName string, flagOverrides map[string]string,
 ) (*Config, error) {
-	loadDotenvFiles(agentName)
+	globalVars := readDotenv(filepath.Join(GolemHome(), "config.env"))
+	var agentVars map[string]string
+	if agentName != "" {
+		agentVars = readDotenv(filepath.Join(GolemHome(), "agents", agentName, "config.env"))
+	}
+
+	g := envLookup(globalVars)
+	a := envLookup(agentVars)
 
 	cfg := &Config{
-		AgentName:        agentName,
-		Model:            env("GOLEM_MODEL", "openai:gpt-4o"),
-		MaxToolIter:      envInt("GOLEM_MAX_TOOL_ITER", 15),
-		ShellTimeout:     envDuration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
-		ContextStrategy:  env("GOLEM_CONTEXT_STRATEGY", "masking"),
-		Executor:         env("GOLEM_EXECUTOR", "local"),
-		TapeDir:          expandHome(env("GOLEM_TAPE_DIR", "~/.golem/tapes")),
-		SkillsDir:        env("GOLEM_SKILLS_DIR", ".agent/skills"),
-		MaxSessions:      envInt("GOLEM_MAX_SESSIONS", 100),
-		SessionIdleTime:  envDuration("GOLEM_SESSION_IDLE_TIME", 24*time.Hour),
-		LLMRateLimit:     envInt("GOLEM_LLM_RATE_LIMIT", 10),
-		WebSearchBackend: env("GOLEM_WEB_SEARCH_BACKEND", "bing"),
-		LogLevel:         env("GOLEM_LOG_LEVEL", "info"),
+		AgentName: agentName,
 
-		// Channels
-		TelegramToken:   os.Getenv("TELEGRAM_BOT_TOKEN"),
-		TelegramACL:     envInt64List("TELEGRAM_ALLOW_FROM"),
-		LarkAppID:       os.Getenv("LARK_APP_ID"),
-		LarkAppSecret:   os.Getenv("LARK_APP_SECRET"),
-		LarkVerifyToken: os.Getenv("LARK_VERIFY_TOKEN"),
+		// Global tier: LLM, skills, web.
+		Model:            g.str("GOLEM_MODEL", "openai:gpt-4o"),
+		SkillsDir:        g.str("GOLEM_SKILLS_DIR", ".agent/skills"),
+		LLMRateLimit:     g.integer("GOLEM_LLM_RATE_LIMIT", 10),
+		WebSearchBackend: g.str("GOLEM_WEB_SEARCH_BACKEND", "bing"),
 
-		// Memory (mnemos direct mode)
-		MnemosDBHost:         os.Getenv("MNEMO_DB_HOST"),
-		MnemosDBUser:         os.Getenv("MNEMO_DB_USER"),
-		MnemosDBPass:         os.Getenv("MNEMO_DB_PASS"),
-		MnemosDBName:         env("MNEMO_DB_NAME", "mnemos"),
-		MnemosAutoEmbedModel: os.Getenv("MNEMO_AUTO_EMBED_MODEL"),
-		MnemosAutoEmbedDims:  envInt("MNEMO_AUTO_EMBED_DIMS", 1024),
+		// Agent tier: behavior, storage, logging.
+		MaxToolIter:     a.integer("GOLEM_MAX_TOOL_ITER", 15),
+		ShellTimeout:    a.duration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
+		ContextStrategy: a.str("GOLEM_CONTEXT_STRATEGY", "masking"),
+		Executor:        a.str("GOLEM_EXECUTOR", "local"),
+		TapeDir:         expandHome(a.str("GOLEM_TAPE_DIR", "~/.golem/tapes")),
+		LogLevel:        a.str("GOLEM_LOG_LEVEL", "info"),
+		MaxSessions:     a.integer("GOLEM_MAX_SESSIONS", 100),
+		SessionIdleTime: a.duration("GOLEM_SESSION_IDLE_TIME", 24*time.Hour),
+
+		// Agent tier: channels.
+		TelegramToken:   a.str("TELEGRAM_BOT_TOKEN", ""),
+		TelegramACL:     a.int64List("TELEGRAM_ALLOW_FROM"),
+		LarkAppID:       a.str("LARK_APP_ID", ""),
+		LarkAppSecret:   a.str("LARK_APP_SECRET", ""),
+		LarkVerifyToken: a.str("LARK_VERIFY_TOKEN", ""),
+
+		// Agent tier: memory (mnemos direct mode).
+		MnemosDBHost:         a.str("MNEMO_DB_HOST", ""),
+		MnemosDBUser:         a.str("MNEMO_DB_USER", ""),
+		MnemosDBPass:         a.str("MNEMO_DB_PASS", ""),
+		MnemosDBName:         a.str("MNEMO_DB_NAME", "mnemos"),
+		MnemosAutoEmbedModel: a.str("MNEMO_AUTO_EMBED_MODEL", ""),
+		MnemosAutoEmbedDims:  a.integer("MNEMO_AUTO_EMBED_DIMS", 1024),
 	}
 
-	// Collect API keys and base URLs from environment.
-	// Supports any provider via <PROVIDER>_API_KEY and <PROVIDER>_BASE_URL.
+	// Collect API keys and base URLs from shell env + global config.
 	cfg.APIKeys = make(map[string]string)
 	cfg.BaseURLs = make(map[string]string)
-	for _, e := range os.Environ() {
-		key, val, ok := strings.Cut(e, "=")
-		if !ok || val == "" {
-			continue
-		}
-		if suffix, found := strings.CutSuffix(key, "_API_KEY"); found && suffix != "" {
-			cfg.APIKeys[strings.ToLower(suffix)] = val
-		}
-		if suffix, found := strings.CutSuffix(key, "_BASE_URL"); found && suffix != "" {
-			cfg.BaseURLs[strings.ToLower(suffix)] = val
-		}
-	}
+	collectProviderKeys(cfg, globalVars)
 
 	applyFlagOverrides(cfg, flagOverrides)
 
@@ -172,22 +180,108 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// loadDotenvFiles loads .env files in increasing priority order.
-// godotenv.Load only sets vars that are NOT already in the environment,
-// so earlier loads take precedence. Loading order:
-//  1. Per-agent config.env (highest dotenv priority)
-//  2. Global ~/.golem/.env
-//  3. Local .env (lowest dotenv priority)
-func loadDotenvFiles(agentName string) {
-	// Per-agent config (highest dotenv priority).
-	if agentName != "" {
-		agentEnv := filepath.Join(GolemHome(), "agents", agentName, "config.env")
-		_ = godotenv.Load(agentEnv)
+// readDotenv reads a .env file into a map without setting env vars.
+// Returns an empty map if the file does not exist or cannot be read.
+func readDotenv(path string) map[string]string {
+	m, err := godotenv.Read(path)
+	if err != nil {
+		return make(map[string]string)
 	}
-	// Global config.
-	_ = godotenv.Load(filepath.Join(GolemHome(), ".env"))
-	// Local workspace .env (lowest dotenv priority).
-	_ = godotenv.Load(".env")
+	return m
+}
+
+// envLookup provides typed lookups against a dotenv map,
+// with shell environment variables taking precedence.
+type envLookup map[string]string
+
+func (m envLookup) get(key string) (string, bool) {
+	if v := os.Getenv(key); v != "" {
+		return v, true
+	}
+	if v, ok := m[key]; ok && v != "" {
+		return v, true
+	}
+	return "", false
+}
+
+func (m envLookup) str(key, defaultVal string) string {
+	if v, ok := m.get(key); ok {
+		return v
+	}
+	return defaultVal
+}
+
+func (m envLookup) integer(key string, defaultVal int) int {
+	if v, ok := m.get(key); ok {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
+	}
+	return defaultVal
+}
+
+func (m envLookup) duration(
+	key string, defaultVal time.Duration,
+) time.Duration {
+	if v, ok := m.get(key); ok {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return defaultVal
+}
+
+func (m envLookup) int64List(key string) []int64 {
+	v, ok := m.get(key)
+	if !ok {
+		return nil
+	}
+	var result []int64
+	for _, s := range strings.Split(v, ",") {
+		s = strings.TrimSpace(s)
+		if id, err := strconv.ParseInt(s, 10, 64); err == nil {
+			result = append(result, id)
+		}
+	}
+	return result
+}
+
+// collectProviderKeys scans shell env and globalVars for API keys and base URLs.
+// Pattern: <PROVIDER>_API_KEY and <PROVIDER>_BASE_URL.
+func collectProviderKeys(
+	cfg *Config, globalVars map[string]string,
+) {
+	// Shell environment first (higher precedence).
+	for _, e := range os.Environ() {
+		key, val, ok := strings.Cut(e, "=")
+		if !ok || val == "" {
+			continue
+		}
+		if suffix, found := strings.CutSuffix(key, "_API_KEY"); found && suffix != "" {
+			cfg.APIKeys[strings.ToLower(suffix)] = val
+		}
+		if suffix, found := strings.CutSuffix(key, "_BASE_URL"); found && suffix != "" {
+			cfg.BaseURLs[strings.ToLower(suffix)] = val
+		}
+	}
+	// Global config file (lower precedence — don't overwrite shell env).
+	for key, val := range globalVars {
+		if val == "" {
+			continue
+		}
+		if suffix, found := strings.CutSuffix(key, "_API_KEY"); found && suffix != "" {
+			lower := strings.ToLower(suffix)
+			if _, exists := cfg.APIKeys[lower]; !exists {
+				cfg.APIKeys[lower] = val
+			}
+		}
+		if suffix, found := strings.CutSuffix(key, "_BASE_URL"); found && suffix != "" {
+			lower := strings.ToLower(suffix)
+			if _, exists := cfg.BaseURLs[lower]; !exists {
+				cfg.BaseURLs[lower] = val
+			}
+		}
+	}
 }
 
 // applyFlagOverrides applies CLI flag overrides (highest precedence).
@@ -214,52 +308,6 @@ func applyFlagOverrides(
 	if v, ok := flags["tape-dir"]; ok && v != "" {
 		cfg.TapeDir = expandHome(v)
 	}
-}
-
-// env returns the environment variable value, or defaultVal if empty/unset.
-func env(key, defaultVal string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return defaultVal
-}
-
-// envInt returns the environment variable as int, or defaultVal.
-func envInt(key string, defaultVal int) int {
-	if v := os.Getenv(key); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			return i
-		}
-	}
-	return defaultVal
-}
-
-// envDuration returns the environment variable as time.Duration, or defaultVal.
-func envDuration(
-	key string, defaultVal time.Duration,
-) time.Duration {
-	if v := os.Getenv(key); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return defaultVal
-}
-
-// envInt64List parses a comma-separated list of int64 values from an env var.
-func envInt64List(key string) []int64 {
-	v := os.Getenv(key)
-	if v == "" {
-		return nil
-	}
-	var result []int64
-	for _, s := range strings.Split(v, ",") {
-		s = strings.TrimSpace(s)
-		if id, err := strconv.ParseInt(s, 10, 64); err == nil {
-			result = append(result, id)
-		}
-	}
-	return result
 }
 
 // HasRemoteChannels returns true if any remote channel credentials are configured

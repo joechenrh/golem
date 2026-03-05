@@ -10,17 +10,21 @@ import (
 
 // clearConfigEnv sets all config-related env vars to empty via t.Setenv,
 // ensuring a clean slate and automatic restoration after the test.
+// Also redirects HOME to a temp dir so no real config files are loaded.
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
 	for _, key := range []string{
 		"GOLEM_MODEL", "GOLEM_MAX_TOOL_ITER", "GOLEM_SHELL_TIMEOUT",
 		"GOLEM_CONTEXT_STRATEGY", "GOLEM_EXECUTOR", "GOLEM_TAPE_DIR",
 		"GOLEM_SKILLS_DIR", "GOLEM_LOG_LEVEL",
+		"GOLEM_LLM_RATE_LIMIT", "GOLEM_WEB_SEARCH_BACKEND",
 		"OPENAI_API_KEY", "ANTHROPIC_API_KEY",
 		"OPENAI_BASE_URL", "ANTHROPIC_BASE_URL",
 		"TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOW_FROM",
 		"LARK_APP_ID", "LARK_APP_SECRET", "LARK_VERIFY_TOKEN",
-		"MNEMOS_URL", "MNEMOS_SPACE_ID",
+		"MNEMO_DB_HOST", "MNEMO_DB_USER", "MNEMO_DB_PASS",
+		"MNEMO_DB_NAME", "MNEMO_AUTO_EMBED_MODEL", "MNEMO_AUTO_EMBED_DIMS",
 	} {
 		t.Setenv(key, "")
 		os.Unsetenv(key)
@@ -192,18 +196,28 @@ func TestLoadBaseURLsEmpty(t *testing.T) {
 func TestLoadAgentConfig(t *testing.T) {
 	clearConfigEnv(t)
 
-	// Create a temporary agent directory with config.env and system-prompt.md.
-	agentDir := t.TempDir()
-	t.Setenv("HOME", agentDir) // GolemHome() uses ~ expansion
+	// Create temp HOME with global + agent config files.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
-	golemAgentDir := filepath.Join(agentDir, ".golem", "agents", "test-bot")
-	if err := os.MkdirAll(golemAgentDir, 0o755); err != nil {
+	// Global config: LLM settings.
+	golemDir := filepath.Join(home, ".golem")
+	if err := os.MkdirAll(golemDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(golemAgentDir, "config.env"), []byte("GOLEM_MODEL=anthropic:claude-sonnet-4-20250514\nLARK_APP_ID=lark-test-123\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(golemDir, "config.env"), []byte("GOLEM_MODEL=anthropic:claude-sonnet-4-20250514\nOPENAI_API_KEY=sk-global-123\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(golemAgentDir, "system-prompt.md"), []byte("You are a code reviewer."), 0o644); err != nil {
+
+	// Agent config: channel + behavior settings.
+	agentDir := filepath.Join(golemDir, "agents", "test-bot")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "config.env"), []byte("LARK_APP_ID=lark-test-123\nGOLEM_MAX_TOOL_ITER=25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "system-prompt.md"), []byte("You are a code reviewer."), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -215,14 +229,76 @@ func TestLoadAgentConfig(t *testing.T) {
 	if cfg.AgentName != "test-bot" {
 		t.Errorf("AgentName = %q, want %q", cfg.AgentName, "test-bot")
 	}
+	// Model comes from global config.
 	if cfg.Model != "anthropic:claude-sonnet-4-20250514" {
 		t.Errorf("Model = %q, want %q", cfg.Model, "anthropic:claude-sonnet-4-20250514")
 	}
+	// API key comes from global config.
+	if cfg.APIKeys["openai"] != "sk-global-123" {
+		t.Errorf("APIKeys[openai] = %q, want %q", cfg.APIKeys["openai"], "sk-global-123")
+	}
+	// Lark comes from agent config.
 	if cfg.LarkAppID != "lark-test-123" {
 		t.Errorf("LarkAppID = %q, want %q", cfg.LarkAppID, "lark-test-123")
 	}
+	// MaxToolIter comes from agent config.
+	if cfg.MaxToolIter != 25 {
+		t.Errorf("MaxToolIter = %d, want 25", cfg.MaxToolIter)
+	}
 	if cfg.SystemPrompt != "You are a code reviewer." {
 		t.Errorf("SystemPrompt = %q, want %q", cfg.SystemPrompt, "You are a code reviewer.")
+	}
+}
+
+func TestSourceIsolation(t *testing.T) {
+	clearConfigEnv(t)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	golemDir := filepath.Join(home, ".golem")
+	if err := os.MkdirAll(golemDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Put agent-tier keys in global config — they should NOT be picked up
+	// for agent-tier fields.
+	if err := os.WriteFile(filepath.Join(golemDir, "config.env"),
+		[]byte("LARK_APP_ID=should-not-appear\nGOLEM_MAX_TOOL_ITER=99\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Put global-tier keys in agent config — they should NOT affect
+	// global-tier fields.
+	agentDir := filepath.Join(golemDir, "agents", "iso-bot")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "config.env"),
+		[]byte("GOLEM_MODEL=should-not-appear\nOPENAI_API_KEY=sk-should-not-appear\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load("iso-bot", nil)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	// Global-tier: model should NOT come from agent config.
+	if cfg.Model == "should-not-appear" {
+		t.Error("Model was read from agent config — should only come from global")
+	}
+	// Global-tier: API key should NOT come from agent config.
+	if cfg.APIKeys["openai"] == "sk-should-not-appear" {
+		t.Error("APIKeys[openai] was read from agent config — should only come from global")
+	}
+	// Agent-tier: Lark should NOT come from global config.
+	if cfg.LarkAppID == "should-not-appear" {
+		t.Error("LarkAppID was read from global config — should only come from agent")
+	}
+	// Agent-tier: MaxToolIter should NOT come from global config.
+	if cfg.MaxToolIter == 99 {
+		t.Error("MaxToolIter was read from global config — should only come from agent")
 	}
 }
 
