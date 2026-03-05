@@ -121,23 +121,62 @@ curl -s -X POST 'https://open.feishu.cn/open-apis/drive/v1/import_tasks' \
 | 99991664 | Rate limited | Wait a moment and retry. |
 | 99991663 | Invalid token | The tenant_access_token has expired. Re-authenticate. |
 
+## Content Restrictions for Writing
+
+The Feishu block API has strict content rules. **You MUST sanitize text before calling `lark_write_doc`**, or the API will reject the request.
+
+### Character Sanitization Rules
+
+The API rejects certain Unicode characters. Before writing, replace them:
+
+| Problematic Character | Replacement |
+|---|---|
+| `->` (arrow) | `->` |
+| `<-` (arrow) | `<-` |
+| Curly/smart double quotes `\u201c` `\u201d` | Straight quotes `"` |
+| Curly/smart single quotes `\u2018` `\u2019` | Straight quotes `'` |
+| Em-dash `\u2014` | `--` |
+| En-dash `\u2013` | `-` |
+| Ellipsis `\u2026` | `...` |
+| Bullet `\u2022` | `-` |
+| Non-ASCII symbols like (c), TM, (R) | Remove or spell out |
+
+**Safe characters**: All ASCII punctuation, CJK characters (Chinese/Japanese/Korean), standard Latin letters and digits.
+
+### Size Limits
+
+- **Per block**: 100,000 characters max (each line in the content becomes one block)
+- **Per document**: 40,000 blocks max
+- **Per API call**: 50 blocks max (the tool handles batching automatically)
+
+### Best Practice
+
+When doing read-modify-write:
+1. Read the document content
+2. Make your modifications using ONLY ASCII punctuation (no smart quotes, no arrows, no em-dashes)
+3. Double-check there are no special Unicode punctuation characters
+4. Write back the sanitized content
+
+If a write fails, the most likely cause is a special character in the content. Clean it and retry.
+
 ## Read-Modify-Write Workflow
 
 Use `lark_read_doc` and `lark_write_doc` together to update document content:
 
 1. **Read** the current content with `lark_read_doc`
 2. **Modify** the text as needed (fix errors, translate, restructure, etc.)
-3. **Write** the modified content back with `lark_write_doc`
+3. **Sanitize** the text (see Content Restrictions above)
+4. **Write** the modified content back with `lark_write_doc`
 
 **Warning**: `lark_write_doc` replaces ALL content in the document. Always read first to avoid data loss.
 
 Example flow:
 ```
-→ lark_read_doc(document_id: "ABC123")
-← "Original document text..."
-→ (modify the text)
-→ lark_write_doc(document_id: "ABC123", content: "Updated document text...")
-← "Document content updated successfully."
+lark_read_doc(document_id: "ABC123")
+-> "Original document text..."
+(modify and sanitize the text)
+lark_write_doc(document_id: "ABC123", content: "Updated document text...")
+-> "Document content updated successfully."
 ```
 
 ## Workflow Examples

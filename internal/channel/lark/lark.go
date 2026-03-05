@@ -308,8 +308,12 @@ func (l *LarkChannel) ReadDocContent(ctx context.Context, documentID string) (st
 	return *resp.Data.Content, nil
 }
 
+// maxBlocksPerRequest is the Feishu API limit for creating blocks in one call.
+const maxBlocksPerRequest = 50
+
 // WriteDocContent replaces all content in a Feishu document with the given plain text.
-// It deletes all existing blocks and creates new text blocks from the content.
+// It deletes all existing blocks and creates new text blocks from the content,
+// batching in chunks of 50 blocks per API call (Feishu API limit).
 func (l *LarkChannel) WriteDocContent(ctx context.Context, documentID, content string) error {
 	// 1. Get root block to find children count.
 	getReq := larkdocx.NewGetDocumentBlockReqBuilder().
@@ -350,7 +354,7 @@ func (l *LarkChannel) WriteDocContent(ctx context.Context, documentID, content s
 		}
 	}
 
-	// 3. Create new text blocks from content.
+	// 3. Create new text blocks from content, batched in chunks of 50.
 	lines := strings.Split(content, "\n")
 	var blocks []*larkdocx.Block
 	for _, line := range lines {
@@ -369,23 +373,31 @@ func (l *LarkChannel) WriteDocContent(ctx context.Context, documentID, content s
 		blocks = append(blocks, block)
 	}
 
-	insertIdx := 0
-	createReq := larkdocx.NewCreateDocumentBlockChildrenReqBuilder().
-		DocumentId(documentID).
-		BlockId(documentID).
-		DocumentRevisionId(-1).
-		Body(&larkdocx.CreateDocumentBlockChildrenReqBody{
-			Children: blocks,
-			Index:    &insertIdx,
-		}).
-		Build()
+	for i := 0; i < len(blocks); i += maxBlocksPerRequest {
+		end := i + maxBlocksPerRequest
+		if end > len(blocks) {
+			end = len(blocks)
+		}
+		chunk := blocks[i:end]
 
-	createResp, err := l.client.Docx.V1.DocumentBlockChildren.Create(ctx, createReq)
-	if err != nil {
-		return fmt.Errorf("lark write doc: create blocks: %w", err)
-	}
-	if !createResp.Success() {
-		return fmt.Errorf("lark write doc: create blocks: code=%d msg=%s", createResp.Code, createResp.Msg)
+		insertIdx := i
+		createReq := larkdocx.NewCreateDocumentBlockChildrenReqBuilder().
+			DocumentId(documentID).
+			BlockId(documentID).
+			DocumentRevisionId(-1).
+			Body(&larkdocx.CreateDocumentBlockChildrenReqBody{
+				Children: chunk,
+				Index:    &insertIdx,
+			}).
+			Build()
+
+		createResp, err := l.client.Docx.V1.DocumentBlockChildren.Create(ctx, createReq)
+		if err != nil {
+			return fmt.Errorf("lark write doc: create blocks (batch %d-%d): %w", i, end, err)
+		}
+		if !createResp.Success() {
+			return fmt.Errorf("lark write doc: create blocks (batch %d-%d): code=%d msg=%s", i, end, createResp.Code, createResp.Msg)
+		}
 	}
 
 	return nil

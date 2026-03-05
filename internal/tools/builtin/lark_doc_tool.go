@@ -94,12 +94,29 @@ Typical read-modify-write workflow:
 2. Modify the text as needed
 3. Use lark_write_doc to write the modified content back
 
+CRITICAL — Content restrictions (Feishu block API):
+- Each text block supports up to 100,000 characters. Each line becomes one block.
+- A document can hold at most 40,000 blocks.
+- The API creates blocks in batches of 50 per request; very large documents are handled automatically.
+- SPECIAL CHARACTERS: The Feishu API rejects certain Unicode characters in text content.
+  Before writing, you MUST sanitize the text:
+  - Replace arrow symbols: "→" with "->", "←" with "<-", "↑" with "^", "↓" with "v"
+  - Replace curly/smart quotes: use straight quotes " and ' instead of " " ' '
+  - Replace em-dash "—" with "--", en-dash "–" with "-"
+  - Replace ellipsis "…" with "..."
+  - Replace bullet "•" with "-"
+  - Remove or replace any other non-ASCII punctuation (e.g. ©, ™, ®)
+  - Keep CJK characters (Chinese, Japanese, Korean) — they work fine
+  - Keep standard ASCII punctuation — it all works
+  If the write fails with an API error, the most likely cause is a special character.
+  Clean the content and retry.
+
 How to get the document_id from a Feishu URL:
-- Document URL: https://xxx.feishu.cn/docx/ABC123 → document_id is "ABC123"
+- Document URL: https://xxx.feishu.cn/docx/ABC123 -- document_id is "ABC123"
 - You can also pass the full URL; the tool will extract the token automatically.
 
-IMPORTANT — Wiki URLs:
-- Wiki URL: https://xxx.feishu.cn/wiki/XYZ789 → the token is a wiki node token, NOT a document_id.
+IMPORTANT -- Wiki URLs:
+- Wiki URL: https://xxx.feishu.cn/wiki/XYZ789 -- the token is a wiki node token, NOT a document_id.
 - For wiki URLs, you must first resolve the wiki node token to a document_id.
 
 Common errors:
