@@ -81,6 +81,15 @@ make test     # go test ./...
 make clean    # remove build artifacts
 ```
 
+## Roadmap
+
+- [ ] **Parallel tool execution** — When the LLM returns multiple tool calls in a single response, execute them concurrently using an errgroup instead of sequentially (like Claude Code running independent file reads in parallel).
+- [ ] **Enhanced CLI UI** — Improve the interactive REPL to show:
+  - Tool execution inline with name, arguments, and a spinner/status while running
+  - Visual separators (blank lines) between each agent reasoning block
+  - Per-session token usage (input/output tokens and cumulative totals, shown after each turn or via `,usage`)
+- [ ] **Redact secrets before sending to LLM** — Detect and mask sensitive values (API keys, passwords, tokens) in config files and tool outputs before they are included in the LLM context, preventing accidental credential leakage.
+
 ## Acknowledgements
 
 This project is inspired by and based on [CrabClaw](https://github.com/jackwener/crabclaw) by [@jackwener](https://github.com/jackwener). Thank you for the excellent original design.
