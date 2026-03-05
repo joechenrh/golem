@@ -377,7 +377,9 @@ func (a *AgentLoop) doStreamingCall(
 			return nil, ev.Error
 
 		case llm.StreamDone:
-			// Assembled below.
+			if ev.Usage != nil {
+				resp.Usage = *ev.Usage
+			}
 		}
 	}
 

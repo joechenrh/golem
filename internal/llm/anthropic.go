@@ -186,6 +186,7 @@ func (c *anthropicClient) readStream(
 	defer close(ch)
 	defer body.Close()
 
+	var usage *Usage
 	reader := newSSEReader(body)
 	for {
 		ev, err := reader.Next()
@@ -198,6 +199,19 @@ func (c *anthropicClient) readStream(
 		}
 
 		switch ev.Event {
+		case "message_start":
+			// Capture initial usage (input tokens) from message_start.
+			var ms struct {
+				Message struct {
+					Usage anthropicUsage `json:"usage"`
+				} `json:"message"`
+			}
+			if json.Unmarshal([]byte(ev.Data), &ms) == nil {
+				usage = &Usage{
+					PromptTokens: ms.Message.Usage.InputTokens,
+				}
+			}
+
 		case "content_block_start":
 			var cbs anthropicStreamContentBlockStart
 			if err := json.Unmarshal([]byte(ev.Data), &cbs); err != nil {
@@ -235,14 +249,22 @@ func (c *anthropicClient) readStream(
 				})
 			}
 
+		case "message_delta":
+			// Capture output tokens from message_delta.
+			var md anthropicStreamMessageDelta
+			if json.Unmarshal([]byte(ev.Data), &md) == nil && md.Usage != nil {
+				if usage == nil {
+					usage = &Usage{}
+				}
+				usage.CompletionTokens = md.Usage.OutputTokens
+				usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+			}
+
 		case "message_stop":
-			sendEvent(ctx, ch, StreamEvent{Type: StreamDone})
+			sendEvent(ctx, ch, StreamEvent{Type: StreamDone, Usage: usage})
 			return
 
-		case "message_delta":
-			// Contains stop_reason and usage; we don't need to emit anything special.
-
-		case "ping", "content_block_stop", "message_start":
+		case "ping", "content_block_stop":
 			// Ignored.
 		}
 	}

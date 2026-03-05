@@ -74,6 +74,7 @@ type openaiUsage struct {
 
 type openaiStreamChunk struct {
 	Choices []openaiStreamChoice `json:"choices"`
+	Usage   *openaiUsage         `json:"usage,omitempty"`
 }
 
 type openaiStreamChoice struct {
@@ -197,6 +198,7 @@ func (c *openaiClient) readStream(
 	defer close(ch)
 	defer body.Close()
 
+	var usage *Usage
 	reader := newSSEReader(body)
 	for {
 		ev, err := reader.Next()
@@ -209,7 +211,7 @@ func (c *openaiClient) readStream(
 		}
 
 		if ev.Data == "[DONE]" {
-			sendEvent(ctx, ch, StreamEvent{Type: StreamDone})
+			sendEvent(ctx, ch, StreamEvent{Type: StreamDone, Usage: usage})
 			return
 		}
 
@@ -217,6 +219,15 @@ func (c *openaiClient) readStream(
 		if err := json.Unmarshal([]byte(ev.Data), &chunk); err != nil {
 			sendEvent(ctx, ch, StreamEvent{Type: StreamError, Error: fmt.Errorf("openai: unmarshal chunk: %w", err)})
 			return
+		}
+
+		// Capture usage from the final chunk (OpenAI sends it with stream_options).
+		if chunk.Usage != nil {
+			usage = &Usage{
+				PromptTokens:     chunk.Usage.PromptTokens,
+				CompletionTokens: chunk.Usage.CompletionTokens,
+				TotalTokens:      chunk.Usage.TotalTokens,
+			}
 		}
 
 		for _, choice := range chunk.Choices {

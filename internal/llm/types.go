@@ -89,6 +89,7 @@ type StreamEvent struct {
 	Type     StreamEventType
 	Content  string         // for content deltas
 	ToolCall *ToolCallDelta // for tool call deltas
+	Usage    *Usage         // for done events (final usage stats)
 	Error    error          // for error events
 }
 
