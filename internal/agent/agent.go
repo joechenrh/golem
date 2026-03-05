@@ -194,6 +194,11 @@ func (a *AgentLoop) processToolCalls(ctx context.Context, resp *llm.ChatResponse
 		a.tools.ExpandHints(resp.Content)
 	}
 
+	// TODO: Support parallel tool execution. When the LLM returns multiple
+	// tool calls in a single response, execute them concurrently using an
+	// errgroup instead of sequentially. This matches how Claude Code runs
+	// independent tool calls (e.g. multiple file reads) in parallel while
+	// respecting dependencies between them.
 	for _, tc := range resp.ToolCalls {
 		toolResult := a.executeTool(ctx, tc)
 		a.appendToolResult(tc.ID, tc.Name, toolResult)

@@ -133,6 +133,16 @@ func (c *CLIChannel) SendTyping(_ context.Context, _ string) error {
 // SupportsStreaming returns true; the CLI prints tokens as they arrive.
 func (c *CLIChannel) SupportsStreaming() bool { return true }
 
+// TODO: Enhance CLI user interface to match Claude Code's experience:
+//   - Show tool execution inline: display tool name, arguments, and a
+//     spinner/status while running (e.g. "⏺ Bash(git status) ⎿ ...").
+//   - Insert visual separators between agent "thoughts" — add a blank
+//     line or divider each time the agent produces a new reasoning block
+//     before a tool call or final answer.
+//   - Track and display token usage for the session: input tokens, output
+//     tokens, and cumulative totals, shown after each turn or on demand
+//     via a ,usage command.
+
 // SendStream reads tokens from tokenCh and prints them incrementally.
 func (c *CLIChannel) SendStream(_ context.Context, _ string, tokenCh <-chan string) error {
 	first := true
