@@ -284,9 +284,14 @@ func (c *anthropicClient) buildRequest(
 		maxTokens = 4096
 	}
 
+	system := req.SystemPrompt
+	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_object" {
+		system += "\n\nIMPORTANT: You must respond with valid JSON only. No markdown, no explanation outside the JSON."
+	}
+
 	wireReq := anthropicRequest{
 		Model:     req.Model,
-		System:    req.SystemPrompt,
+		System:    system,
 		MaxTokens: maxTokens,
 		Stream:    stream,
 	}

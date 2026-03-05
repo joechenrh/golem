@@ -14,12 +14,13 @@ import (
 // Wire-format structs for OpenAI Chat Completions API.
 
 type openaiChatRequest struct {
-	Model       string          `json:"model"`
-	Messages    []openaiMessage `json:"messages"`
-	Tools       []openaiTool    `json:"tools,omitempty"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Temperature *float64        `json:"temperature,omitempty"`
-	Stream      bool            `json:"stream,omitempty"`
+	Model          string           `json:"model"`
+	Messages       []openaiMessage  `json:"messages"`
+	Tools          []openaiTool     `json:"tools,omitempty"`
+	MaxTokens      int              `json:"max_tokens,omitempty"`
+	Temperature    *float64         `json:"temperature,omitempty"`
+	Stream         bool             `json:"stream,omitempty"`
+	ResponseFormat *ResponseFormat  `json:"response_format,omitempty"`
 }
 
 type openaiMessage struct {
@@ -284,10 +285,11 @@ func (c *openaiClient) buildRequest(
 	}
 
 	wireReq := openaiChatRequest{
-		Model:     req.Model,
-		Messages:  msgs,
-		MaxTokens: req.MaxTokens,
-		Stream:    stream,
+		Model:          req.Model,
+		Messages:       msgs,
+		MaxTokens:      req.MaxTokens,
+		Stream:         stream,
+		ResponseFormat: req.ResponseFormat,
 	}
 	if req.Temperature != 0 {
 		wireReq.Temperature = &req.Temperature
