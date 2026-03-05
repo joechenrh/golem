@@ -1,4 +1,6 @@
-package main
+// Package app wires together agent components and manages the runtime lifecycle.
+// It is separate from package main so the wiring logic can be tested and reused.
+package app
 
 import (
 	"context"
@@ -204,13 +206,13 @@ func (inst *AgentInstance) logOrPrintError(ch channel.Channel, text string) {
 	}
 }
 
-// buildAgent creates a fully wired AgentInstance from config.
+// BuildAgent creates a fully wired AgentInstance from config.
 // When name is "default", a CLI channel is created for interactive use.
 // Otherwise, no CLI channel is added (background agent).
 // Lark/Telegram channels are always conditional on config credentials.
-func buildAgent(name string, cfg *config.Config, logger *zap.Logger) (*AgentInstance, error) {
+func BuildAgent(name string, cfg *config.Config, logger *zap.Logger) (*AgentInstance, error) {
 	// 1. Initialize LLM client.
-	llmClient, err := buildLLMClient(cfg)
+	llmClient, err := BuildLLMClient(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +268,7 @@ func buildAgent(name string, cfg *config.Config, logger *zap.Logger) (*AgentInst
 	}
 
 	// 7. Build tool registry.
-	registry := buildToolRegistry(cfg, exec, filesystem, larkCh, logger)
+	registry := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
 
 	// 8. Register spawn_agent tool. The runner creates a sub-agent that
 	//    shares the LLM client and infra but has its own tape and registry
@@ -284,7 +286,7 @@ func buildAgent(name string, cfg *config.Config, logger *zap.Logger) (*AgentInst
 		subHooks.Register(hooks.NewLoggingHook(logger.Named("sub-agent")))
 
 		// Build a registry without spawn_agent.
-		subRegistry := buildToolRegistry(cfg, exec, filesystem, larkCh, logger)
+		subRegistry := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
 
 		subLoop := agent.New(llmClient, subRegistry, subTape, subCtxStrategy, subHooks, cfg, logger.Named("sub-agent"))
 
@@ -304,7 +306,7 @@ func buildAgent(name string, cfg *config.Config, logger *zap.Logger) (*AgentInst
 	var sessions *agent.SessionManager
 	if cfg.HasRemoteChannels() {
 		toolFactory := func() *tools.Registry {
-			return buildToolRegistry(cfg, exec, filesystem, larkCh, logger)
+			return BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
 		}
 		sessions = agent.NewSessionManager(agent.SessionFactory{
 			LLMClient:       llmClient,
@@ -333,9 +335,9 @@ func buildAgent(name string, cfg *config.Config, logger *zap.Logger) (*AgentInst
 	}, nil
 }
 
-// buildLLMClient creates an LLM client from the config, auto-registering
+// BuildLLMClient creates an LLM client from the config, auto-registering
 // unknown providers as OpenAI-compatible.
-func buildLLMClient(cfg *config.Config) (llm.Client, error) {
+func BuildLLMClient(cfg *config.Config) (llm.Client, error) {
 	provider, _ := llm.ParseModelProvider(cfg.Model)
 	apiKey := cfg.APIKeys[string(provider)]
 	if apiKey == "" {
@@ -364,11 +366,11 @@ func buildLLMClient(cfg *config.Config) (llm.Client, error) {
 	return llm.NewRateLimitedClient(client, cfg.MaxConcurrentLLM), nil
 }
 
-// buildToolRegistry creates and populates a tool registry with all built-in
+// BuildToolRegistry creates and populates a tool registry with all built-in
 // tools, channel-specific tools, and discovered skills.
 // The registry intentionally does NOT include spawn_agent — that is added
-// separately by buildAgent to prevent sub-agents from spawning recursively.
-func buildToolRegistry(
+// separately by BuildAgent to prevent sub-agents from spawning recursively.
+func BuildToolRegistry(
 	cfg *config.Config,
 	exec executor.Executor,
 	filesystem *fs.LocalFS,
@@ -430,4 +432,56 @@ func buildToolRegistry(
 	registry.Use(redact.Middleware(redact.New()))
 
 	return registry
+}
+
+// DiscoverAndBuildBackgroundAgents finds agent configs in ~/.golem/agents/,
+// loads each one, and builds an AgentInstance for those with remote channels.
+// claimedLarkApps tracks Lark app IDs already in use to avoid duplicate
+// WebSocket connections — agents whose LarkAppID is already claimed are skipped.
+func DiscoverAndBuildBackgroundAgents(cliCh *cli.CLIChannel, logger *zap.Logger, claimedLarkApps map[string]bool) []*AgentInstance {
+	names, err := config.DiscoverAgents()
+	if err != nil {
+		logger.Error("agent discovery", zap.Error(err))
+		return nil
+	}
+
+	var agents []*AgentInstance
+	for _, name := range names {
+		if name == "default" {
+			continue // already used by the CLI agent
+		}
+
+		agentCfg, err := config.Load(name, nil)
+		if err != nil {
+			logger.Error("loading agent config", zap.String("agent", name), zap.Error(err))
+			continue
+		}
+
+		if !agentCfg.HasRemoteChannels() {
+			logger.Debug("skipping agent without remote channels", zap.String("agent", name))
+			continue
+		}
+
+		// Skip agents whose Lark app ID is already claimed by another agent.
+		if agentCfg.LarkAppID != "" && claimedLarkApps[agentCfg.LarkAppID] {
+			logger.Info("skipping agent: Lark app already claimed",
+				zap.String("agent", name), zap.String("app_id", agentCfg.LarkAppID))
+			continue
+		}
+
+		inst, err := BuildAgent(name, agentCfg, logger.Named(name))
+		if err != nil {
+			logger.Error("building agent", zap.String("agent", name), zap.Error(err))
+			continue
+		}
+
+		// Claim the Lark app ID after successful build.
+		if inst.Config.LarkAppID != "" {
+			claimedLarkApps[inst.Config.LarkAppID] = true
+		}
+
+		cliCh.PrintSystem(fmt.Sprintf("Background agent %q started", name))
+		agents = append(agents, inst)
+	}
+	return agents
 }

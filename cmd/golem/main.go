@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/joechenrh/golem/internal/app"
 	"github.com/joechenrh/golem/internal/channel/cli"
 	"github.com/joechenrh/golem/internal/config"
 )
@@ -42,7 +43,7 @@ func main() {
 	defer logger.Sync()
 
 	// 4. Build the default (interactive) agent.
-	defaultAgent, err := buildAgent("default", cfg, logger)
+	defaultAgent, err := app.BuildAgent("default", cfg, logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent init error: %v\n", err)
 		os.Exit(1)
@@ -75,9 +76,9 @@ func main() {
 	})
 
 	// Background agents: errors logged, don't kill CLI.
-	for _, ba := range discoverAndBuildBackgroundAgents(cliCh, logger, claimedLarkApps) {
+	for _, ba := range app.DiscoverAndBuildBackgroundAgents(cliCh, logger, claimedLarkApps) {
 		g.Go(func() error {
-			if err := ba.Run(ctx); err != nil && !errors.Is(err, ErrAgentQuit) {
+			if err := ba.Run(ctx); err != nil && !errors.Is(err, app.ErrAgentQuit) {
 				logger.Error("background agent error", zap.String("agent", ba.Name), zap.Error(err))
 			}
 			return nil
@@ -86,58 +87,6 @@ func main() {
 
 	g.Wait()
 	cliCh.PrintSystem("Goodbye!")
-}
-
-// discoverAndBuildBackgroundAgents finds agent configs in ~/.golem/agents/,
-// loads each one, and builds an AgentInstance for those with remote channels.
-// claimedLarkApps tracks Lark app IDs already in use to avoid duplicate
-// WebSocket connections — agents whose LarkAppID is already claimed are skipped.
-func discoverAndBuildBackgroundAgents(cliCh *cli.CLIChannel, logger *zap.Logger, claimedLarkApps map[string]bool) []*AgentInstance {
-	names, err := config.DiscoverAgents()
-	if err != nil {
-		logger.Error("agent discovery", zap.Error(err))
-		return nil
-	}
-
-	var agents []*AgentInstance
-	for _, name := range names {
-		if name == "default" {
-			continue // already used by the CLI agent
-		}
-
-		agentCfg, err := config.Load(name, nil)
-		if err != nil {
-			logger.Error("loading agent config", zap.String("agent", name), zap.Error(err))
-			continue
-		}
-
-		if !agentCfg.HasRemoteChannels() {
-			logger.Debug("skipping agent without remote channels", zap.String("agent", name))
-			continue
-		}
-
-		// Skip agents whose Lark app ID is already claimed by another agent.
-		if agentCfg.LarkAppID != "" && claimedLarkApps[agentCfg.LarkAppID] {
-			logger.Info("skipping agent: Lark app already claimed",
-				zap.String("agent", name), zap.String("app_id", agentCfg.LarkAppID))
-			continue
-		}
-
-		inst, err := buildAgent(name, agentCfg, logger.Named(name))
-		if err != nil {
-			logger.Error("building agent", zap.String("agent", name), zap.Error(err))
-			continue
-		}
-
-		// Claim the Lark app ID after successful build.
-		if inst.Config.LarkAppID != "" {
-			claimedLarkApps[inst.Config.LarkAppID] = true
-		}
-
-		cliCh.PrintSystem(fmt.Sprintf("Background agent %q started", name))
-		agents = append(agents, inst)
-	}
-	return agents
 }
 
 // parseFlags parses CLI flags and returns overrides for config.Load.
