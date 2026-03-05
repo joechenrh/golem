@@ -9,8 +9,8 @@ golem/
 ├── cmd/golem/main.go                 # Entry point: flags, logger, signal handling
 ├── internal/
 │   ├── agent/                        # ReAct loop orchestration
-│   │   ├── agent.go                  # Session: ReAct loop, LLM calls, tool dispatch
-│   │   └── session.go                # SessionManager: per-chat isolation
+│   │   ├── session.go                # Session: ReAct loop, LLM calls, tool dispatch
+│   │   └── manager.go                # SessionManager: per-chat isolation
 │   ├── app/                          # Wiring layer (separate from main for testability)
 │   │   └── app.go                    # AgentInstance, BuildAgent, Run, message dispatch
 │   ├── channel/                      # Message I/O abstraction

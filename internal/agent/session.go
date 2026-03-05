@@ -2,311 +2,671 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
+	"github.com/joechenrh/golem/internal/channel"
 	"github.com/joechenrh/golem/internal/config"
 	"github.com/joechenrh/golem/internal/ctxmgr"
 	"github.com/joechenrh/golem/internal/hooks"
 	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/router"
 	"github.com/joechenrh/golem/internal/tape"
 	"github.com/joechenrh/golem/internal/tools"
 )
 
-// SessionFactory contains everything needed to create a new per-chat session.
-type SessionFactory struct {
-	LLMClient       llm.Client
-	Config          *config.Config
-	Logger          *zap.Logger
-	ToolFactory     func() *tools.Registry // creates a fresh registry per session
-	ContextStrategy string
-	AgentName       string
+// Session orchestrates the ReAct loop for a single conversation: LLM calls,
+// tool execution, tape recording, command routing, and token tracking.
+// Each conversation (CLI or remote chat) gets its own Session.
+type Session struct {
+	llm             llm.Client
+	tools           *tools.Registry
+	tape            tape.Store
+	contextStrategy ctxmgr.ContextStrategy
+	hooks           *hooks.Bus
+	config          *config.Config
+	logger          *zap.Logger
+
+	// Token tracking: accumulated across the session lifetime.
+	sessionUsage llm.Usage
+	turnUsage    llm.Usage // reset each turn
+
+	// Self-correction: per-tool failure counts, reset each turn.
+	toolFailures map[string]int
+
+	// MetricsSummary is an optional function that returns metrics text.
+	// Set by the wiring layer when a MetricsHook is registered.
+	MetricsSummary func() string
+
+	// Lifecycle fields (managed by SessionManager for remote chats;
+	// unused for the default CLI session).
+	ctx        context.Context
+	cancel     context.CancelFunc
+	lastAccess time.Time
+	TapePath   string
 }
 
-// SessionManager maintains isolated Session instances keyed by channel ID
-// (e.g. "lark:oc_xxx"). Each chat gets its own tape and tool registry.
-type SessionManager struct {
-	mu       sync.Mutex
-	sessions map[string]*Session
-	factory  SessionFactory
-	logger   *zap.Logger
-	baseCtx  context.Context // parent context for all session contexts
-}
+const maxToolFailures = 3
 
-// NewSessionManager creates a SessionManager with the given factory settings.
-func NewSessionManager(
-	factory SessionFactory, logger *zap.Logger,
-) *SessionManager {
-	return &SessionManager{
-		sessions: make(map[string]*Session),
-		factory:  factory,
-		logger:   logger,
-		baseCtx:  context.Background(),
-	}
-}
-
-// SetBaseContext sets the parent context for all future session contexts.
-// Existing sessions are not re-parented; call before GetOrCreate.
-func (sm *SessionManager) SetBaseContext(ctx context.Context) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.baseCtx = ctx
-}
-
-// GetOrCreate returns the Session for the given channelID, creating a new
-// one with its own tape file and tool registry if one doesn't exist.
-func (sm *SessionManager) GetOrCreate(
-	channelID string,
+// NewSession creates a Session with all dependencies wired in.
+func NewSession(
+	llmClient llm.Client,
+	toolRegistry *tools.Registry,
+	tapeStore tape.Store,
+	ctxStrategy ctxmgr.ContextStrategy,
+	hookBus *hooks.Bus,
+	cfg *config.Config,
+	logger *zap.Logger,
 ) *Session {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	if s, ok := sm.sessions[channelID]; ok {
-		s.lastAccess = time.Now()
-		return s
+	return &Session{
+		llm:             llmClient,
+		tools:           toolRegistry,
+		tape:            tapeStore,
+		contextStrategy: ctxStrategy,
+		hooks:           hookBus,
+		config:          cfg,
+		logger:          logger,
 	}
-
-	// Enforce max sessions cap by evicting the oldest idle session.
-	maxSessions := sm.factory.Config.MaxSessions
-	if maxSessions > 0 && len(sm.sessions) >= maxSessions {
-		sm.evictOldestLocked()
-	}
-
-	sess, err := sm.createSession(channelID)
-	if err != nil {
-		sm.logger.Error("failed to create session, using fallback",
-			zap.String("channel_id", channelID), zap.Error(err))
-		return sess
-	}
-
-	sm.sessions[channelID] = sess
-	sm.logger.Info("created new session",
-		zap.String("channel_id", channelID), zap.String("tape", sess.TapePath))
-
-	return sess
 }
 
-// createSession builds a new Session with a fresh tape and tool registry.
-func (sm *SessionManager) createSession(
-	channelID string,
-) (*Session, error) {
-	cfg := sm.factory.Config
-
-	// Sanitize channelID for use in filename (replace colons, slashes).
-	safeID := sanitizeForFilename(channelID)
-	tapePath := filepath.Join(cfg.TapeDir,
-		fmt.Sprintf("session-%s-%s-%s.jsonl",
-			sm.factory.AgentName, safeID, time.Now().Format("20060102-150405")))
-
-	tapeStore, err := tape.NewFileStore(tapePath)
-	if err != nil {
-		return nil, fmt.Errorf("creating tape: %w", err)
+// HandleInput processes a user message and returns the final response.
+// Used by non-streaming channels.
+func (s *Session) HandleInput(
+	ctx context.Context, msg channel.IncomingMessage,
+) (string, error) {
+	// Route user input.
+	route := router.RouteUser(msg.Text)
+	if route.IsCommand {
+		return s.handleCommand(ctx, route)
 	}
 
-	ctxStrategy, err := ctxmgr.NewContextStrategy(sm.factory.ContextStrategy)
-	if err != nil {
-		return nil, fmt.Errorf("context strategy: %w", err)
-	}
-
-	hookBus := hooks.NewBus(sm.logger)
-	hookBus.Register(hooks.NewLoggingHook(sm.logger))
-	hookBus.Register(hooks.NewSafetyHook())
-
-	registry := sm.factory.ToolFactory()
-
-	ctx, cancel := context.WithCancel(sm.baseCtx)
-	sess := NewSession(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger)
-	sess.ctx = ctx
-	sess.cancel = cancel
-	sess.lastAccess = time.Now()
-	sess.TapePath = tapePath
-
-	return sess, nil
+	return s.runReActLoop(ctx, false, nil, &msg)
 }
 
-// createSessionFromTape builds a new Session resuming from an existing tape file.
-func (sm *SessionManager) createSessionFromTape(
-	tapePath string,
-) (*Session, error) {
-	cfg := sm.factory.Config
-
-	tapeStore, err := tape.NewFileStore(tapePath)
-	if err != nil {
-		return nil, fmt.Errorf("opening tape: %w", err)
-	}
-
-	ctxStrategy, err := ctxmgr.NewContextStrategy(sm.factory.ContextStrategy)
-	if err != nil {
-		return nil, fmt.Errorf("context strategy: %w", err)
-	}
-
-	hookBus := hooks.NewBus(sm.logger)
-	hookBus.Register(hooks.NewLoggingHook(sm.logger))
-	hookBus.Register(hooks.NewSafetyHook())
-
-	registry := sm.factory.ToolFactory()
-
-	sess := NewSession(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger)
-	sess.TapePath = tapePath
-
-	return sess, nil
-}
-
-// LoadExisting discovers and resumes sessions from existing tape files.
-func (sm *SessionManager) LoadExisting(tapeDir string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	prefix := fmt.Sprintf("session-%s-", sm.factory.AgentName)
-	tapePaths, err := tape.Discover(tapeDir, prefix)
-	if err != nil {
-		return fmt.Errorf("discovering tapes: %w", err)
-	}
-
-	// Group by chatID, keeping only the most recent tape per chat.
-	latest := make(map[string]string) // chatID -> most recent tape path
-	for _, p := range tapePaths {
-		chatID := tape.ParseChatID(filepath.Base(p), prefix)
-		if chatID == "" {
-			continue
-		}
-		// tape.Discover returns sorted by name; later entries are more recent
-		// due to the timestamp suffix.
-		latest[chatID] = p
-	}
-
-	for chatID, tapePath := range latest {
-		// Check that the tape has content worth resuming.
-		info, err := os.Stat(tapePath)
-		if err != nil || info.Size() == 0 {
-			continue
-		}
-
-		sess, err := sm.createSessionFromTape(tapePath)
+// HandleInputStream processes a user message with streaming.
+// Tokens are sent to tokenCh as they arrive. Used by CLI.
+func (s *Session) HandleInputStream(
+	ctx context.Context, msg channel.IncomingMessage,
+	tokenCh chan<- string,
+) error {
+	// Route user input.
+	route := router.RouteUser(msg.Text)
+	if route.IsCommand {
+		result, err := s.handleCommand(ctx, route)
 		if err != nil {
-			sm.logger.Warn("skipping session restore",
-				zap.String("chat_id", chatID), zap.Error(err))
+			return err
+		}
+		tokenCh <- result
+		return nil
+	}
+
+	_, err := s.runReActLoop(ctx, true, tokenCh, &msg)
+	return err
+}
+
+// runReActLoop executes the tool-calling loop until the LLM produces a final answer
+// or the iteration limit is reached. If pendingMsg is non-nil, the user message
+// is included in context but only persisted to the tape after the first
+// successful LLM call, so a failed API request doesn't leave a dangling entry.
+func (s *Session) runReActLoop(
+	ctx context.Context, stream bool,
+	tokenCh chan<- string,
+	pendingMsg *channel.IncomingMessage,
+) (string, error) {
+	_, modelName := llm.ParseModelProvider(s.config.Model)
+	maxTokens := ctxmgr.ModelContextWindow(modelName)
+
+	// Reset per-turn tracking.
+	s.turnUsage = llm.Usage{}
+	s.toolFailures = make(map[string]int)
+
+	const maxNudges = 2
+	nudges := 0
+
+	for iter := range s.config.MaxToolIter {
+		resp, err := s.executeLLMCall(ctx, modelName, maxTokens, iter, stream, tokenCh, pendingMsg)
+		if err != nil {
+			return "", err
+		}
+
+		// First successful LLM call — persist the pending user message.
+		if pendingMsg != nil {
+			s.appendMessage(llm.RoleUser, pendingMsg.Text, nil, pendingMsg.SenderID)
+			s.hooks.Emit(ctx, hooks.Event{
+				Type:    hooks.EventUserMessage,
+				Payload: map[string]any{"text": pendingMsg.Text, "channel_id": pendingMsg.ChannelID},
+			})
+			pendingMsg = nil
+		}
+
+		// Tool calls present — execute them and continue the loop.
+		if len(resp.ToolCalls) > 0 {
+			s.processToolCalls(ctx, resp)
 			continue
 		}
 
-		ctx, cancel := context.WithCancel(sm.baseCtx)
-		sess.ctx = ctx
-		sess.cancel = cancel
-		sess.lastAccess = info.ModTime()
+		// Empty response with no tool calls — retry instead of
+		// returning a blank answer to the user.
+		if strings.TrimSpace(resp.Content) == "" {
+			s.logger.Warn("LLM returned empty response, retrying",
+				zap.Int("iter", iter))
+			continue
+		}
 
-		sm.sessions[chatID] = sess
-		sm.logger.Info("restored session",
-			zap.String("chat_id", chatID), zap.String("tape", tapePath))
+		// No tool calls. If the response looks like a plan rather than a
+		// final answer, nudge the LLM to actually use tools.
+		if nudges < maxNudges && looksLikePlan(resp.Content) {
+			s.appendMessage(llm.RoleAssistant, resp.Content, nil, "")
+			s.appendMessage(llm.RoleUser, "Don't just describe what you'll do — use the available tools now to proceed.", nil, "")
+			nudges++
+			s.logger.Debug("nudging LLM to use tools",
+				zap.Int("nudge", nudges), zap.Int("iter", iter))
+			continue
+		}
+
+		// Final answer — no tool calls.
+		content := s.processAssistantResponse(ctx, resp)
+		return content, nil
 	}
-	return nil
+
+	return "Tool calling limit reached. Please try a simpler request.", nil
 }
 
-// evictOldestLocked removes the session with the oldest lastAccess time.
-// Must be called with sm.mu held.
-func (sm *SessionManager) evictOldestLocked() {
-	var oldestID string
-	var oldestTime time.Time
-	for id, s := range sm.sessions {
-		if oldestID == "" || s.lastAccess.Before(oldestTime) {
-			oldestID = id
-			oldestTime = s.lastAccess
+// looksLikePlan returns true if the content appears to describe intended actions
+// rather than providing a final answer. Used to auto-nudge the LLM into actually
+// using tools instead of just planning.
+func looksLikePlan(content string) bool {
+	lower := strings.ToLower(content)
+	intentPhrases := []string{
+		// English
+		"i'll ", "i will ", "let me ", "i'm going to ",
+		"i'll\n", "i will\n", "let me\n",
+		"first, i'll", "first, let me",
+		"i can help", "i can do",
+	}
+	for _, phrase := range intentPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
 		}
 	}
-	if oldestID != "" {
-		if sm.sessions[oldestID].cancel != nil {
-			sm.sessions[oldestID].cancel()
-		}
-		delete(sm.sessions, oldestID)
-		sm.logger.Info("evicted oldest session to make room", zap.String("channel_id", oldestID))
+	// Chinese intent phrases (no lowercasing needed).
+	cnPhrases := []string{
+		"我会", "我将", "我来", "让我",
+		"马上", "正在", "稍等", "请稍",
+		"收到", "好的，我",
+		"首先", "接下来我",
 	}
+	for _, phrase := range cnPhrases {
+		if strings.Contains(content, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
-// EvictIdle removes sessions that haven't been accessed within maxAge.
-func (sm *SessionManager) EvictIdle(maxAge time.Duration) int {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	cutoff := time.Now().Add(-maxAge)
-	evicted := 0
-	for id, s := range sm.sessions {
-		if s.lastAccess.Before(cutoff) {
-			if s.cancel != nil {
-				s.cancel()
-			}
-			delete(sm.sessions, id)
-			evicted++
-			sm.logger.Info("evicted idle session", zap.String("channel_id", id))
-		}
+// executeLLMCall builds context, calls the LLM (streaming or not), and emits hooks.
+// If pendingMsg is non-nil, its text is appended to the context as a user
+// message without persisting to the tape, so that a failed API call
+// does not leave a dangling tape entry.
+func (s *Session) executeLLMCall(
+	ctx context.Context, modelName string,
+	maxTokens, iter int, stream bool,
+	tokenCh chan<- string,
+	pendingMsg *channel.IncomingMessage,
+) (*llm.ChatResponse, error) {
+	entries, err := s.tape.Entries()
+	if err != nil {
+		return nil, fmt.Errorf("reading tape: %w", err)
 	}
-	return evicted
+	messages, err := s.contextStrategy.BuildContext(ctx, entries, maxTokens)
+	if err != nil {
+		return nil, fmt.Errorf("building context: %w", err)
+	}
+
+	// Include the not-yet-persisted user message in the context.
+	if pendingMsg != nil {
+		content := pendingMsg.Text
+		if pendingMsg.SenderID != "" {
+			content = "[sender:" + pendingMsg.SenderID + "] " + content
+		}
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: content,
+		})
+	}
+
+	systemPrompt := s.buildSystemPrompt()
+	toolDefs := s.tools.ToolDefinitions()
+
+	s.hooks.Emit(ctx, hooks.Event{
+		Type:    hooks.EventBeforeLLMCall,
+		Payload: map[string]any{"iteration": iter, "message_count": len(messages)},
+	})
+
+	req := llm.ChatRequest{
+		Model:        modelName,
+		SystemPrompt: systemPrompt,
+		Messages:     messages,
+		Tools:        toolDefs,
+		MaxTokens:    s.config.MaxOutputTokens,
+	}
+
+	var resp *llm.ChatResponse
+	if stream && tokenCh != nil {
+		resp, err = s.doStreamingCall(ctx, req, tokenCh)
+	} else {
+		resp, err = s.llm.Chat(ctx, req)
+	}
+	if err != nil {
+		s.hooks.Emit(ctx, hooks.Event{
+			Type:    hooks.EventError,
+			Payload: map[string]any{"error": err.Error()},
+		})
+		return nil, fmt.Errorf("LLM call: %w", err)
+	}
+
+	// Accumulate token usage.
+	s.turnUsage.PromptTokens += resp.Usage.PromptTokens
+	s.turnUsage.CompletionTokens += resp.Usage.CompletionTokens
+	s.turnUsage.TotalTokens += resp.Usage.TotalTokens
+	s.sessionUsage.PromptTokens += resp.Usage.PromptTokens
+	s.sessionUsage.CompletionTokens += resp.Usage.CompletionTokens
+	s.sessionUsage.TotalTokens += resp.Usage.TotalTokens
+
+	s.hooks.Emit(ctx, hooks.Event{
+		Type: hooks.EventAfterLLMCall,
+		Payload: map[string]any{
+			"finish_reason":     resp.FinishReason,
+			"tool_call_count":   len(resp.ToolCalls),
+			"prompt_tokens":     resp.Usage.PromptTokens,
+			"completion_tokens": resp.Usage.CompletionTokens,
+			"turn_total_tokens": s.turnUsage.TotalTokens,
+		},
+	})
+
+	return resp, nil
 }
 
-// StartEvictionLoop runs periodic idle session eviction in a background goroutine.
-// It stops when ctx is cancelled.
-func (sm *SessionManager) StartEvictionLoop(
-	ctx context.Context, interval, maxAge time.Duration,
+// processToolCalls records the assistant message, expands tool schemas, and
+// executes each tool call in parallel, recording results to the tape in order.
+func (s *Session) processToolCalls(
+	ctx context.Context, resp *llm.ChatResponse,
 ) {
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if n := sm.EvictIdle(maxAge); n > 0 {
-					sm.logger.Info("periodic eviction completed",
-						zap.Int("evicted", n), zap.Int("remaining", sm.Len()))
+	s.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "")
+
+	// Auto-expand any tool the model calls, so the next iteration
+	// sends the full parameter schema (progressive disclosure).
+	for _, tc := range resp.ToolCalls {
+		s.tools.Expand(tc.Name)
+	}
+	if resp.Content != "" {
+		s.tools.ExpandHints(resp.Content)
+	}
+
+	// Execute tool calls in parallel and collect results in order.
+	type toolResultEntry struct {
+		id     string
+		name   string
+		result string
+	}
+	results := make([]toolResultEntry, len(resp.ToolCalls))
+	var mu sync.Mutex
+	g, gctx := errgroup.WithContext(ctx)
+	for i, tc := range resp.ToolCalls {
+		g.Go(func() error {
+			res := s.executeTool(gctx, tc)
+			mu.Lock()
+			results[i] = toolResultEntry{id: tc.ID, name: tc.Name, result: res}
+			mu.Unlock()
+			return nil
+		})
+	}
+	g.Wait()
+
+	// Append results in the original order so the tape is deterministic.
+	// Track per-tool failure counts for self-correction.
+	for _, r := range results {
+		s.appendToolResult(r.id, r.name, r.result)
+
+		if strings.HasPrefix(r.result, "Error:") {
+			s.toolFailures[r.name]++
+			if s.toolFailures[r.name] >= maxToolFailures {
+				s.appendMessage(llm.RoleUser,
+					fmt.Sprintf("Tool %q has failed %d times this turn. Reconsider your approach — try a different tool or method.",
+						r.name, s.toolFailures[r.name]), nil, "")
+			}
+		}
+	}
+}
+
+// processAssistantResponse handles the final answer: runs any embedded comma
+// commands, records the response to the tape, and returns the content.
+func (s *Session) processAssistantResponse(
+	ctx context.Context, resp *llm.ChatResponse,
+) string {
+	content := resp.Content
+
+	commands, cleanText := router.RouteAssistant(content)
+	if len(commands) > 0 {
+		content = cleanText
+		for _, cmd := range commands {
+			route := router.RouteResult{
+				IsCommand: true,
+				Command:   cmd.Command,
+				Args:      cmd.Args,
+				Kind:      cmd.Kind,
+			}
+			cmdResult, _ := s.handleCommand(ctx, route)
+			content += "\n" + cmdResult
+		}
+	}
+
+	s.appendMessage(llm.RoleAssistant, content, nil, "")
+	return content
+}
+
+// doStreamingCall performs a streaming LLM call, sending content tokens to tokenCh,
+// and returns the assembled full response.
+func (s *Session) doStreamingCall(
+	ctx context.Context, req llm.ChatRequest,
+	tokenCh chan<- string,
+) (*llm.ChatResponse, error) {
+	eventCh, err := s.llm.ChatStream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &llm.ChatResponse{}
+	var contentBuf strings.Builder
+	// Track in-progress tool calls by index.
+	toolCallMap := make(map[string]*llm.ToolCall) // keyed by ID
+	var toolCallOrder []string
+
+	for ev := range eventCh {
+		switch ev.Type {
+		case llm.StreamContentDelta:
+			contentBuf.WriteString(ev.Content)
+			if tokenCh != nil {
+				select {
+				case tokenCh <- ev.Content:
+				case <-ctx.Done():
+					return nil, ctx.Err()
 				}
 			}
-		}
-	}()
-}
 
-// Shutdown cancels all in-flight session work and clears the session map.
-func (sm *SessionManager) Shutdown() {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	for id, s := range sm.sessions {
-		if s.cancel != nil {
-			s.cancel()
-		}
-		delete(sm.sessions, id)
-	}
-	sm.logger.Info("all sessions shut down")
-}
+		case llm.StreamToolCallDelta:
+			if ev.ToolCall == nil {
+				continue
+			}
+			tc := ev.ToolCall
+			if tc.ID != "" {
+				// New tool call starting (first delta may also carry arguments).
+				toolCallMap[tc.ID] = &llm.ToolCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments}
+				toolCallOrder = append(toolCallOrder, tc.ID)
+			} else if tc.Arguments != "" && len(toolCallOrder) > 0 {
+				// Append arguments to the most recent tool call.
+				lastID := toolCallOrder[len(toolCallOrder)-1]
+				if existing, ok := toolCallMap[lastID]; ok {
+					existing.Arguments += tc.Arguments
+				}
+			}
 
-// Len returns the number of active sessions.
-func (sm *SessionManager) Len() int {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	return len(sm.sessions)
-}
+		case llm.StreamError:
+			return nil, ev.Error
 
-// Context returns the session's context. For sessions managed by
-// SessionManager, this is cancelled on eviction or shutdown.
-// For the default CLI session, this returns nil (callers should use
-// their own context).
-func (s *Session) Context() context.Context {
-	return s.ctx
-}
-
-// sanitizeForFilename replaces characters unsafe for filenames.
-func sanitizeForFilename(s string) string {
-	r := make([]byte, 0, len(s))
-	for i := range len(s) {
-		c := s[i]
-		switch c {
-		case ':', '/', '\\', ' ':
-			r = append(r, '_')
-		default:
-			r = append(r, c)
+		case llm.StreamDone:
+			if ev.Usage != nil {
+				resp.Usage = *ev.Usage
+			}
 		}
 	}
-	return string(r)
+
+	resp.Content = contentBuf.String()
+	for _, id := range toolCallOrder {
+		if tc, ok := toolCallMap[id]; ok {
+			tc.Arguments = llm.NormalizeArgs(tc.Arguments)
+			resp.ToolCalls = append(resp.ToolCalls, *tc)
+		}
+	}
+
+	if len(resp.ToolCalls) > 0 {
+		resp.FinishReason = "tool_calls"
+	} else {
+		resp.FinishReason = "stop"
+	}
+
+	return resp, nil
+}
+
+// executeTool runs a single tool call with hook emission.
+func (s *Session) executeTool(
+	ctx context.Context, tc llm.ToolCall,
+) string {
+	// Before tool exec hook — can block execution.
+	if err := s.hooks.Emit(ctx, hooks.Event{
+		Type: hooks.EventBeforeToolExec,
+		Payload: map[string]any{
+			"tool_name": tc.Name,
+			"tool_id":   tc.ID,
+			"arguments": tc.Arguments,
+		},
+	}); err != nil {
+		return "Tool execution blocked: " + err.Error()
+	}
+
+	result, err := s.tools.Execute(ctx, tc.Name, tc.Arguments)
+	if err != nil {
+		result = "Error: " + err.Error()
+	}
+
+	s.hooks.Emit(ctx, hooks.Event{
+		Type: hooks.EventAfterToolExec,
+		Payload: map[string]any{
+			"tool_name": tc.Name,
+			"tool_id":   tc.ID,
+			"result":    truncateForLog(result, 500),
+		},
+	})
+
+	return result
+}
+
+// handleCommand dispatches an internal or shell colon-command.
+func (s *Session) handleCommand(
+	ctx context.Context, route router.RouteResult,
+) (string, error) {
+	switch route.Kind {
+	case router.CommandInternal:
+		return s.handleInternalCommand(ctx, route.Command, route.Args)
+	case router.CommandShell:
+		// Shell commands are executed via the shell_exec tool.
+		args, _ := json.Marshal(map[string]string{"command": route.Command})
+		result, err := s.tools.Execute(ctx, "shell_exec", string(args))
+		if err != nil {
+			return "Error: " + err.Error(), nil
+		}
+		return result, nil
+	}
+	return "", nil
+}
+
+// handleInternalCommand processes built-in colon-commands.
+func (s *Session) handleInternalCommand(
+	_ context.Context, cmd, args string,
+) (string, error) {
+	switch cmd {
+	case "help":
+		return s.helpText(), nil
+
+	case "quit":
+		return "", ErrQuit
+
+	case "tape.info":
+		info := s.tape.Info()
+		return fmt.Sprintf("Tape: %s\nEntries: %d | Anchors: %d | Since last anchor: %d",
+			info.FilePath, info.TotalEntries, info.AnchorCount, info.EntriesSinceAnchor), nil
+
+	case "tape.search":
+		if args == "" {
+			return "Usage: :tape.search <query>", nil
+		}
+		results, err := s.tape.Search(args)
+		if err != nil {
+			return "Error: " + err.Error(), nil
+		}
+		if len(results) == 0 {
+			return "No matches found.", nil
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "Found %d matches:\n", len(results))
+		for _, e := range results {
+			fmt.Fprintf(&b, "  [%s] %s: %s\n", e.Kind, e.Timestamp.Format(time.RFC3339), truncateForLog(string(e.Payload), 100))
+		}
+		return b.String(), nil
+
+	case "tools":
+		return s.tools.List(), nil
+
+	case "skills":
+		list := s.tools.List()
+		// Extract just the skills section.
+		if idx := strings.Index(list, "Skills"); idx >= 0 {
+			return list[idx:], nil
+		}
+		return "No skills registered.", nil
+
+	case "model":
+		if args == "" {
+			return fmt.Sprintf("Current model: %s (provider: %s)", s.config.Model, s.llm.Provider()), nil
+		}
+		// Model switching would require creating a new client — for now just report.
+		return fmt.Sprintf("Model switching is not yet supported. Current: %s", s.config.Model), nil
+
+	case "usage":
+		return fmt.Sprintf("Session tokens: prompt=%d completion=%d total=%d\nLast turn:      prompt=%d completion=%d total=%d",
+			s.sessionUsage.PromptTokens, s.sessionUsage.CompletionTokens, s.sessionUsage.TotalTokens,
+			s.turnUsage.PromptTokens, s.turnUsage.CompletionTokens, s.turnUsage.TotalTokens), nil
+
+	case "metrics":
+		if s.MetricsSummary != nil {
+			return s.MetricsSummary(), nil
+		}
+		return "Metrics not available.", nil
+
+	case "reset":
+		label := args
+		if label == "" {
+			label = "manual"
+		}
+		if err := s.tape.AddAnchor(label); err != nil {
+			return "Error: " + err.Error(), nil
+		}
+		return fmt.Sprintf("Anchor added: %s", label), nil
+
+	default:
+		return fmt.Sprintf("Unknown command: %s. Type :help for available commands.", cmd), nil
+	}
+}
+
+func (s *Session) helpText() string {
+	return `Available commands:
+  :help              Show this help message
+  :quit              Exit golem
+  :usage             Show token usage statistics
+  :metrics           Show operational metrics
+  :tape.info         Show tape statistics
+  :tape.search <q>   Search tape history
+  :tools             List registered tools
+  :skills            List discovered skills
+  :model [name]      Show or change current model
+  :reset [label]     Add a tape anchor (context boundary)
+  :<command>         Execute a shell command (e.g., :ls -la)`
+}
+
+// buildSystemPrompt constructs the system prompt for LLM calls.
+func (s *Session) buildSystemPrompt() string {
+	var b strings.Builder
+
+	b.WriteString("You are golem, a helpful coding assistant.\n\n")
+
+	// Workspace context.
+	if wd, err := os.Getwd(); err == nil {
+		fmt.Fprintf(&b, "Working directory: %s\n", wd)
+	}
+	fmt.Fprintf(&b, "Current time: %s\n\n", time.Now().Format(time.RFC3339))
+
+	b.WriteString("When you need to perform actions, use the available tools immediately. ")
+	b.WriteString("You may briefly explain your reasoning alongside tool calls, but always ")
+	b.WriteString("include the tool calls in the same response — never respond with only a ")
+	b.WriteString("plan or description of what you intend to do.\n\n")
+
+	// Custom system prompt: prefer per-agent config, fall back to workspace file.
+	switch {
+	case s.config.SystemPrompt != "":
+		b.WriteString(s.config.SystemPrompt)
+		b.WriteByte('\n')
+	default:
+		if data, err := os.ReadFile(".agent/system-prompt.md"); err == nil {
+			b.WriteString(strings.TrimSpace(string(data)))
+			b.WriteByte('\n')
+		}
+	}
+
+	return b.String()
+}
+
+// appendMessage records a message to the tape.
+// senderID is optional and only set for user messages in group chats.
+func (s *Session) appendMessage(
+	role llm.Role, content string,
+	toolCalls []llm.ToolCall, senderID string,
+) {
+	payload := map[string]any{
+		"role":    string(role),
+		"content": content,
+	}
+	if len(toolCalls) > 0 {
+		payload["tool_calls"] = toolCalls
+	}
+	if senderID != "" {
+		payload["sender_id"] = senderID
+	}
+
+	s.tape.Append(tape.TapeEntry{
+		Kind:    tape.KindMessage,
+		Payload: tape.MarshalPayload(payload),
+	})
+}
+
+// appendToolResult records a tool result to the tape with proper metadata.
+func (s *Session) appendToolResult(
+	toolCallID, toolName, result string,
+) {
+	s.tape.Append(tape.TapeEntry{
+		Kind: tape.KindMessage,
+		Payload: tape.MarshalPayload(map[string]any{
+			"role":         string(llm.RoleTool),
+			"content":      result,
+			"tool_call_id": toolCallID,
+			"name":         toolName,
+		}),
+	})
+}
+
+// ErrQuit signals that the user wants to quit.
+var ErrQuit = errors.New("quit")
+
+func truncateForLog(s string, maxLen int) string {
+	if len(s) > maxLen {
+		return s[:maxLen] + "..."
+	}
+	return s
 }
