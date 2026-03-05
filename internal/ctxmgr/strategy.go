@@ -92,9 +92,29 @@ func MaskObservations(msgs []llm.Message, maxChars int) []llm.Message {
 }
 
 // trimToFit drops oldest messages if total tokens exceed maxTokens.
-// Always keeps at least the last message.
+// Always keeps at least the last message. Preserves tool call/result
+// pairs: if the oldest message is an assistant with tool_calls, skip
+// forward past the corresponding tool results to avoid orphaning them.
 func trimToFit(msgs []llm.Message, maxTokens int) []llm.Message {
 	for len(msgs) > 1 && EstimateTokens(msgs) > maxTokens {
+		// If the first message is an assistant with tool_calls,
+		// drop it AND all immediately following tool results.
+		if msgs[0].Role == llm.RoleAssistant && len(msgs[0].ToolCalls) > 0 {
+			i := 1
+			for i < len(msgs) && msgs[i].Role == llm.RoleTool {
+				i++
+			}
+			if i >= len(msgs) {
+				break // would drop everything; keep as-is
+			}
+			msgs = msgs[i:]
+			continue
+		}
+		// If the first message is an orphaned tool result, drop it.
+		if msgs[0].Role == llm.RoleTool {
+			msgs = msgs[1:]
+			continue
+		}
 		msgs = msgs[1:]
 	}
 	return msgs
