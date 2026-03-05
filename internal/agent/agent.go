@@ -36,7 +36,12 @@ type AgentLoop struct {
 	// Token tracking: accumulated across the session lifetime.
 	sessionUsage llm.Usage
 	turnUsage    llm.Usage // reset each turn
+
+	// Self-correction: per-tool failure counts, reset each turn.
+	toolFailures map[string]int
 }
+
+const maxToolFailures = 3
 
 // New creates an AgentLoop with all dependencies wired in.
 func New(
@@ -106,8 +111,9 @@ func (a *AgentLoop) runReActLoop(
 	_, modelName := llm.ParseModelProvider(a.config.Model)
 	maxTokens := ctxmgr.ModelContextWindow(modelName)
 
-	// Reset per-turn usage tracking.
+	// Reset per-turn tracking.
 	a.turnUsage = llm.Usage{}
+	a.toolFailures = make(map[string]int)
 
 	const maxNudges = 2
 	nudges := 0
@@ -293,19 +299,19 @@ func (a *AgentLoop) processToolCalls(
 	}
 
 	// Execute tool calls in parallel and collect results in order.
-	type toolResult struct {
+	type toolResultEntry struct {
 		id     string
 		name   string
 		result string
 	}
-	results := make([]toolResult, len(resp.ToolCalls))
+	results := make([]toolResultEntry, len(resp.ToolCalls))
 	var mu sync.Mutex
 	g, gctx := errgroup.WithContext(ctx)
 	for i, tc := range resp.ToolCalls {
 		g.Go(func() error {
 			res := a.executeTool(gctx, tc)
 			mu.Lock()
-			results[i] = toolResult{id: tc.ID, name: tc.Name, result: res}
+			results[i] = toolResultEntry{id: tc.ID, name: tc.Name, result: res}
 			mu.Unlock()
 			return nil
 		})
@@ -313,8 +319,18 @@ func (a *AgentLoop) processToolCalls(
 	g.Wait()
 
 	// Append results in the original order so the tape is deterministic.
+	// Track per-tool failure counts for self-correction.
 	for _, r := range results {
 		a.appendToolResult(r.id, r.name, r.result)
+
+		if strings.HasPrefix(r.result, "Error:") {
+			a.toolFailures[r.name]++
+			if a.toolFailures[r.name] >= maxToolFailures {
+				a.appendMessage(llm.RoleUser,
+					fmt.Sprintf("Tool %q has failed %d times this turn. Reconsider your approach — try a different tool or method.",
+						r.name, a.toolFailures[r.name]), nil, "")
+			}
+		}
 	}
 }
 
