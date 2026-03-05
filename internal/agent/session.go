@@ -132,6 +132,7 @@ func (sm *SessionManager) createSession(
 
 	hookBus := hooks.NewBus(sm.logger)
 	hookBus.Register(hooks.NewLoggingHook(sm.logger))
+	hookBus.Register(hooks.NewSafetyHook())
 
 	registry := sm.factory.ToolFactory()
 
@@ -158,6 +159,7 @@ func (sm *SessionManager) createSessionFromTape(
 
 	hookBus := hooks.NewBus(sm.logger)
 	hookBus.Register(hooks.NewLoggingHook(sm.logger))
+	hookBus.Register(hooks.NewSafetyHook())
 
 	registry := sm.factory.ToolFactory()
 

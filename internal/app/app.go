@@ -265,6 +265,7 @@ func BuildAgent(
 	// 5. Build hook bus.
 	hookBus := hooks.NewBus(logger)
 	hookBus.Register(hooks.NewLoggingHook(logger))
+	hookBus.Register(hooks.NewSafetyHook())
 
 	// 6. Build channel registry.
 	channels := make(map[string]channel.Channel)
