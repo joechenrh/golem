@@ -112,6 +112,7 @@ func (r *Registry) Expand(name string) {
 
 // DetectToolHints scans text for references to registered tool names.
 // Returns the names of tools that were mentioned but not yet expanded.
+// Uses word-boundary matching so "file" doesn't false-match "read_file".
 func (r *Registry) DetectToolHints(text string) []string {
 	lower := strings.ToLower(text)
 	var hints []string
@@ -119,12 +120,44 @@ func (r *Registry) DetectToolHints(text string) []string {
 		if r.expanded[name] {
 			continue
 		}
-		if strings.Contains(lower, strings.ToLower(name)) {
+		lowerName := strings.ToLower(name)
+		// Match exact name or with underscores replaced by spaces.
+		if containsWord(lower, lowerName) ||
+			containsWord(lower, strings.ReplaceAll(lowerName, "_", " ")) {
 			hints = append(hints, name)
 		}
 	}
 	sort.Strings(hints)
 	return hints
+}
+
+// containsWord checks if text contains word as a whole word
+// (bounded by non-alphanumeric characters or string edges).
+func containsWord(text, word string) bool {
+	idx := 0
+	for {
+		pos := strings.Index(text[idx:], word)
+		if pos < 0 {
+			return false
+		}
+		pos += idx
+		// Check left boundary.
+		if pos > 0 && isWordChar(text[pos-1]) {
+			idx = pos + len(word)
+			continue
+		}
+		// Check right boundary.
+		end := pos + len(word)
+		if end < len(text) && isWordChar(text[end]) {
+			idx = end
+			continue
+		}
+		return true
+	}
+}
+
+func isWordChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // DiscoverSkills scans a directory for SKILL.md files and registers them.
