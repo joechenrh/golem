@@ -230,6 +230,7 @@ func (a *AgentLoop) executeLLMCall(
 		SystemPrompt: systemPrompt,
 		Messages:     messages,
 		Tools:        toolDefs,
+		MaxTokens:    a.config.MaxOutputTokens,
 	}
 
 	var resp *llm.ChatResponse

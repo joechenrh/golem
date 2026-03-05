@@ -32,8 +32,9 @@ type Config struct {
 	BaseURLs map[string]string // provider name -> custom base URL (optional)
 
 	// Agent behavior
-	MaxToolIter  int           // max tool-calling iterations per turn (default: 15)
-	ShellTimeout time.Duration // shell command timeout (default: 30s)
+	MaxToolIter    int           // max tool-calling iterations per turn (default: 15)
+	MaxOutputTokens int          // max tokens in LLM response (default: 4096)
+	ShellTimeout   time.Duration // shell command timeout (default: 30s)
 
 	// Context management
 	ContextStrategy string // "anchor", "masking", "hybrid" (default: "masking")
@@ -116,6 +117,7 @@ func Load(
 
 		// Agent tier: behavior, storage, logging.
 		MaxToolIter:     a.integer("GOLEM_MAX_TOOL_ITER", 15),
+		MaxOutputTokens: a.integer("GOLEM_MAX_OUTPUT_TOKENS", 4096),
 		ShellTimeout:    a.duration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
 		ContextStrategy: a.str("GOLEM_CONTEXT_STRATEGY", "masking"),
 		Executor:        a.str("GOLEM_EXECUTOR", "local"),
