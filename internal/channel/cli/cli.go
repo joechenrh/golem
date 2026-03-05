@@ -179,5 +179,5 @@ func (c *CLIChannel) PrintBanner(
 	fmt.Fprintf(c.writer, "Model: %s\n", model)
 	fmt.Fprintf(c.writer, "Tools: %d registered\n", toolCount)
 	fmt.Fprintf(c.writer, "Tape:  %s\n", tapePath)
-	fmt.Fprintf(c.writer, "Type /help for commands, /quit to exit.\n\n")
+	fmt.Fprintf(c.writer, "Type :help for commands, :quit to exit.\n\n")
 }

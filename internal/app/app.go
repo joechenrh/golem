@@ -57,7 +57,7 @@ type AgentInstance struct {
 //     closer together.
 //
 // gcancel is called when any channel exits (e.g. CLI EOF) or when the user
-// types /quit, ensuring all remaining channels stop promptly.
+// types :quit, ensuring all remaining channels stop promptly.
 func (inst *AgentInstance) Run(ctx context.Context) error {
 	inCh := make(chan channel.IncomingMessage, 100)
 	gctx, gcancel := context.WithCancel(ctx)

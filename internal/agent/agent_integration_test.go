@@ -365,23 +365,23 @@ func TestIntegration_ToolCallLimit(t *testing.T) {
 	}
 }
 
-func TestIntegration_SlashCommandBypass(t *testing.T) {
+func TestIntegration_ColonCommandBypass(t *testing.T) {
 	h := newTestHarness(t, nil) // no responses needed
 
-	// /help should not call LLM.
-	result, err := h.agent.HandleInput(context.Background(), msg("/help"))
+	// :help should not call LLM.
+	result, err := h.agent.HandleInput(context.Background(), msg(":help"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
-	if !strings.Contains(result, "/help") {
+	if !strings.Contains(result, ":help") {
 		t.Errorf("help result = %q", result)
 	}
 	if h.mock.callCount() != 0 {
-		t.Errorf("LLM called %d times for /help, want 0", h.mock.callCount())
+		t.Errorf("LLM called %d times for :help, want 0", h.mock.callCount())
 	}
 
-	// /tape.info should not call LLM.
-	result, err = h.agent.HandleInput(context.Background(), msg("/tape.info"))
+	// :tape.info should not call LLM.
+	result, err = h.agent.HandleInput(context.Background(), msg(":tape.info"))
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestIntegration_SlashCommandBypass(t *testing.T) {
 		t.Errorf("tape.info result = %q", result)
 	}
 	if h.mock.callCount() != 0 {
-		t.Errorf("LLM called %d times for /tape.info, want 0", h.mock.callCount())
+		t.Errorf("LLM called %d times for :tape.info, want 0", h.mock.callCount())
 	}
 }
 

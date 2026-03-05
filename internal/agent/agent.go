@@ -401,7 +401,7 @@ func (a *AgentLoop) executeTool(
 	return result
 }
 
-// handleCommand dispatches an internal or shell slash-command.
+// handleCommand dispatches an internal or shell colon-command.
 func (a *AgentLoop) handleCommand(
 	ctx context.Context, route router.RouteResult,
 ) (string, error) {
@@ -420,7 +420,7 @@ func (a *AgentLoop) handleCommand(
 	return "", nil
 }
 
-// handleInternalCommand processes built-in slash-commands.
+// handleInternalCommand processes built-in colon-commands.
 func (a *AgentLoop) handleInternalCommand(
 	_ context.Context, cmd, args string,
 ) (string, error) {
@@ -438,7 +438,7 @@ func (a *AgentLoop) handleInternalCommand(
 
 	case "tape.search":
 		if args == "" {
-			return "Usage: /tape.search <query>", nil
+			return "Usage: :tape.search <query>", nil
 		}
 		results, err := a.tape.Search(args)
 		if err != nil {
@@ -472,7 +472,7 @@ func (a *AgentLoop) handleInternalCommand(
 		// Model switching would require creating a new client — for now just report.
 		return fmt.Sprintf("Model switching is not yet supported. Current: %s", a.config.Model), nil
 
-	case "reset", "/reset":
+	case "reset":
 		label := args
 		if label == "" {
 			label = "manual"
@@ -483,21 +483,21 @@ func (a *AgentLoop) handleInternalCommand(
 		return fmt.Sprintf("Anchor added: %s", label), nil
 
 	default:
-		return fmt.Sprintf("Unknown command: %s. Type /help for available commands.", cmd), nil
+		return fmt.Sprintf("Unknown command: %s. Type :help for available commands.", cmd), nil
 	}
 }
 
 func (a *AgentLoop) helpText() string {
 	return `Available commands:
-  /help              Show this help message
-  /quit              Exit golem
-  /tape.info         Show tape statistics
-  /tape.search <q>   Search tape history
-  /tools             List registered tools
-  /skills            List discovered skills
-  /model [name]      Show or change current model
-  //reset [label]    Add a tape anchor (context boundary)
-  /<command>         Execute a shell command (e.g., /ls -la)`
+  :help              Show this help message
+  :quit              Exit golem
+  :tape.info         Show tape statistics
+  :tape.search <q>   Search tape history
+  :tools             List registered tools
+  :skills            List discovered skills
+  :model [name]      Show or change current model
+  :reset [label]     Add a tape anchor (context boundary)
+  :<command>         Execute a shell command (e.g., :ls -la)`
 }
 
 // buildSystemPrompt constructs the system prompt for LLM calls.
