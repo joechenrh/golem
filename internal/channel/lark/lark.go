@@ -87,6 +87,9 @@ func (l *LarkChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMes
 	// Start a single eviction ticker instead of spawning a goroutine per message.
 	go l.seenMsgsEvictionLoop(ctx, 5*time.Minute)
 
+	// Run wsClient.Start in a goroutine because the SDK ignores context
+	// cancellation and blocks with a bare select{}. The select below
+	// ensures Start() returns promptly when ctx is cancelled.
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- wsClient.Start(ctx)
