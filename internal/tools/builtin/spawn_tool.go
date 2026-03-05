@@ -39,6 +39,10 @@ var spawnAgentParams = json.RawMessage(`{
 		"prompt": {
 			"type": "string",
 			"description": "The task description for the sub-agent. Be specific about what you need it to do and what output you expect."
+		},
+		"context": {
+			"type": "string",
+			"description": "Key context, files, or partial results to pass to the sub-agent. This is prepended to the prompt so the sub-agent has the information it needs without re-discovering it."
 		}
 	},
 	"required": ["prompt"]
@@ -50,7 +54,8 @@ func (t *SpawnAgentTool) Execute(
 	ctx context.Context, args string,
 ) (string, error) {
 	var params struct {
-		Prompt string `json:"prompt"`
+		Prompt  string `json:"prompt"`
+		Context string `json:"context"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "Error: invalid arguments: " + err.Error(), nil
@@ -59,7 +64,12 @@ func (t *SpawnAgentTool) Execute(
 		return "Error: 'prompt' is required", nil
 	}
 
-	result, err := t.runner(ctx, params.Prompt)
+	prompt := params.Prompt
+	if params.Context != "" {
+		prompt = "[Context from parent agent]\n" + params.Context + "\n\n[Task]\n" + params.Prompt
+	}
+
+	result, err := t.runner(ctx, prompt)
 	if err != nil {
 		return "Sub-agent error: " + err.Error(), nil
 	}
