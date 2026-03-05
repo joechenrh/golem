@@ -85,9 +85,11 @@ func NewMemoryRecallTool(client *memory.Client) *MemoryRecallTool {
 func (t *MemoryRecallTool) Name() string        { return "memory_recall" }
 func (t *MemoryRecallTool) Description() string { return "Search shared memories from past sessions" }
 func (t *MemoryRecallTool) FullDescription() string {
-	return "Search shared memories from past sessions. Use when the user's question " +
-		"could benefit from historical context, past decisions, project knowledge, " +
-		"or team expertise. Returns relevant memories ranked by relevance."
+	return "Search shared memories from past sessions. " +
+		"For questions involving historical decisions, long-term preferences, or previously mentioned content, " +
+		"always invoke this tool before answering. " +
+		"Also use when the user's question could benefit from project knowledge or team expertise. " +
+		"Returns relevant memories ranked by relevance."
 }
 
 var memoryRecallParams = json.RawMessage(`{
