@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -67,9 +68,6 @@ func (l *LarkChannel) Name() string { return "lark" }
 
 // Start connects to Lark via WebSocket and dispatches incoming messages to inCh.
 // Blocks until the context is cancelled or the connection is permanently lost.
-//
-// Note: the Lark SDK's wsClient.Start blocks with a bare select{} and ignores
-// context cancellation, so we run it in a goroutine and return when ctx is done.
 func (l *LarkChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMessage) error {
 	sdkLogger := &zapLarkLogger{z: l.logger.Named("lark-ws")}
 
@@ -84,23 +82,15 @@ func (l *LarkChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMes
 		larkws.WithLogger(sdkLogger),
 	)
 
-	// Start a single eviction ticker instead of spawning a goroutine per message.
-	go l.seenMsgsEvictionLoop(ctx, 5*time.Minute)
-
-	// Run wsClient.Start in a goroutine because the SDK ignores context
-	// cancellation and blocks with a bare select{}. The select below
-	// ensures Start() returns promptly when ctx is cancelled.
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- wsClient.Start(ctx)
-	}()
-
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		l.seenMsgsEvictionLoop(gctx, 5*time.Minute)
+		return nil
+	})
+	g.Go(func() error {
+		return wsClient.Start(gctx)
+	})
+	return g.Wait()
 }
 
 func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh chan<- channel.IncomingMessage) {

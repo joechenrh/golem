@@ -18,3 +18,5 @@ require (
 	github.com/gorilla/websocket v1.5.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 )
+
+replace github.com/larksuite/oapi-sdk-go/v3 => github.com/joechenrh/oapi-sdk-go/v3 v3.5.4-0.20260305094521-116d7943b447
