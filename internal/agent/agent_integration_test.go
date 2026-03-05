@@ -455,6 +455,149 @@ func TestIntegration_TapeRecordsConversation(t *testing.T) {
 	}
 }
 
+func TestIntegration_EmptyResponseRetry(t *testing.T) {
+	h := newTestHarness(t, []mockResponse{
+		// First response: empty content, no tool calls.
+		{content: ""},
+		// Second response: also empty (whitespace only).
+		{content: "   "},
+		// Third response: actual content.
+		{content: "Here is your answer."},
+	})
+
+	result, err := h.agent.HandleInput(context.Background(), msg("Give me an answer"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if result != "Here is your answer." {
+		t.Errorf("result = %q, want %q", result, "Here is your answer.")
+	}
+	// Should have retried twice before getting the real answer.
+	if h.mock.callCount() != 3 {
+		t.Errorf("LLM called %d times, want 3", h.mock.callCount())
+	}
+}
+
+func TestIntegration_NudgeBehavior(t *testing.T) {
+	h := newTestHarness(t, []mockResponse{
+		// First response: plan-like text that should trigger a nudge.
+		{content: "I'll read the directory and then check the files."},
+		// After nudge, LLM uses a tool.
+		{toolCalls: []mockToolCall{
+			{id: "tc1", name: "list_directory", args: `{"path":"."}`},
+		}},
+		// Final answer after tool result.
+		{content: "The workspace is empty."},
+	})
+
+	result, err := h.agent.HandleInput(context.Background(), msg("Check the workspace"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if result != "The workspace is empty." {
+		t.Errorf("result = %q", result)
+	}
+	// 3 LLM calls: plan → (nudge) → tool call → final answer.
+	if h.mock.callCount() != 3 {
+		t.Errorf("LLM called %d times, want 3", h.mock.callCount())
+	}
+
+	// Verify the nudge message was injected into the tape.
+	entries, _ := h.tape.Entries()
+	foundNudge := false
+	for _, e := range entries {
+		pm := e.PayloadMap()
+		content, _ := pm["content"].(string)
+		if strings.Contains(content, "use the available tools") {
+			foundNudge = true
+			break
+		}
+	}
+	if !foundNudge {
+		t.Error("nudge message not found in tape")
+	}
+}
+
+func TestIntegration_SelfCorrectionOnRepeatedToolFailure(t *testing.T) {
+	// The tool "read_file" will fail because "nonexistent.txt" doesn't exist.
+	// After maxToolFailures (3), a self-correction message should appear.
+	var responses []mockResponse
+	for i := range 5 {
+		responses = append(responses, mockResponse{
+			toolCalls: []mockToolCall{
+				{id: fmt.Sprintf("tc%d", i), name: "read_file", args: `{"path":"nonexistent.txt"}`},
+			},
+		})
+	}
+	// Final answer after self-correction hint.
+	responses = append(responses, mockResponse{content: "The file does not exist."})
+
+	h := newTestHarness(t, responses)
+
+	result, err := h.agent.HandleInput(context.Background(), msg("Read nonexistent.txt"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if !strings.Contains(result, "does not exist") {
+		t.Errorf("result = %q", result)
+	}
+
+	// Verify self-correction message was injected.
+	entries, _ := h.tape.Entries()
+	foundCorrection := false
+	for _, e := range entries {
+		pm := e.PayloadMap()
+		content, _ := pm["content"].(string)
+		if strings.Contains(content, "Reconsider your approach") {
+			foundCorrection = true
+			break
+		}
+	}
+	if !foundCorrection {
+		t.Error("self-correction message not found in tape")
+	}
+}
+
+func TestIntegration_ParallelToolCalls(t *testing.T) {
+	h := newTestHarness(t, []mockResponse{
+		// LLM requests two tool calls at once.
+		{toolCalls: []mockToolCall{
+			{id: "tc1", name: "write_file", args: `{"path":"a.txt","content":"alpha"}`},
+			{id: "tc2", name: "write_file", args: `{"path":"b.txt","content":"beta"}`},
+		}},
+		// Read both files back.
+		{toolCalls: []mockToolCall{
+			{id: "tc3", name: "read_file", args: `{"path":"a.txt"}`},
+			{id: "tc4", name: "read_file", args: `{"path":"b.txt"}`},
+		}},
+		// Final answer.
+		{content: "Files created: a.txt=alpha, b.txt=beta"},
+	})
+
+	result, err := h.agent.HandleInput(context.Background(), msg("Create and read two files"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if !strings.Contains(result, "alpha") || !strings.Contains(result, "beta") {
+		t.Errorf("result = %q", result)
+	}
+
+	// Verify tape has tool results in order for both batches.
+	entries, _ := h.tape.Entries()
+	var toolResults []string
+	for _, e := range entries {
+		pm := e.PayloadMap()
+		if pm["role"] == "tool" {
+			name, _ := pm["name"].(string)
+			toolResults = append(toolResults, name)
+		}
+	}
+	// Should have 4 tool results total, in order.
+	if len(toolResults) != 4 {
+		t.Errorf("tool results = %d, want 4", len(toolResults))
+	}
+}
+
 func TestIntegration_ShellToolExecution(t *testing.T) {
 	h := newTestHarness(t, []mockResponse{
 		{toolCalls: []mockToolCall{
