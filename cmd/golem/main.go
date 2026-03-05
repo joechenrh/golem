@@ -7,11 +7,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,15 +22,6 @@ import (
 	"github.com/joechenrh/golem/internal/channel/cli"
 	larkchan "github.com/joechenrh/golem/internal/channel/lark"
 	"github.com/joechenrh/golem/internal/config"
-	"github.com/joechenrh/golem/internal/ctxmgr"
-	"github.com/joechenrh/golem/internal/executor"
-	"github.com/joechenrh/golem/internal/fs"
-	"github.com/joechenrh/golem/internal/hooks"
-	"github.com/joechenrh/golem/internal/llm"
-	"github.com/joechenrh/golem/internal/memory"
-	"github.com/joechenrh/golem/internal/tape"
-	"github.com/joechenrh/golem/internal/tools"
-	"github.com/joechenrh/golem/internal/tools/builtin"
 )
 
 const version = "0.1.0"
@@ -55,141 +44,19 @@ func main() {
 	logger := initLogger(cfg.LogLevel, cfg.TapeDir)
 	defer logger.Sync()
 
-	// 4. Initialize LLM client.
-	provider, modelName := llm.ParseModelProvider(cfg.Model)
-	apiKey := cfg.APIKeys[string(provider)]
-	if apiKey == "" {
-		fmt.Fprintf(os.Stderr, "no API key for provider %q. Set %s_API_KEY environment variable.\n",
-			provider, strings.ToUpper(string(provider)))
-		os.Exit(1)
-	}
-
-	// Auto-register unknown providers as OpenAI-compatible.
-	if provider != llm.ProviderOpenAI && provider != llm.ProviderAnthropic {
-		baseURL := cfg.BaseURLs[string(provider)]
-		if baseURL == "" {
-			fmt.Fprintf(os.Stderr, "custom provider %q requires %s_BASE_URL to be set.\n",
-				provider, strings.ToUpper(string(provider)))
-			os.Exit(1)
-		}
-		llm.RegisterProvider(provider, baseURL, llm.NewOpenAICompatibleClient)
-	}
-
-	var clientOpts []llm.ClientOption
-	if baseURL := cfg.BaseURLs[string(provider)]; baseURL != "" {
-		clientOpts = append(clientOpts, llm.WithBaseURL(baseURL))
-	}
-
-	llmClient, err := llm.NewClient(provider, apiKey, clientOpts...)
+	// 4. Build the agent instance (LLM client, tape, tools, channels).
+	inst, err := buildAgent(cfg, logger)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "LLM client error: %v\n", err)
-		os.Exit(1)
-	}
-	_ = modelName // used by agent via cfg.Model
-
-	// 5. Initialize tape store.
-	if err := os.MkdirAll(cfg.TapeDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "creating tape dir: %v\n", err)
-		os.Exit(1)
-	}
-	tapePath := filepath.Join(cfg.TapeDir, fmt.Sprintf("session-%s.jsonl", time.Now().Format("20060102-150405")))
-	tapeStore, err := tape.NewFileStore(tapePath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "tape store error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "agent init error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// 6. Initialize executor and filesystem.
-	workDir, _ := os.Getwd()
-
-	var exec executor.Executor
-	switch cfg.Executor {
-	case "noop":
-		exec = executor.NewNoop()
-	default:
-		exec = executor.NewLocal(workDir)
-	}
-
-	filesystem, err := fs.NewLocalFS(workDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "filesystem error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// 7. Initialize context strategy.
-	ctxStrategy, err := ctxmgr.NewContextStrategy(cfg.ContextStrategy)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "context strategy error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// 8. Build hook bus.
-	hookBus := hooks.NewBus(logger)
-	hookBus.Register(hooks.NewLoggingHook(logger))
-
-	// 9. Build channel registry (before tools so Lark tools can reference the channel).
-	cliCh := cli.New()
-	channels := map[string]channel.Channel{"cli": cliCh}
-
-	var larkCh *larkchan.LarkChannel
-	if cfg.LarkAppID != "" && cfg.LarkAppSecret != "" {
-		larkCh = larkchan.New(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkVerifyToken, logger)
-		channels["lark"] = larkCh
-	}
-
-	// 10. Build tool registry.
-	registry := tools.NewRegistry()
-	registry.RegisterAll(
-		builtin.NewShellTool(exec, cfg.ShellTimeout),
-		builtin.NewReadFileTool(filesystem),
-		builtin.NewWriteFileTool(filesystem),
-		builtin.NewEditFileTool(filesystem),
-		builtin.NewListDirectoryTool(filesystem),
-		builtin.NewSearchFilesTool(filesystem),
-	)
-	// Register web tools.
-	webClient := &http.Client{Timeout: 30 * time.Second}
-	registry.RegisterAll(
-		builtin.NewWebSearchTool(webClient, cfg.WebSearchBackend),
-		builtin.NewWebFetchTool(webClient),
-	)
-	// Register Lark tools if channel is enabled (pre-expanded so the LLM
-	// sees full parameter schemas immediately).
-	if larkCh != nil {
-		registry.RegisterAll(
-			builtin.NewLarkSendTool(larkCh),
-			builtin.NewLarkListChatsTool(larkCh),
-		)
-		registry.Expand("lark_send")
-		registry.Expand("lark_list_chats")
-	}
-
-	// Register memory tools if mnemos direct mode is configured.
-	if cfg.MnemosDBHost != "" {
-		mnemosClient := memory.NewClient(
-			&http.Client{Timeout: 30 * time.Second},
-			cfg.MnemosDBHost, cfg.MnemosDBUser, cfg.MnemosDBPass,
-			cfg.MnemosDBName, cfg.MnemosAutoEmbedModel, cfg.MnemosAutoEmbedDims,
-		)
-		registry.RegisterAll(
-			builtin.NewMemoryStoreTool(mnemosClient),
-			builtin.NewMemoryRecallTool(mnemosClient),
-		)
-	}
-
-	// Discover skills from the skills directory.
-	if err := registry.DiscoverSkills(cfg.SkillsDir); err != nil {
-		logger.Debug("skills discovery", zap.Error(err))
-	}
-
-	// 11. Create agent loop.
-	agentLoop := agent.New(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
-
-	// 12. Setup signal handling.
+	// 5. Setup signal handling.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	cliCh.PrintBanner(cfg.Model, len(registry.ToolDefinitions()), tapePath)
+	cliCh := inst.Channels["cli"].(*cli.CLIChannel)
+	cliCh.PrintBanner(cfg.Model, len(inst.Registry.ToolDefinitions()), inst.TapePath)
 
 	inCh := make(chan channel.IncomingMessage, 100)
 
@@ -200,15 +67,15 @@ func main() {
 	go func() {
 		defer wg.Done()
 		for msg := range inCh {
-			if processMessage(ctx, agentLoop, channels, msg, logger) {
-				cancel() // signal the REPL to stop
+			if processMessage(ctx, inst.Loop, inst.Channels, msg, logger) {
+				cancel()
 				return
 			}
 		}
 	}()
 
 	// Start Lark channel in background if configured.
-	if larkCh != nil {
+	if larkCh, ok := inst.Channels["lark"].(*larkchan.LarkChannel); ok {
 		cliCh.PrintSystem("Lark channel enabled (WebSocket mode)")
 		wg.Add(1)
 		go func() {
@@ -224,7 +91,7 @@ func main() {
 		logger.Error("CLI channel error", zap.Error(err))
 	}
 
-	cancel() // signal background goroutines to stop
+	cancel()
 	close(inCh)
 	wg.Wait()
 	cliCh.PrintSystem("Goodbye!")
@@ -256,7 +123,7 @@ func processMessage(ctx context.Context, agentLoop *agent.AgentLoop, channels ma
 
 		err := agentLoop.HandleInputStream(ctx, msg, tokenCh)
 		close(tokenCh)
-		<-streamDone // wait for SendStream to finish
+		<-streamDone
 		if err != nil {
 			if errors.Is(err, agent.ErrQuit) {
 				return true
@@ -349,7 +216,6 @@ func initLogger(level, logDir string) *zap.Logger {
 
 	logger, err := cfg.Build()
 	if err != nil {
-		// Fallback to nop if config fails.
 		return zap.NewNop()
 	}
 	return logger
