@@ -103,11 +103,7 @@ func (s *FileStore) Search(query string) ([]TapeEntry, error) {
 	lower := strings.ToLower(query)
 	var results []TapeEntry
 	for _, e := range s.entries {
-		data, err := json.Marshal(e.Payload)
-		if err != nil {
-			continue
-		}
-		if strings.Contains(strings.ToLower(string(data)), lower) {
+		if strings.Contains(strings.ToLower(string(e.Payload)), lower) {
 			results = append(results, e)
 		}
 	}
@@ -157,10 +153,8 @@ func (s *FileStore) LastAnchor() (*TapeEntry, error) {
 
 func (s *FileStore) AddAnchor(label string) error {
 	return s.Append(TapeEntry{
-		Kind: KindAnchor,
-		Payload: map[string]any{
-			"label": label,
-		},
+		Kind:    KindAnchor,
+		Payload: MarshalPayload(map[string]any{"label": label}),
 	})
 }
 

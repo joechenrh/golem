@@ -25,10 +25,10 @@ func TestAppendAndEntries(t *testing.T) {
 
 	entry := TapeEntry{
 		Kind: KindMessage,
-		Payload: map[string]any{
+		Payload: MarshalPayload(map[string]any{
 			"role":    "user",
 			"content": "hello",
-		},
+		}),
 	}
 	if err := s.Append(entry); err != nil {
 		t.Fatalf("Append() error: %v", err)
@@ -52,8 +52,8 @@ func TestAppendAndEntries(t *testing.T) {
 	if got.Timestamp.IsZero() {
 		t.Error("Timestamp should be auto-set")
 	}
-	if got.Payload["content"] != "hello" {
-		t.Errorf("Payload[content] = %v, want %q", got.Payload["content"], "hello")
+	if p := got.PayloadMap(); p["content"] != "hello" {
+		t.Errorf("Payload[content] = %v, want %q", p["content"], "hello")
 	}
 }
 
@@ -64,10 +64,10 @@ func TestJSONRoundTrip(t *testing.T) {
 	entry := TapeEntry{
 		ID:   "test-id-123",
 		Kind: KindMessage,
-		Payload: map[string]any{
+		Payload: MarshalPayload(map[string]any{
 			"role":    "assistant",
 			"content": "hi there",
-		},
+		}),
 		Timestamp: now,
 	}
 	if err := s.Append(entry); err != nil {
@@ -91,8 +91,8 @@ func TestJSONRoundTrip(t *testing.T) {
 	if parsed.Kind != KindMessage {
 		t.Errorf("Kind = %q, want %q", parsed.Kind, KindMessage)
 	}
-	if parsed.Payload["role"] != "assistant" {
-		t.Errorf("Payload[role] = %v, want %q", parsed.Payload["role"], "assistant")
+	if p := parsed.PayloadMap(); p["role"] != "assistant" {
+		t.Errorf("Payload[role] = %v, want %q", p["role"], "assistant")
 	}
 }
 
@@ -100,9 +100,9 @@ func TestSearch(t *testing.T) {
 	s := newTestStore(t)
 
 	entries := []TapeEntry{
-		{Kind: KindMessage, Payload: map[string]any{"content": "Hello World"}},
-		{Kind: KindMessage, Payload: map[string]any{"content": "Goodbye"}},
-		{Kind: KindMessage, Payload: map[string]any{"content": "hello again"}},
+		{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "Hello World"})},
+		{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "Goodbye"})},
+		{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "hello again"})},
 	}
 	for _, e := range entries {
 		if err := s.Append(e); err != nil {
@@ -123,7 +123,7 @@ func TestAddAnchorAndEntriesSince(t *testing.T) {
 	s := newTestStore(t)
 
 	// Add some messages.
-	s.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "before"}})
+	s.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "before"})})
 
 	// Add anchor.
 	if err := s.AddAnchor("context-reset"); err != nil {
@@ -131,8 +131,8 @@ func TestAddAnchorAndEntriesSince(t *testing.T) {
 	}
 
 	// Add messages after anchor.
-	s.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "after1"}})
-	s.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "after2"}})
+	s.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "after1"})})
+	s.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "after2"})})
 
 	// Find anchor.
 	anchor, err := s.LastAnchor()
@@ -154,8 +154,8 @@ func TestAddAnchorAndEntriesSince(t *testing.T) {
 	if len(after) != 2 {
 		t.Fatalf("len(after) = %d, want 2", len(after))
 	}
-	if after[0].Payload["content"] != "after1" {
-		t.Errorf("first entry content = %v, want %q", after[0].Payload["content"], "after1")
+	if p := after[0].PayloadMap(); p["content"] != "after1" {
+		t.Errorf("first entry content = %v, want %q", p["content"], "after1")
 	}
 }
 
@@ -171,7 +171,7 @@ func TestEntriesSince_NotFound(t *testing.T) {
 func TestLastAnchor_None(t *testing.T) {
 	s := newTestStore(t)
 
-	s.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "msg"}})
+	s.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "msg"})})
 
 	anchor, err := s.LastAnchor()
 	if err != nil {
@@ -185,10 +185,10 @@ func TestLastAnchor_None(t *testing.T) {
 func TestInfo(t *testing.T) {
 	s := newTestStore(t)
 
-	s.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "msg1"}})
-	s.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "msg2"}})
+	s.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "msg1"})})
+	s.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "msg2"})})
 	s.AddAnchor("test-anchor")
-	s.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "msg3"}})
+	s.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "msg3"})})
 
 	info := s.Info()
 	if info.TotalEntries != 4 {
@@ -207,11 +207,11 @@ func TestInfo(t *testing.T) {
 
 func TestBuildMessages(t *testing.T) {
 	entries := []TapeEntry{
-		{Kind: KindMessage, Payload: map[string]any{"role": "user", "content": "before anchor"}},
-		{Kind: KindAnchor, Payload: map[string]any{"label": "reset"}},
-		{Kind: KindMessage, Payload: map[string]any{"role": "user", "content": "hello"}},
-		{Kind: KindEvent, Payload: map[string]any{"type": "command"}},
-		{Kind: KindMessage, Payload: map[string]any{"role": "assistant", "content": "hi there"}},
+		{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"role": "user", "content": "before anchor"})},
+		{Kind: KindAnchor, Payload: MarshalPayload(map[string]any{"label": "reset"})},
+		{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"role": "user", "content": "hello"})},
+		{Kind: KindEvent, Payload: MarshalPayload(map[string]any{"type": "command"})},
+		{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"role": "assistant", "content": "hi there"})},
 	}
 
 	msgs := BuildMessages(entries)
@@ -229,8 +229,8 @@ func TestBuildMessages(t *testing.T) {
 
 func TestBuildMessages_NoAnchor(t *testing.T) {
 	entries := []TapeEntry{
-		{Kind: KindMessage, Payload: map[string]any{"role": "user", "content": "hello"}},
-		{Kind: KindMessage, Payload: map[string]any{"role": "assistant", "content": "hi"}},
+		{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"role": "user", "content": "hello"})},
+		{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"role": "assistant", "content": "hi"})},
 	}
 
 	msgs := BuildMessages(entries)
@@ -241,7 +241,7 @@ func TestBuildMessages_NoAnchor(t *testing.T) {
 
 func TestBuildMessages_WithToolCalls(t *testing.T) {
 	entries := []TapeEntry{
-		{Kind: KindMessage, Payload: map[string]any{
+		{Kind: KindMessage, Payload: MarshalPayload(map[string]any{
 			"role": "assistant",
 			"tool_calls": []any{
 				map[string]any{
@@ -250,13 +250,13 @@ func TestBuildMessages_WithToolCalls(t *testing.T) {
 					"arguments": `{"path":"/tmp/x.txt"}`,
 				},
 			},
-		}},
-		{Kind: KindMessage, Payload: map[string]any{
+		})},
+		{Kind: KindMessage, Payload: MarshalPayload(map[string]any{
 			"role":         "tool",
 			"content":      "file contents",
 			"tool_call_id": "call_1",
 			"name":         "read_file",
-		}},
+		})},
 	}
 
 	msgs := BuildMessages(entries)
@@ -279,13 +279,13 @@ func TestGracefulRecovery_InvalidJSON(t *testing.T) {
 	s := newTestStore(t)
 
 	// Write valid entry then invalid line directly.
-	s.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "valid"}})
+	s.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "valid"})})
 
 	f, _ := os.OpenFile(s.path, os.O_APPEND|os.O_WRONLY, 0644)
 	f.Write([]byte("not valid json\n"))
 	f.Close()
 
-	s.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "also valid"}})
+	s.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "also valid"})})
 
 	entries, err := s.Entries()
 	if err != nil {
@@ -305,8 +305,8 @@ func TestSessionRestore_LoadFromDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileStore() error: %v", err)
 	}
-	s1.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "msg1"}})
-	s1.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "msg2"}})
+	s1.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "msg1"})})
+	s1.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "msg2"})})
 
 	// Open a new store from the same file — simulates session restore.
 	s2, err := NewFileStore(path)
@@ -321,12 +321,12 @@ func TestSessionRestore_LoadFromDisk(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("len(entries) = %d, want 2", len(entries))
 	}
-	if entries[0].Payload["content"] != "msg1" {
-		t.Errorf("entries[0] content = %v, want msg1", entries[0].Payload["content"])
+	if p := entries[0].PayloadMap(); p["content"] != "msg1" {
+		t.Errorf("entries[0] content = %v, want msg1", p["content"])
 	}
 
 	// Append to the restored store and verify.
-	s2.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "msg3"}})
+	s2.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "msg3"})})
 	entries, _ = s2.Entries()
 	if len(entries) != 3 {
 		t.Fatalf("len(entries) after append = %d, want 3", len(entries))

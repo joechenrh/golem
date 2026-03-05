@@ -17,11 +17,31 @@ const (
 )
 
 // TapeEntry is a single record in the append-only tape.
+// Payload is stored as json.RawMessage to preserve type fidelity across
+// JSON round-trips (e.g., []ToolCall survives serialization to JSONL and back).
 type TapeEntry struct {
-	ID        string         `json:"id"`
-	Kind      EntryKind      `json:"kind"`
-	Payload   map[string]any `json:"payload"`
-	Timestamp time.Time      `json:"timestamp"`
+	ID        string          `json:"id"`
+	Kind      EntryKind       `json:"kind"`
+	Payload   json.RawMessage `json:"payload"`
+	Timestamp time.Time       `json:"timestamp"`
+}
+
+// MarshalPayload marshals v to json.RawMessage for use as a TapeEntry payload.
+func MarshalPayload(v any) json.RawMessage {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return data
+}
+
+// PayloadMap unmarshals the payload into a map for ad-hoc field access.
+func (e TapeEntry) PayloadMap() map[string]any {
+	var m map[string]any
+	if err := json.Unmarshal(e.Payload, &m); err != nil {
+		return nil
+	}
+	return m
 }
 
 // TapeInfo provides stats about a tape file.
@@ -52,21 +72,18 @@ func BuildMessages(entries []TapeEntry) []llm.Message {
 			continue
 		}
 
-		// Re-marshal the payload and unmarshal into llm.Message
-		// to respect JSON tags on both sides.
-		data, err := json.Marshal(e.Payload)
-		if err != nil {
-			continue
-		}
+		// Unmarshal directly from the raw JSON payload — no re-marshaling
+		// needed since Payload is json.RawMessage.
 		var msg llm.Message
-		if err := json.Unmarshal(data, &msg); err != nil {
+		if err := json.Unmarshal(e.Payload, &msg); err != nil {
 			continue
 		}
 
 		// For user messages with sender info, prepend [sender:xxx] so the
 		// LLM can distinguish speakers in group chats.
 		if msg.Role == llm.RoleUser {
-			if senderID, _ := e.Payload["sender_id"].(string); senderID != "" {
+			p := e.PayloadMap()
+			if senderID, _ := p["sender_id"].(string); senderID != "" {
 				msg.Content = "[sender:" + senderID + "] " + msg.Content
 			}
 		}

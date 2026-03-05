@@ -448,7 +448,7 @@ func TestIntegration_TapeRecordsConversation(t *testing.T) {
 	// Verify the sequence of roles.
 	expectedRoles := []string{"user", "assistant", "user", "assistant"}
 	for i, e := range entries {
-		role, _ := e.Payload["role"].(string)
+		role, _ := e.PayloadMap()["role"].(string)
 		if role != expectedRoles[i] {
 			t.Errorf("entry %d role = %q, want %q", i, role, expectedRoles[i])
 		}

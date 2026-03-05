@@ -414,8 +414,7 @@ func (a *AgentLoop) handleInternalCommand(_ context.Context, cmd, args string) (
 		var b strings.Builder
 		fmt.Fprintf(&b, "Found %d matches:\n", len(results))
 		for _, e := range results {
-			data, _ := json.Marshal(e.Payload)
-			fmt.Fprintf(&b, "  [%s] %s: %s\n", e.Kind, e.Timestamp.Format(time.RFC3339), truncateForLog(string(data), 100))
+			fmt.Fprintf(&b, "  [%s] %s: %s\n", e.Kind, e.Timestamp.Format(time.RFC3339), truncateForLog(string(e.Payload), 100))
 		}
 		return b.String(), nil
 
@@ -513,7 +512,7 @@ func (a *AgentLoop) appendMessage(role llm.Role, content string, toolCalls []llm
 
 	a.tape.Append(tape.TapeEntry{
 		Kind:    tape.KindMessage,
-		Payload: payload,
+		Payload: tape.MarshalPayload(payload),
 	})
 }
 
@@ -521,12 +520,12 @@ func (a *AgentLoop) appendMessage(role llm.Role, content string, toolCalls []llm
 func (a *AgentLoop) appendToolResult(toolCallID, toolName, result string) {
 	a.tape.Append(tape.TapeEntry{
 		Kind: tape.KindMessage,
-		Payload: map[string]any{
+		Payload: tape.MarshalPayload(map[string]any{
 			"role":         string(llm.RoleTool),
 			"content":      result,
 			"tool_call_id": toolCallID,
 			"name":         toolName,
-		},
+		}),
 	})
 }
 
