@@ -34,7 +34,7 @@ func main() {
 	}
 
 	// 2. Load config.
-	cfg, err := config.Load(flags)
+	cfg, err := config.Load("", flags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		os.Exit(1)

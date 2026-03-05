@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ func clearConfigEnv(t *testing.T) {
 func TestLoadDefaults(t *testing.T) {
 	clearConfigEnv(t)
 
-	cfg, err := Load(nil)
+	cfg, err := Load("", nil)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestLoadEnvOverride(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test-123")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-456")
 
-	cfg, err := Load(nil)
+	cfg, err := Load("", nil)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -85,7 +86,7 @@ func TestLoadFlagOverride(t *testing.T) {
 		"log-level": "debug",
 	}
 
-	cfg, err := Load(flags)
+	cfg, err := Load("", flags)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestTelegramACL(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("TELEGRAM_ALLOW_FROM", "123, 456, 789")
 
-	cfg, err := Load(nil)
+	cfg, err := Load("", nil)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -122,7 +123,7 @@ func TestValidationInvalidLogLevel(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("GOLEM_LOG_LEVEL", "trace")
 
-	_, err := Load(nil)
+	_, err := Load("", nil)
 	if err == nil {
 		t.Fatal("expected error for invalid log level, got nil")
 	}
@@ -135,7 +136,7 @@ func TestValidationInvalidMaxToolIter(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("GOLEM_MAX_TOOL_ITER", "0")
 
-	_, err := Load(nil)
+	_, err := Load("", nil)
 	if err == nil {
 		t.Fatal("expected error for zero max tool iter, got nil")
 	}
@@ -148,7 +149,7 @@ func TestValidationInvalidModel(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("GOLEM_MODEL", "a:b:c")
 
-	_, err := Load(nil)
+	_, err := Load("", nil)
 	if err == nil {
 		t.Fatal("expected error for invalid model format, got nil")
 	}
@@ -162,7 +163,7 @@ func TestLoadBaseURLs(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "https://my-proxy.example.com/v1")
 	t.Setenv("ANTHROPIC_BASE_URL", "https://my-claude-proxy.example.com")
 
-	cfg, err := Load(nil)
+	cfg, err := Load("", nil)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -178,13 +179,50 @@ func TestLoadBaseURLs(t *testing.T) {
 func TestLoadBaseURLsEmpty(t *testing.T) {
 	clearConfigEnv(t)
 
-	cfg, err := Load(nil)
+	cfg, err := Load("", nil)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
 
 	if len(cfg.BaseURLs) != 0 {
 		t.Errorf("BaseURLs = %v, want empty map", cfg.BaseURLs)
+	}
+}
+
+func TestLoadAgentConfig(t *testing.T) {
+	clearConfigEnv(t)
+
+	// Create a temporary agent directory with config.env and system-prompt.md.
+	agentDir := t.TempDir()
+	t.Setenv("HOME", agentDir) // GolemHome() uses ~ expansion
+
+	golemAgentDir := filepath.Join(agentDir, ".golem", "agents", "test-bot")
+	if err := os.MkdirAll(golemAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(golemAgentDir, "config.env"), []byte("GOLEM_MODEL=anthropic:claude-sonnet-4-20250514\nLARK_APP_ID=lark-test-123\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(golemAgentDir, "system-prompt.md"), []byte("You are a code reviewer."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load("test-bot", nil)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.AgentName != "test-bot" {
+		t.Errorf("AgentName = %q, want %q", cfg.AgentName, "test-bot")
+	}
+	if cfg.Model != "anthropic:claude-sonnet-4-20250514" {
+		t.Errorf("Model = %q, want %q", cfg.Model, "anthropic:claude-sonnet-4-20250514")
+	}
+	if cfg.LarkAppID != "lark-test-123" {
+		t.Errorf("LarkAppID = %q, want %q", cfg.LarkAppID, "lark-test-123")
+	}
+	if cfg.SystemPrompt != "You are a code reviewer." {
+		t.Errorf("SystemPrompt = %q, want %q", cfg.SystemPrompt, "You are a code reviewer.")
 	}
 }
 

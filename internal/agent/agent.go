@@ -434,10 +434,16 @@ func (a *AgentLoop) buildSystemPrompt() string {
 	b.WriteString("When you need to perform actions, use the available tools. ")
 	b.WriteString("Always explain what you're doing before using tools.\n\n")
 
-	// Custom system prompt from workspace.
-	if data, err := os.ReadFile(".agent/system-prompt.md"); err == nil {
-		b.WriteString(strings.TrimSpace(string(data)))
+	// Custom system prompt: prefer per-agent config, fall back to workspace file.
+	switch {
+	case a.config.SystemPrompt != "":
+		b.WriteString(a.config.SystemPrompt)
 		b.WriteByte('\n')
+	default:
+		if data, err := os.ReadFile(".agent/system-prompt.md"); err == nil {
+			b.WriteString(strings.TrimSpace(string(data)))
+			b.WriteByte('\n')
+		}
 	}
 
 	return b.String()

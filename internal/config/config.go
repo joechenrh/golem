@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,8 +15,17 @@ var validLogLevels = map[string]bool{
 	"debug": true, "info": true, "warn": true, "error": true,
 }
 
-// Config holds all configuration for the golem agent.
+// GolemHome returns the root golem configuration directory (~/.golem).
+func GolemHome() string {
+	return expandHome("~/.golem")
+}
+
+// Config holds all configuration for a golem agent.
 type Config struct {
+	// Identity
+	AgentName    string // agent name (empty = default)
+	SystemPrompt string // custom system prompt loaded from agent dir
+
 	// LLM
 	Model    string            // e.g. "openai:gpt-4o", "anthropic:claude-sonnet-4-20250514"
 	APIKeys  map[string]string // provider name -> API key
@@ -62,12 +70,18 @@ type Config struct {
 // Load reads config from all sources with the following precedence:
 //
 //  1. flagOverrides (CLI flags, only non-empty values)
-//  2. Environment variables / .env file
-//  3. Hardcoded defaults
-func Load(flagOverrides map[string]string) (*Config, error) {
-	loadDotenvFiles()
+//  2. Environment variables set in the shell
+//  3. Per-agent config: ~/.golem/agents/<agentName>/config.env
+//  4. Global config:    ~/.golem/.env
+//  5. Local workspace:  .env
+//  6. Hardcoded defaults
+//
+// agentName selects the per-agent directory; pass "" for defaults only.
+func Load(agentName string, flagOverrides map[string]string) (*Config, error) {
+	loadDotenvFiles(agentName)
 
 	cfg := &Config{
+		AgentName:        agentName,
 		Model:            env("GOLEM_MODEL", "openai:gpt-4o"),
 		MaxToolIter:      envInt("GOLEM_MAX_TOOL_ITER", 15),
 		ShellTimeout:     envDuration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
@@ -113,6 +127,14 @@ func Load(flagOverrides map[string]string) (*Config, error) {
 
 	applyFlagOverrides(cfg, flagOverrides)
 
+	// Load per-agent system prompt if present.
+	if agentName != "" {
+		promptPath := filepath.Join(GolemHome(), "agents", agentName, "system-prompt.md")
+		if data, err := os.ReadFile(promptPath); err == nil {
+			cfg.SystemPrompt = strings.TrimSpace(string(data))
+		}
+	}
+
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -138,14 +160,22 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// loadDotenvFiles loads .env, ignoring if missing.
-func loadDotenvFiles() {
-	if err := godotenv.Load(".env"); err != nil && !errors.Is(err, os.ErrNotExist) {
-		// Ignore path errors (file not found).
-		if _, ok := err.(*os.PathError); ok {
-			return
-		}
+// loadDotenvFiles loads .env files in increasing priority order.
+// godotenv.Load only sets vars that are NOT already in the environment,
+// so earlier loads take precedence. Loading order:
+//  1. Per-agent config.env (highest dotenv priority)
+//  2. Global ~/.golem/.env
+//  3. Local .env (lowest dotenv priority)
+func loadDotenvFiles(agentName string) {
+	// Per-agent config (highest dotenv priority).
+	if agentName != "" {
+		agentEnv := filepath.Join(GolemHome(), "agents", agentName, "config.env")
+		_ = godotenv.Load(agentEnv)
 	}
+	// Global config.
+	_ = godotenv.Load(filepath.Join(GolemHome(), ".env"))
+	// Local workspace .env (lowest dotenv priority).
+	_ = godotenv.Load(".env")
 }
 
 // applyFlagOverrides applies CLI flag overrides (highest precedence).
