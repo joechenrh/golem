@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -89,13 +90,47 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 		return err
 	})
 
-	// Message processor.
+	// Message processor: CLI messages are handled inline (single user),
+	// remote channel messages are dispatched concurrently per channel ID
+	// so that different chats are processed in parallel while messages
+	// within the same chat remain serialized.
 	g.Go(func() error {
-		for msg := range inCh {
-			if inst.processMessage(gctx, msg) {
-				gcancel()
-				return ErrAgentQuit
+		chatQueues := make(map[string]chan channel.IncomingMessage)
+		var chatWG sync.WaitGroup
+		defer func() {
+			// Close all per-chat queues and wait for goroutines to drain.
+			for _, q := range chatQueues {
+				close(q)
 			}
+			chatWG.Wait()
+		}()
+
+		for msg := range inCh {
+			// CLI messages are processed inline — single user, no concurrency.
+			if msg.ChannelName == "cli" {
+				if inst.processMessage(gctx, msg) {
+					gcancel()
+					return ErrAgentQuit
+				}
+				continue
+			}
+
+			// Remote messages: dispatch to a per-channelID goroutine.
+			q, ok := chatQueues[msg.ChannelID]
+			if !ok {
+				q = make(chan channel.IncomingMessage, 16)
+				chatQueues[msg.ChannelID] = q
+				chatWG.Add(1)
+				go func(ch <-chan channel.IncomingMessage) {
+					defer chatWG.Done()
+					for m := range ch {
+						if inst.processMessage(gctx, m) {
+							gcancel()
+						}
+					}
+				}(q)
+			}
+			q <- msg
 		}
 		return nil
 	})
