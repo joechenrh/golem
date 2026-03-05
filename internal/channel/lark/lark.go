@@ -66,6 +66,9 @@ func (l *LarkChannel) Name() string { return "lark" }
 
 // Start connects to Lark via WebSocket and dispatches incoming messages to inCh.
 // Blocks until the context is cancelled or the connection is permanently lost.
+//
+// Note: the Lark SDK's wsClient.Start blocks with a bare select{} and ignores
+// context cancellation, so we run it in a goroutine and return when ctx is done.
 func (l *LarkChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMessage) error {
 	sdkLogger := &zapLarkLogger{z: l.logger.Named("lark-ws")}
 
@@ -80,7 +83,17 @@ func (l *LarkChannel) Start(ctx context.Context, inCh chan<- channel.IncomingMes
 		larkws.WithLogger(sdkLogger),
 	)
 
-	return wsClient.Start(ctx)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- wsClient.Start(ctx)
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (l *LarkChannel) onMessageReceive(event *larkim.P2MessageReceiveV1, inCh chan<- channel.IncomingMessage) {

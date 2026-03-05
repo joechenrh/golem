@@ -45,21 +45,28 @@ type AgentInstance struct {
 }
 
 // Run starts all channels, processes incoming messages, and blocks until the
-// agent is done. It uses two errgroups:
+// agent is done. It uses an explicit cancel and two errgroups:
 //   - An inner plain errgroup tracks channel goroutines; when all channels
 //     exit, inCh is closed so the message processor drains and returns.
-//   - An outer WithContext errgroup ties the message processor and the channel
-//     closer together; if processMessage signals quit, gctx is cancelled,
-//     stopping all channels.
+//   - An outer plain errgroup ties the message processor and the channel
+//     closer together.
+//
+// gcancel is called when any channel exits (e.g. CLI EOF) or when the user
+// types ,quit, ensuring all remaining channels stop promptly.
 func (inst *AgentInstance) Run(ctx context.Context) error {
 	inCh := make(chan channel.IncomingMessage, 100)
-	g, gctx := errgroup.WithContext(ctx)
+	gctx, gcancel := context.WithCancel(ctx)
+	defer gcancel()
+
+	var g errgroup.Group
 
 	// Inner errgroup: tracks when all channel writers finish.
 	var cg errgroup.Group
 	for _, ch := range inst.Channels {
 		cg.Go(func() error {
 			err := ch.Start(gctx, inCh)
+			// Any channel exiting should stop all others (e.g. CLI EOF).
+			gcancel()
 			if errors.Is(err, context.Canceled) {
 				return nil
 			}
@@ -78,6 +85,7 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 	g.Go(func() error {
 		for msg := range inCh {
 			if inst.processMessage(gctx, msg) {
+				gcancel()
 				return ErrAgentQuit
 			}
 		}
