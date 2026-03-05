@@ -23,13 +23,18 @@ type Store interface {
 	Info() TapeInfo
 }
 
-// FileStore is a JSONL-backed tape store.
+// FileStore is a JSONL-backed tape store with an in-memory cache.
+// Entries are loaded from disk once on creation and kept in sync by Append.
+// This avoids re-reading and re-parsing the entire file on every Entries() call.
 type FileStore struct {
-	path string
-	mu   sync.Mutex
+	path    string
+	mu      sync.Mutex
+	entries []TapeEntry // in-memory cache, authoritative after initial load
 }
 
 // NewFileStore creates or opens a JSONL tape file at the given path.
+// If the file already contains entries (session restore), they are loaded
+// into the in-memory cache.
 func NewFileStore(path string) (*FileStore, error) {
 	// Ensure the file exists.
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0644)
@@ -38,7 +43,16 @@ func NewFileStore(path string) (*FileStore, error) {
 	}
 	f.Close()
 
-	return &FileStore{path: path}, nil
+	s := &FileStore{path: path}
+
+	// Load existing entries from disk into the cache.
+	entries, err := s.loadFromDisk()
+	if err != nil {
+		return nil, fmt.Errorf("tape: loading existing entries: %w", err)
+	}
+	s.entries = entries
+
+	return s, nil
 }
 
 func (s *FileStore) Append(entry TapeEntry) error {
@@ -66,6 +80,9 @@ func (s *FileStore) Append(entry TapeEntry) error {
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		return fmt.Errorf("tape: write entry: %w", err)
 	}
+
+	// Update in-memory cache after successful disk write.
+	s.entries = append(s.entries, entry)
 	return nil
 }
 
@@ -73,21 +90,19 @@ func (s *FileStore) Entries() ([]TapeEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.readEntries()
+	// Return a copy to prevent callers from mutating the cache.
+	result := make([]TapeEntry, len(s.entries))
+	copy(result, s.entries)
+	return result, nil
 }
 
 func (s *FileStore) Search(query string) ([]TapeEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entries, err := s.readEntries()
-	if err != nil {
-		return nil, err
-	}
-
 	lower := strings.ToLower(query)
 	var results []TapeEntry
-	for _, e := range entries {
+	for _, e := range s.entries {
 		data, err := json.Marshal(e.Payload)
 		if err != nil {
 			continue
@@ -103,14 +118,9 @@ func (s *FileStore) EntriesSince(anchorID string) ([]TapeEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entries, err := s.readEntries()
-	if err != nil {
-		return nil, err
-	}
-
 	// Find the anchor.
 	anchorIdx := -1
-	for i, e := range entries {
+	for i, e := range s.entries {
 		if e.ID == anchorID {
 			anchorIdx = i
 			break
@@ -122,24 +132,24 @@ func (s *FileStore) EntriesSince(anchorID string) ([]TapeEntry, error) {
 	}
 
 	// Return entries after the anchor.
-	if anchorIdx+1 >= len(entries) {
+	if anchorIdx+1 >= len(s.entries) {
 		return nil, nil
 	}
-	return entries[anchorIdx+1:], nil
+
+	after := s.entries[anchorIdx+1:]
+	result := make([]TapeEntry, len(after))
+	copy(result, after)
+	return result, nil
 }
 
 func (s *FileStore) LastAnchor() (*TapeEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entries, err := s.readEntries()
-	if err != nil {
-		return nil, err
-	}
-
-	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].Kind == KindAnchor {
-			return &entries[i], nil
+	for i := len(s.entries) - 1; i >= 0; i-- {
+		if s.entries[i].Kind == KindAnchor {
+			e := s.entries[i]
+			return &e, nil
 		}
 	}
 	return nil, nil
@@ -158,18 +168,13 @@ func (s *FileStore) Info() TapeInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entries, err := s.readEntries()
-	if err != nil {
-		return TapeInfo{FilePath: s.path}
-	}
-
 	info := TapeInfo{
-		TotalEntries: len(entries),
+		TotalEntries: len(s.entries),
 		FilePath:     s.path,
 	}
 
 	lastAnchorIdx := -1
-	for i, e := range entries {
+	for i, e := range s.entries {
 		if e.Kind == KindAnchor {
 			info.AnchorCount++
 			lastAnchorIdx = i
@@ -177,16 +182,16 @@ func (s *FileStore) Info() TapeInfo {
 	}
 
 	if lastAnchorIdx >= 0 {
-		info.EntriesSinceAnchor = len(entries) - lastAnchorIdx - 1
+		info.EntriesSinceAnchor = len(s.entries) - lastAnchorIdx - 1
 	} else {
-		info.EntriesSinceAnchor = len(entries)
+		info.EntriesSinceAnchor = len(s.entries)
 	}
 
 	return info
 }
 
-// readEntries reads all entries from the JSONL file. Must be called with mu held.
-func (s *FileStore) readEntries() ([]TapeEntry, error) {
+// loadFromDisk reads all entries from the JSONL file. Called once during NewFileStore.
+func (s *FileStore) loadFromDisk() ([]TapeEntry, error) {
 	f, err := os.Open(s.path)
 	if err != nil {
 		return nil, fmt.Errorf("tape: open for read: %w", err)

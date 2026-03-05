@@ -296,3 +296,39 @@ func TestGracefulRecovery_InvalidJSON(t *testing.T) {
 		t.Errorf("len(entries) = %d, want 2 (invalid line skipped)", len(entries))
 	}
 }
+
+func TestSessionRestore_LoadFromDisk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "restore.jsonl")
+
+	// Create a store and write some entries.
+	s1, err := NewFileStore(path)
+	if err != nil {
+		t.Fatalf("NewFileStore() error: %v", err)
+	}
+	s1.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "msg1"}})
+	s1.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "msg2"}})
+
+	// Open a new store from the same file — simulates session restore.
+	s2, err := NewFileStore(path)
+	if err != nil {
+		t.Fatalf("NewFileStore() error: %v", err)
+	}
+
+	entries, err := s2.Entries()
+	if err != nil {
+		t.Fatalf("Entries() error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("len(entries) = %d, want 2", len(entries))
+	}
+	if entries[0].Payload["content"] != "msg1" {
+		t.Errorf("entries[0] content = %v, want msg1", entries[0].Payload["content"])
+	}
+
+	// Append to the restored store and verify.
+	s2.Append(TapeEntry{Kind: KindMessage, Payload: map[string]any{"content": "msg3"}})
+	entries, _ = s2.Entries()
+	if len(entries) != 3 {
+		t.Fatalf("len(entries) after append = %d, want 3", len(entries))
+	}
+}
