@@ -25,6 +25,7 @@ import (
 	"github.com/joechenrh/golem/internal/hooks"
 	"github.com/joechenrh/golem/internal/llm"
 	"github.com/joechenrh/golem/internal/memory"
+	"github.com/joechenrh/golem/internal/redact"
 	"github.com/joechenrh/golem/internal/tape"
 	"github.com/joechenrh/golem/internal/tools"
 	"github.com/joechenrh/golem/internal/tools/builtin"
@@ -385,6 +386,9 @@ func buildToolRegistry(
 	if err := registry.DiscoverSkills(cfg.SkillsDir); err != nil {
 		logger.Debug("skills discovery", zap.Error(err))
 	}
+
+	// Redact secrets from tool outputs before they reach the tape/LLM.
+	registry.Use(redact.Middleware(redact.New()))
 
 	return registry
 }

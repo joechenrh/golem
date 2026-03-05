@@ -88,7 +88,7 @@ make clean    # remove build artifacts
   - Tool execution inline with name, arguments, and a spinner/status while running
   - Visual separators (blank lines) between each agent reasoning block
   - Per-session token usage (input/output tokens and cumulative totals, shown after each turn or via `,usage`)
-- [ ] **Redact secrets before sending to LLM** — Detect and mask sensitive values (API keys, passwords, tokens) in config files and tool outputs before they are included in the LLM context, preventing accidental credential leakage.
+- [x] **Redact secrets before sending to LLM** — Detect and mask sensitive values (API keys, passwords, tokens) in config files and tool outputs before they are included in the LLM context, preventing accidental credential leakage.
 
 ## Acknowledgements
 
