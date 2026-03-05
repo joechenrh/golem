@@ -27,6 +27,7 @@ import (
 	"github.com/joechenrh/golem/internal/hooks"
 	"github.com/joechenrh/golem/internal/llm"
 	"github.com/joechenrh/golem/internal/memory"
+	"github.com/joechenrh/golem/internal/middleware"
 	"github.com/joechenrh/golem/internal/redact"
 	"github.com/joechenrh/golem/internal/tape"
 	"github.com/joechenrh/golem/internal/tools"
@@ -450,13 +451,13 @@ func BuildToolRegistry(
 	}
 
 	// Cache read-only tool results to avoid redundant calls.
-	cache := tools.NewCacheMiddleware(60*time.Second, []string{
+	cache := middleware.NewCacheMiddleware(60*time.Second, []string{
 		"read_file", "list_directory", "search_files", "web_search", "web_fetch",
 	})
 	registry.Use(cache.Middleware())
 
 	// Redact secrets from tool outputs before they reach the tape/LLM.
-	registry.Use(redact.Middleware(redact.New()))
+	registry.Use(middleware.Redact(redact.New()))
 
 	return registry
 }

@@ -1,7 +1,6 @@
 package redact
 
 import (
-	"context"
 	"testing"
 )
 
@@ -140,42 +139,5 @@ func TestRedact_Idempotent(t *testing.T) {
 	second := r.Redact(first)
 	if first != second {
 		t.Errorf("not idempotent: first=%q, second=%q", first, second)
-	}
-}
-
-func TestMiddleware(t *testing.T) {
-	r := New()
-	mw := Middleware(r)
-
-	next := func(_ context.Context, args string) (string, error) {
-		return "API_KEY=sk-proj-abc123def456ghi789jkl found", nil
-	}
-
-	got, err := mw(context.Background(), "shell_exec", "{}", next)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "API_KEY=[REDACTED:env_secret] found"
-	if got != want {
-		t.Errorf("middleware: got %q, want %q", got, want)
-	}
-}
-
-func TestMiddleware_Error(t *testing.T) {
-	r := New()
-	mw := Middleware(r)
-
-	wantErr := context.DeadlineExceeded
-	next := func(_ context.Context, args string) (string, error) {
-		return "API_KEY=secret123", wantErr
-	}
-
-	got, err := mw(context.Background(), "shell_exec", "{}", next)
-	if err != wantErr {
-		t.Fatalf("expected error %v, got %v", wantErr, err)
-	}
-	// On error, result is returned as-is (not redacted).
-	if got != "API_KEY=secret123" {
-		t.Errorf("on error, result should not be redacted: got %q", got)
 	}
 }

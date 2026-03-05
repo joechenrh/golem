@@ -1,13 +1,13 @@
-package redact
+package middleware
 
 import (
 	"context"
 
-	"github.com/joechenrh/golem/internal/tools"
+	"github.com/joechenrh/golem/internal/redact"
 )
 
-// Middleware returns a tools.Middleware that redacts secrets from tool results.
-func Middleware(r *Redactor) tools.Middleware {
+// Redact returns a Middleware that redacts secrets from tool results.
+func Redact(r *redact.Redactor) Middleware {
 	return func(ctx context.Context, toolName, args string,
 		next func(context.Context, string) (string, error)) (string, error) {
 		result, err := next(ctx, args)

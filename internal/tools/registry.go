@@ -8,21 +8,18 @@ import (
 	"strings"
 
 	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/middleware"
 )
 
 // compactParams is a minimal JSON Schema used for unexpanded tools to save tokens.
 var compactParams = json.RawMessage(`{"type":"object","properties":{}}`)
-
-// Middleware wraps tool execution with cross-cutting behavior.
-// Call next(ctx, args) to proceed to the next middleware or the actual tool.
-type Middleware func(ctx context.Context, toolName string, args string, next func(context.Context, string) (string, error)) (string, error)
 
 // Registry holds registered tools and manages progressive disclosure state.
 type Registry struct {
 	tools       map[string]Tool
 	expanded    map[string]bool
 	order       []string // insertion order for deterministic listing
-	middlewares []Middleware
+	middlewares []middleware.Middleware
 }
 
 // NewRegistry creates an empty tool registry.
@@ -51,7 +48,7 @@ func (r *Registry) RegisterAll(tools ...Tool) {
 
 // Use adds a middleware to the execution chain.
 // Middlewares are called in registration order, wrapping the tool's Execute method.
-func (r *Registry) Use(mw Middleware) {
+func (r *Registry) Use(mw middleware.Middleware) {
 	r.middlewares = append(r.middlewares, mw)
 }
 
