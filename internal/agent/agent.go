@@ -147,6 +147,7 @@ func (a *AgentLoop) runReActLoop(ctx context.Context, stream bool, tokenCh chan<
 func looksLikePlan(content string) bool {
 	lower := strings.ToLower(content)
 	intentPhrases := []string{
+		// English
 		"i'll ", "i will ", "let me ", "i'm going to ",
 		"i'll\n", "i will\n", "let me\n",
 		"first, i'll", "first, let me",
@@ -154,6 +155,18 @@ func looksLikePlan(content string) bool {
 	}
 	for _, phrase := range intentPhrases {
 		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	// Chinese intent phrases (no lowercasing needed).
+	cnPhrases := []string{
+		"我会", "我将", "我来", "让我",
+		"马上", "正在", "稍等", "请稍",
+		"收到", "好的，我",
+		"首先", "接下来我",
+	}
+	for _, phrase := range cnPhrases {
+		if strings.Contains(content, phrase) {
 			return true
 		}
 	}
