@@ -65,8 +65,10 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 
 	// Start periodic session eviction if sessions are enabled.
 	if inst.Sessions != nil {
+		inst.Sessions.SetBaseContext(gctx)
 		inst.Sessions.StartEvictionLoop(gctx,
 			10*time.Minute, inst.Config.SessionIdleTime)
+		defer inst.Sessions.Shutdown()
 	}
 
 	var g errgroup.Group
@@ -154,10 +156,12 @@ func (inst *AgentInstance) processMessage(ctx context.Context, msg channel.Incom
 	}
 
 	// Select the appropriate AgentLoop: per-chat session for remote channels,
-	// the shared loop for CLI.
+	// the shared loop for CLI. For sessions, use the session's context so that
+	// eviction cancels in-flight work.
 	loop := inst.Loop
+	loopCtx := ctx
 	if inst.Sessions != nil && msg.ChannelName != "cli" {
-		loop = inst.Sessions.GetOrCreate(msg.ChannelID)
+		loop, loopCtx = inst.Sessions.GetOrCreate(msg.ChannelID)
 	}
 
 	if ch.SupportsStreaming() {
@@ -166,12 +170,12 @@ func (inst *AgentInstance) processMessage(ctx context.Context, msg channel.Incom
 		streamDone := make(chan struct{})
 		go func() {
 			defer close(streamDone)
-			if err := ch.SendStream(ctx, msg.ChannelID, tokenCh); err != nil {
+			if err := ch.SendStream(loopCtx, msg.ChannelID, tokenCh); err != nil {
 				inst.Logger.Error("stream send error", zap.Error(err))
 			}
 		}()
 
-		err := loop.HandleInputStream(ctx, msg, tokenCh)
+		err := loop.HandleInputStream(loopCtx, msg, tokenCh)
 		close(tokenCh)
 		<-streamDone
 		if err != nil {
@@ -181,7 +185,7 @@ func (inst *AgentInstance) processMessage(ctx context.Context, msg channel.Incom
 			inst.logOrPrintError(ch, "Error: "+err.Error())
 		}
 	} else {
-		response, err := loop.HandleInput(ctx, msg)
+		response, err := loop.HandleInput(loopCtx, msg)
 		if err != nil {
 			if errors.Is(err, agent.ErrQuit) {
 				return true
@@ -189,7 +193,7 @@ func (inst *AgentInstance) processMessage(ctx context.Context, msg channel.Incom
 			inst.logOrPrintError(ch, "Error: "+err.Error())
 			return false
 		}
-		if err := ch.Send(ctx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response}); err != nil {
+		if err := ch.Send(loopCtx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response}); err != nil {
 			inst.Logger.Error("send error", zap.Error(err))
 		}
 	}

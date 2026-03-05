@@ -21,6 +21,8 @@ import (
 // session holds a per-chat AgentLoop and tracks when it was last used.
 type session struct {
 	loop       *AgentLoop
+	ctx        context.Context    // cancelled on eviction or shutdown
+	cancel     context.CancelFunc // cancels ctx
 	lastAccess time.Time
 	tapePath   string
 }
@@ -42,6 +44,7 @@ type SessionManager struct {
 	sessions map[string]*session
 	factory  SessionFactory
 	logger   *zap.Logger
+	baseCtx  context.Context // parent context for all session contexts
 }
 
 // NewSessionManager creates a SessionManager with the given factory settings.
@@ -50,18 +53,28 @@ func NewSessionManager(factory SessionFactory, logger *zap.Logger) *SessionManag
 		sessions: make(map[string]*session),
 		factory:  factory,
 		logger:   logger,
+		baseCtx:  context.Background(),
 	}
 }
 
-// GetOrCreate returns the AgentLoop for the given channelID, creating a new
-// session with its own tape file and tool registry if one doesn't exist.
-func (sm *SessionManager) GetOrCreate(channelID string) *AgentLoop {
+// SetBaseContext sets the parent context for all future session contexts.
+// Existing sessions are not re-parented; call before GetOrCreate.
+func (sm *SessionManager) SetBaseContext(ctx context.Context) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.baseCtx = ctx
+}
+
+// GetOrCreate returns the AgentLoop and session context for the given channelID,
+// creating a new session with its own tape file and tool registry if one doesn't
+// exist. The returned context is cancelled when the session is evicted or shut down.
+func (sm *SessionManager) GetOrCreate(channelID string) (*AgentLoop, context.Context) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
 	if s, ok := sm.sessions[channelID]; ok {
 		s.lastAccess = time.Now()
-		return s.loop
+		return s.loop, s.ctx
 	}
 
 	// Enforce max sessions cap by evicting the oldest idle session.
@@ -74,19 +87,21 @@ func (sm *SessionManager) GetOrCreate(channelID string) *AgentLoop {
 	if err != nil {
 		sm.logger.Error("failed to create session, using fallback",
 			zap.String("channel_id", channelID), zap.Error(err))
-		// Return a best-effort session — caller will get an error on first LLM call.
-		return loop
+		return loop, sm.baseCtx
 	}
 
+	ctx, cancel := context.WithCancel(sm.baseCtx)
 	sm.sessions[channelID] = &session{
 		loop:       loop,
+		ctx:        ctx,
+		cancel:     cancel,
 		lastAccess: time.Now(),
 		tapePath:   tapePath,
 	}
 	sm.logger.Info("created new session",
 		zap.String("channel_id", channelID), zap.String("tape", tapePath))
 
-	return loop
+	return loop, ctx
 }
 
 // createSession builds a new AgentLoop with a fresh tape and tool registry.
@@ -178,8 +193,11 @@ func (sm *SessionManager) LoadExisting(tapeDir string) error {
 			continue
 		}
 
+		ctx, cancel := context.WithCancel(sm.baseCtx)
 		sm.sessions[chatID] = &session{
 			loop:       loop,
+			ctx:        ctx,
+			cancel:     cancel,
 			lastAccess: info.ModTime(),
 			tapePath:   tapePath,
 		}
@@ -201,6 +219,7 @@ func (sm *SessionManager) evictOldestLocked() {
 		}
 	}
 	if oldestID != "" {
+		sm.sessions[oldestID].cancel()
 		delete(sm.sessions, oldestID)
 		sm.logger.Info("evicted oldest session to make room", zap.String("channel_id", oldestID))
 	}
@@ -215,6 +234,7 @@ func (sm *SessionManager) EvictIdle(maxAge time.Duration) int {
 	evicted := 0
 	for id, s := range sm.sessions {
 		if s.lastAccess.Before(cutoff) {
+			s.cancel()
 			delete(sm.sessions, id)
 			evicted++
 			sm.logger.Info("evicted idle session", zap.String("channel_id", id))
@@ -241,6 +261,17 @@ func (sm *SessionManager) StartEvictionLoop(ctx context.Context, interval, maxAg
 			}
 		}
 	}()
+}
+
+// Shutdown cancels all in-flight session work and clears the session map.
+func (sm *SessionManager) Shutdown() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	for id, s := range sm.sessions {
+		s.cancel()
+		delete(sm.sessions, id)
+	}
+	sm.logger.Info("all sessions shut down")
 }
 
 // Len returns the number of active sessions.
