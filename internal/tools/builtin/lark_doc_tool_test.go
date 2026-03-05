@@ -94,3 +94,36 @@ func TestLarkReadDocToolMetadata(t *testing.T) {
 		t.Errorf("Parameters() is not valid JSON: %v", err)
 	}
 }
+
+func TestLarkWriteDocToolMetadata(t *testing.T) {
+	tool := &LarkWriteDocTool{}
+
+	if tool.Name() != "lark_write_doc" {
+		t.Errorf("Name() = %q, want %q", tool.Name(), "lark_write_doc")
+	}
+	if tool.Description() == "" {
+		t.Error("Description() should not be empty")
+	}
+	if tool.FullDescription() == "" {
+		t.Error("FullDescription() should not be empty")
+	}
+	if tool.Parameters() == nil {
+		t.Error("Parameters() should not be nil")
+	}
+
+	// Verify parameters JSON is valid and has required fields.
+	var params map[string]any
+	if err := json.Unmarshal(tool.Parameters(), &params); err != nil {
+		t.Errorf("Parameters() is not valid JSON: %v", err)
+	}
+	props, ok := params["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("Parameters() missing 'properties'")
+	}
+	if _, ok := props["document_id"]; !ok {
+		t.Error("Parameters() missing 'document_id' property")
+	}
+	if _, ok := props["content"]; !ok {
+		t.Error("Parameters() missing 'content' property")
+	}
+}

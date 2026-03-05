@@ -121,6 +121,25 @@ curl -s -X POST 'https://open.feishu.cn/open-apis/drive/v1/import_tasks' \
 | 99991664 | Rate limited | Wait a moment and retry. |
 | 99991663 | Invalid token | The tenant_access_token has expired. Re-authenticate. |
 
+## Read-Modify-Write Workflow
+
+Use `lark_read_doc` and `lark_write_doc` together to update document content:
+
+1. **Read** the current content with `lark_read_doc`
+2. **Modify** the text as needed (fix errors, translate, restructure, etc.)
+3. **Write** the modified content back with `lark_write_doc`
+
+**Warning**: `lark_write_doc` replaces ALL content in the document. Always read first to avoid data loss.
+
+Example flow:
+```
+→ lark_read_doc(document_id: "ABC123")
+← "Original document text..."
+→ (modify the text)
+→ lark_write_doc(document_id: "ABC123", content: "Updated document text...")
+← "Document content updated successfully."
+```
+
 ## Workflow Examples
 
 ### User asks to read a wiki page

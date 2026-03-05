@@ -308,6 +308,89 @@ func (l *LarkChannel) ReadDocContent(ctx context.Context, documentID string) (st
 	return *resp.Data.Content, nil
 }
 
+// WriteDocContent replaces all content in a Feishu document with the given plain text.
+// It deletes all existing blocks and creates new text blocks from the content.
+func (l *LarkChannel) WriteDocContent(ctx context.Context, documentID, content string) error {
+	// 1. Get root block to find children count.
+	getReq := larkdocx.NewGetDocumentBlockReqBuilder().
+		DocumentId(documentID).
+		BlockId(documentID).
+		DocumentRevisionId(-1).
+		Build()
+
+	getResp, err := l.client.Docx.V1.DocumentBlock.Get(ctx, getReq)
+	if err != nil {
+		return fmt.Errorf("lark write doc: get root block: %w", err)
+	}
+	if !getResp.Success() {
+		return fmt.Errorf("lark write doc: get root block: code=%d msg=%s", getResp.Code, getResp.Msg)
+	}
+
+	// 2. Delete all existing children.
+	childCount := len(getResp.Data.Block.Children)
+	if childCount > 0 {
+		startIdx := 0
+		endIdx := childCount
+		delReq := larkdocx.NewBatchDeleteDocumentBlockChildrenReqBuilder().
+			DocumentId(documentID).
+			BlockId(documentID).
+			DocumentRevisionId(-1).
+			Body(&larkdocx.BatchDeleteDocumentBlockChildrenReqBody{
+				StartIndex: &startIdx,
+				EndIndex:   &endIdx,
+			}).
+			Build()
+
+		delResp, err := l.client.Docx.V1.DocumentBlockChildren.BatchDelete(ctx, delReq)
+		if err != nil {
+			return fmt.Errorf("lark write doc: delete children: %w", err)
+		}
+		if !delResp.Success() {
+			return fmt.Errorf("lark write doc: delete children: code=%d msg=%s", delResp.Code, delResp.Msg)
+		}
+	}
+
+	// 3. Create new text blocks from content.
+	lines := strings.Split(content, "\n")
+	var blocks []*larkdocx.Block
+	for _, line := range lines {
+		block := larkdocx.NewBlockBuilder().
+			BlockType(2). // text block
+			Text(larkdocx.NewTextBuilder().
+				Elements([]*larkdocx.TextElement{
+					larkdocx.NewTextElementBuilder().
+						TextRun(larkdocx.NewTextRunBuilder().
+							Content(line).
+							Build()).
+						Build(),
+				}).
+				Build()).
+			Build()
+		blocks = append(blocks, block)
+	}
+
+	insertIdx := 0
+	createReq := larkdocx.NewCreateDocumentBlockChildrenReqBuilder().
+		DocumentId(documentID).
+		BlockId(documentID).
+		DocumentRevisionId(-1).
+		Body(&larkdocx.CreateDocumentBlockChildrenReqBody{
+			Children: blocks,
+			Index:    &insertIdx,
+		}).
+		Build()
+
+	createResp, err := l.client.Docx.V1.DocumentBlockChildren.Create(ctx, createReq)
+	if err != nil {
+		return fmt.Errorf("lark write doc: create blocks: %w", err)
+	}
+	if !createResp.Success() {
+		return fmt.Errorf("lark write doc: create blocks: code=%d msg=%s", createResp.Code, createResp.Msg)
+	}
+
+	return nil
+}
+
 // ChatInfo holds basic group chat metadata.
 type ChatInfo struct {
 	ChatID      string

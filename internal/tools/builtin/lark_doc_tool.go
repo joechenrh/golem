@@ -71,6 +71,77 @@ func (t *LarkReadDocTool) Execute(ctx context.Context, args string) (string, err
 	return content, nil
 }
 
+// LarkWriteDocTool lets the agent write/replace content in a Feishu document.
+type LarkWriteDocTool struct {
+	ch *larkchan.LarkChannel
+}
+
+func NewLarkWriteDocTool(ch *larkchan.LarkChannel) *LarkWriteDocTool {
+	return &LarkWriteDocTool{ch: ch}
+}
+
+func (t *LarkWriteDocTool) Name() string { return "lark_write_doc" }
+func (t *LarkWriteDocTool) Description() string {
+	return "Replace all content of a Feishu document with new text"
+}
+func (t *LarkWriteDocTool) FullDescription() string {
+	return `Replace the entire content of a Feishu/Lark document with new plain text.
+
+WARNING: This tool REPLACES ALL existing content in the document. The previous content will be lost.
+
+Typical read-modify-write workflow:
+1. Use lark_read_doc to read the current content
+2. Modify the text as needed
+3. Use lark_write_doc to write the modified content back
+
+How to get the document_id from a Feishu URL:
+- Document URL: https://xxx.feishu.cn/docx/ABC123 → document_id is "ABC123"
+- You can also pass the full URL; the tool will extract the token automatically.
+
+IMPORTANT — Wiki URLs:
+- Wiki URL: https://xxx.feishu.cn/wiki/XYZ789 → the token is a wiki node token, NOT a document_id.
+- For wiki URLs, you must first resolve the wiki node token to a document_id.
+
+Common errors:
+- Code 99991672: The app does not have permission. Ask the user to grant edit access.
+- Code 99991668: Document not found. Check the document_id is correct.
+- Code 99991664: Rate limited. Wait and retry.`
+}
+
+var larkWriteDocParams = json.RawMessage(`{
+	"type": "object",
+	"properties": {
+		"document_id": {"type": "string", "description": "The document_id of the Feishu document, or a full Feishu document URL"},
+		"content": {"type": "string", "description": "The new plain text content to write to the document (replaces all existing content)"}
+	},
+	"required": ["document_id", "content"]
+}`)
+
+func (t *LarkWriteDocTool) Parameters() json.RawMessage { return larkWriteDocParams }
+
+func (t *LarkWriteDocTool) Execute(ctx context.Context, args string) (string, error) {
+	var params struct {
+		DocumentID string `json:"document_id"`
+		Content    string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
+		return "Error: invalid arguments: " + err.Error(), nil
+	}
+	if params.DocumentID == "" {
+		return "Error: 'document_id' is required", nil
+	}
+	if params.Content == "" {
+		return "Error: 'content' is required", nil
+	}
+
+	token := extractToken(params.DocumentID)
+
+	if err := t.ch.WriteDocContent(ctx, token, params.Content); err != nil {
+		return "Error: " + err.Error(), nil
+	}
+	return "Document content updated successfully.", nil
+}
+
 // extractToken extracts a bare token from a Feishu URL or returns the input as-is.
 // Supports URLs like:
 //
