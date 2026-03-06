@@ -227,6 +227,9 @@ func (l *LarkChannel) SupportsStreaming() bool { return true }
 const streamUpdateInterval = 800 * time.Millisecond
 
 // SendStream sends an initial card and patches it as tokens arrive.
+// Tokens are buffered and the card is updated at streamUpdateInterval.
+// The typing cursor (▍) is appended during streaming and removed on
+// the final update.
 func (l *LarkChannel) SendStream(
 	ctx context.Context, channelID string,
 	tokenCh <-chan string,
@@ -244,10 +247,10 @@ func (l *LarkChannel) SendStream(
 		select {
 		case tok, ok := <-tokenCh:
 			if !ok {
-				// Stream done. Final update.
-				if messageID != "" && dirty {
+				// Stream done. Final update without cursor.
+				if messageID != "" {
 					l.patchCard(ctx, messageID, sb.String())
-				} else if messageID == "" && sb.Len() > 0 {
+				} else if sb.Len() > 0 {
 					l.sendCard(ctx, chatID, sb.String())
 				}
 				return nil
@@ -255,24 +258,22 @@ func (l *LarkChannel) SendStream(
 			sb.WriteString(tok)
 			dirty = true
 
-			// Send initial card after first token batch.
-			if messageID == "" && sb.Len() > 0 {
-				id, err := l.sendCardReturnID(ctx, chatID, sb.String()+" ▍")
+		case <-ticker.C:
+			if !dirty || sb.Len() == 0 {
+				continue
+			}
+			content := sb.String() + " ▍"
+			if messageID == "" {
+				id, err := l.sendCardReturnID(ctx, chatID, content)
 				if err != nil {
 					l.logger.Warn("lark stream: failed to send initial card", zap.Error(err))
-					// Fall back to collecting everything.
-					messageID = ""
 					continue
 				}
 				messageID = id
-				dirty = false
+			} else {
+				l.patchCard(ctx, messageID, content)
 			}
-
-		case <-ticker.C:
-			if messageID != "" && dirty {
-				l.patchCard(ctx, messageID, sb.String()+" ▍")
-				dirty = false
-			}
+			dirty = false
 
 		case <-ctx.Done():
 			return ctx.Err()
