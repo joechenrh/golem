@@ -24,14 +24,18 @@ type Store interface {
 	Close() error
 }
 
+// MaxTapeFileSize is the default tape rotation threshold (50 MB).
+const MaxTapeFileSize int64 = 50 * 1024 * 1024
+
 // FileStore is a JSONL-backed tape store with an in-memory cache.
 // Entries are loaded from disk once on creation and kept in sync by Append.
 // A persistent file handle is used for appends to avoid open/close overhead.
 type FileStore struct {
-	path    string
-	mu      sync.Mutex
-	entries []TapeEntry // in-memory cache, authoritative after initial load
-	file    *os.File    // persistent append handle
+	path      string
+	mu        sync.Mutex
+	entries   []TapeEntry // in-memory cache, authoritative after initial load
+	file      *os.File    // persistent append handle
+	diskBytes int64       // current file size on disk
 }
 
 // NewFileStore creates or opens a JSONL tape file at the given path.
@@ -43,7 +47,13 @@ func NewFileStore(path string) (*FileStore, error) {
 		return nil, fmt.Errorf("tape: open %s: %w", path, err)
 	}
 
-	s := &FileStore{path: path, file: f}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("tape: stat %s: %w", path, err)
+	}
+
+	s := &FileStore{path: path, file: f, diskBytes: info.Size()}
 
 	// Load existing entries from disk into the cache.
 	entries, err := s.loadFromDisk()
@@ -72,12 +82,20 @@ func (s *FileStore) Append(entry TapeEntry) error {
 		return fmt.Errorf("tape: marshal entry: %w", err)
 	}
 
-	if _, err := s.file.Write(append(data, '\n')); err != nil {
+	line := append(data, '\n')
+	if _, err := s.file.Write(line); err != nil {
 		return fmt.Errorf("tape: write entry: %w", err)
 	}
+	s.diskBytes += int64(len(line))
 
 	// Update in-memory cache after successful disk write.
 	s.entries = append(s.entries, entry)
+
+	// Rotate if the file exceeds the size limit.
+	if s.diskBytes >= MaxTapeFileSize {
+		s.rotateLocked()
+	}
+
 	return nil
 }
 
@@ -220,4 +238,41 @@ func (s *FileStore) loadFromDisk() ([]TapeEntry, error) {
 	}
 
 	return entries, nil
+}
+
+// rotateLocked renames the current tape to a .bak file and starts fresh.
+// Must be called with s.mu held.
+func (s *FileStore) rotateLocked() {
+	// Close the current file handle.
+	s.file.Close()
+
+	// Rename to .bak (overwrites any previous backup).
+	backupPath := s.path + ".bak"
+	os.Rename(s.path, backupPath)
+
+	// Open a fresh file. On failure, reopen the backup to avoid data loss.
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		os.Rename(backupPath, s.path)
+		f, _ = os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	}
+	s.file = f
+	s.diskBytes = 0
+	// Keep only the last anchor and entries after it in memory.
+	s.entries = s.entriesFromLastAnchor()
+}
+
+// entriesFromLastAnchor returns entries from the last anchor onward,
+// or the most recent 100 entries if no anchor exists.
+func (s *FileStore) entriesFromLastAnchor() []TapeEntry {
+	for i := len(s.entries) - 1; i >= 0; i-- {
+		if s.entries[i].Kind == KindAnchor {
+			return s.entries[i:]
+		}
+	}
+	// No anchor — keep the tail.
+	if len(s.entries) > 100 {
+		return s.entries[len(s.entries)-100:]
+	}
+	return s.entries
 }
