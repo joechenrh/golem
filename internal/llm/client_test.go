@@ -823,3 +823,214 @@ func TestAnthropicChat_SystemPrompt(t *testing.T) {
 		t.Fatalf("Chat() error: %v", err)
 	}
 }
+
+// ─── Streaming Context Cancellation Tests ────────────────────────
+
+func TestOpenAIChatStream_ContextCancellation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+
+		// Send one chunk immediately, then stall with 1s delays.
+		chunks := []string{
+			`{"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{"content":" slow"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{"content":" world"},"finish_reason":null}]}`,
+		}
+		for _, c := range chunks {
+			fmt.Fprintf(w, "data: %s\n\n", c)
+			flusher.Flush()
+			time.Sleep(1 * time.Second)
+		}
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	client := newOpenAIClient("test-key", srv.URL)
+	ch, err := client.ChatStream(ctx, ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: "Hi"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatStream() error: %v", err)
+	}
+
+	var gotError bool
+	for ev := range ch {
+		if ev.Type == StreamError {
+			gotError = true
+			if !errors.Is(ev.Error, context.DeadlineExceeded) {
+				// The error may be wrapped; check that it relates to context cancellation.
+				if !strings.Contains(ev.Error.Error(), "context deadline exceeded") &&
+					!strings.Contains(ev.Error.Error(), "context canceled") {
+					t.Errorf("expected context deadline error, got: %v", ev.Error)
+				}
+			}
+		}
+		if ev.Type == StreamDone {
+			t.Error("should not receive StreamDone when context is cancelled")
+		}
+	}
+
+	// Either we got an error event, or the channel closed early due to context cancellation.
+	// Both are acceptable behaviors — the key is no panic or hang.
+	_ = gotError
+}
+
+func TestAnthropicChatStream_ContextCancellation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+
+		events := []struct{ event, data string }{
+			{"message_start", `{"type":"message_start"}`},
+			{"content_block_start", `{"index":0,"content_block":{"type":"text","text":""}}`},
+			{"content_block_delta", `{"index":0,"delta":{"type":"text_delta","text":"Hello"}}`},
+		}
+
+		for _, e := range events {
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.event, e.data)
+			flusher.Flush()
+			time.Sleep(1 * time.Second) // Slow delivery
+		}
+
+		// These should never be reached due to context timeout.
+		fmt.Fprintf(w, "event: content_block_stop\ndata: {\"index\":0}\n\n")
+		fmt.Fprintf(w, "event: message_stop\ndata: {}\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	client := newAnthropicClient("test-key", srv.URL)
+	ch, err := client.ChatStream(ctx, ChatRequest{
+		Model:    "claude-sonnet-4-20250514",
+		Messages: []Message{{Role: RoleUser, Content: "Hi"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatStream() error: %v", err)
+	}
+
+	var gotError bool
+	for ev := range ch {
+		if ev.Type == StreamError {
+			gotError = true
+			if !errors.Is(ev.Error, context.DeadlineExceeded) {
+				if !strings.Contains(ev.Error.Error(), "context deadline exceeded") &&
+					!strings.Contains(ev.Error.Error(), "context canceled") {
+					t.Errorf("expected context deadline error, got: %v", ev.Error)
+				}
+			}
+		}
+		if ev.Type == StreamDone {
+			t.Error("should not receive StreamDone when context is cancelled")
+		}
+	}
+
+	_ = gotError
+}
+
+// ─── Streaming Malformed SSE Tests ───────────────────────────────
+
+func TestOpenAIChatStream_MalformedSSE(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+
+		// Send valid chunk, then malformed JSON, then close.
+		fmt.Fprintf(w, "data: %s\n\n",
+			`{"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}`)
+		flusher.Flush()
+
+		// Malformed JSON in data field.
+		fmt.Fprintf(w, "data: {not valid json!!! missing quotes\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	client := newOpenAIClient("test-key", srv.URL)
+	ch, err := client.ChatStream(context.Background(), ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: "Hi"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatStream() error: %v", err)
+	}
+
+	var gotContent bool
+	var gotError bool
+	for ev := range ch {
+		switch ev.Type {
+		case StreamContentDelta:
+			gotContent = true
+		case StreamError:
+			gotError = true
+		}
+	}
+
+	// Should have received the valid content before the error.
+	if !gotContent {
+		t.Error("expected at least one content delta before the malformed data")
+	}
+	// Should have received an error for the malformed JSON.
+	if !gotError {
+		t.Error("expected StreamError for malformed JSON data")
+	}
+}
+
+func TestAnthropicChatStream_MalformedSSE(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+
+		// Send valid events, then malformed JSON, then close.
+		fmt.Fprintf(w, "event: message_start\ndata: %s\n\n", `{"type":"message_start"}`)
+		flusher.Flush()
+
+		fmt.Fprintf(w, "event: content_block_start\ndata: %s\n\n",
+			`{"index":0,"content_block":{"type":"text","text":""}}`)
+		flusher.Flush()
+
+		fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n",
+			`{"index":0,"delta":{"type":"text_delta","text":"Hello"}}`)
+		flusher.Flush()
+
+		// Malformed JSON in content_block_delta data field.
+		fmt.Fprintf(w, "event: content_block_delta\ndata: {broken json\n\n")
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	client := newAnthropicClient("test-key", srv.URL)
+	ch, err := client.ChatStream(context.Background(), ChatRequest{
+		Model:    "claude-sonnet-4-20250514",
+		Messages: []Message{{Role: RoleUser, Content: "Hi"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatStream() error: %v", err)
+	}
+
+	var gotContent bool
+	var gotError bool
+	for ev := range ch {
+		switch ev.Type {
+		case StreamContentDelta:
+			gotContent = true
+		case StreamError:
+			gotError = true
+		}
+	}
+
+	if !gotContent {
+		t.Error("expected at least one content delta before the malformed data")
+	}
+	if !gotError {
+		t.Error("expected StreamError for malformed JSON data")
+	}
+}
