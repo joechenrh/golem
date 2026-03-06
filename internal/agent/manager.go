@@ -62,13 +62,13 @@ func (sm *SessionManager) SetBaseContext(ctx context.Context) {
 // one with its own tape file and tool registry if one doesn't exist.
 func (sm *SessionManager) GetOrCreate(
 	channelID string,
-) *Session {
+) (*Session, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
 	if s, ok := sm.sessions[channelID]; ok {
 		s.lastAccess = time.Now()
-		return s
+		return s, nil
 	}
 
 	// Enforce max sessions cap by evicting the oldest idle session.
@@ -79,16 +79,14 @@ func (sm *SessionManager) GetOrCreate(
 
 	sess, err := sm.createSession(channelID)
 	if err != nil {
-		sm.logger.Error("failed to create session, using fallback",
-			zap.String("channel_id", channelID), zap.Error(err))
-		return sess
+		return nil, fmt.Errorf("creating session for %q: %w", channelID, err)
 	}
 
 	sm.sessions[channelID] = sess
 	sm.logger.Info("created new session",
 		zap.String("channel_id", channelID), zap.String("tape", sess.TapePath))
 
-	return sess
+	return sess, nil
 }
 
 // createSession builds a new Session with a fresh tape and tool registry.

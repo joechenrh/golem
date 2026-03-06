@@ -186,7 +186,13 @@ func (inst *AgentInstance) processMessage(
 	sess := inst.Session
 	sessCtx := ctx
 	if inst.Sessions != nil && msg.ChannelName != "cli" {
-		sess = inst.Sessions.GetOrCreate(msg.ChannelID)
+		var err error
+		sess, err = inst.Sessions.GetOrCreate(msg.ChannelID)
+		if err != nil {
+			inst.Logger.Error("failed to get or create session",
+				zap.String("channel_id", msg.ChannelID), zap.Error(err))
+			return false
+		}
 		if sess.Context() != nil {
 			sessCtx = sess.Context()
 		}
