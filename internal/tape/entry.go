@@ -14,6 +14,7 @@ const (
 	KindEvent   EntryKind = "event"   // system events (session start, config change)
 	KindMessage EntryKind = "message" // user/assistant messages
 	KindAnchor  EntryKind = "anchor"  // context boundary markers
+	KindSummary EntryKind = "summary" // auto-generated conversation summary
 )
 
 // TapeEntry is a single record in the append-only tape.
@@ -53,7 +54,9 @@ type TapeInfo struct {
 }
 
 // BuildMessages extracts llm.Message entries from tape entries.
-// Only messages after the last anchor are included.
+// Only messages after the last anchor are included. Summary entries
+// are prepended as system context so restored sessions carry forward
+// a condensed history.
 func BuildMessages(entries []TapeEntry) []llm.Message {
 	// Find last anchor index.
 	lastAnchor := -1
@@ -64,6 +67,27 @@ func BuildMessages(entries []TapeEntry) []llm.Message {
 	}
 
 	var msgs []llm.Message
+
+	// Include the most recent summary (if any) as leading context.
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind == KindSummary {
+			var payload struct {
+				Summary string `json:"summary"`
+			}
+			if json.Unmarshal(entries[i].Payload, &payload) == nil && payload.Summary != "" {
+				msgs = append(msgs, llm.Message{
+					Role:    llm.RoleUser,
+					Content: "[Previous conversation summary]\n" + payload.Summary,
+				})
+				msgs = append(msgs, llm.Message{
+					Role:    llm.RoleAssistant,
+					Content: "Understood, I have the context from our previous conversation.",
+				})
+			}
+			break
+		}
+	}
+
 	for i, e := range entries {
 		if i <= lastAnchor {
 			continue

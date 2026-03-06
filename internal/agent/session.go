@@ -806,3 +806,48 @@ func truncateForLog(s string, maxLen int) string {
 	}
 	return s
 }
+
+// Summarize generates a summary of the current conversation and appends it
+// to the tape as a KindSummary entry. This is called before tape rotation or
+// session teardown so that restored sessions carry forward context.
+func (s *Session) Summarize(ctx context.Context) error {
+	entries, err := s.tape.Entries()
+	if err != nil {
+		return fmt.Errorf("summarize: reading tape: %w", err)
+	}
+	msgs := tape.BuildMessages(entries)
+	if len(msgs) < 2 {
+		return nil // not enough conversation to summarize
+	}
+
+	// Limit to the last 50 messages to keep the summarization call small.
+	if len(msgs) > 50 {
+		msgs = msgs[len(msgs)-50:]
+	}
+
+	summaryPrompt := "Summarize the key points, decisions, and outcomes from this conversation in 3-5 concise bullet points. " +
+		"Focus on what was done, what was decided, and any important context for future reference. " +
+		"Use the same language the user was speaking."
+
+	summaryMsgs := append(msgs, llm.Message{
+		Role:    llm.RoleUser,
+		Content: summaryPrompt,
+	})
+
+	_, modelName := llm.ParseModelProvider(s.config.Model)
+	resp, err := s.llm.Chat(ctx, llm.ChatRequest{
+		Model:     modelName,
+		Messages:  summaryMsgs,
+		MaxTokens: 1024,
+	})
+	if err != nil {
+		return fmt.Errorf("summarize: LLM call: %w", err)
+	}
+
+	return s.tape.Append(tape.TapeEntry{
+		Kind: tape.KindSummary,
+		Payload: tape.MarshalPayload(map[string]string{
+			"summary": resp.Content,
+		}),
+	})
+}

@@ -233,6 +233,13 @@ func (sm *SessionManager) EvictIdle(maxAge time.Duration) int {
 	evicted := 0
 	for id, s := range sm.sessions {
 		if s.lastAccess.Before(cutoff) {
+			// Summarize before eviction so restored sessions carry context.
+			if s.ctx != nil {
+				if err := s.Summarize(s.ctx); err != nil {
+					sm.logger.Warn("failed to summarize before eviction",
+						zap.String("channel_id", id), zap.Error(err))
+				}
+			}
 			if s.cancel != nil {
 				s.cancel()
 			}
