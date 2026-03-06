@@ -134,7 +134,7 @@ func TestSendSkipsDuplicateChat(t *testing.T) {
 	// Send to a chat that was already sent to — should be a no-op (no client, so
 	// calling sendCard would panic).
 	err := lc.Send(context.Background(), channel.OutgoingMessage{
-		ChannelID: "lark:chat_123",
+		ChannelID: "chat_123",
 		Text:      "duplicate",
 	})
 	if err != nil {
@@ -205,7 +205,7 @@ func TestSendToChatRecordsChatID(t *testing.T) {
 
 	// Send should skip because chat_456 was already "sent to".
 	err := lc.Send(context.Background(), channel.OutgoingMessage{
-		ChannelID: "lark:chat_456",
+		ChannelID: "chat_456",
 		Text:      "should be skipped",
 	})
 	if err != nil {
@@ -220,7 +220,7 @@ func TestSendToChatRecordsChatID(t *testing.T) {
 		}
 	}()
 	_ = lc.Send(context.Background(), channel.OutgoingMessage{
-		ChannelID: "lark:chat_789",
+		ChannelID: "chat_789",
 		Text:      "should attempt send",
 	})
 }

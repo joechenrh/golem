@@ -163,7 +163,7 @@ func (l *LarkChannel) onMessageReceive(
 
 	done := make(chan struct{})
 	inCh <- channel.IncomingMessage{
-		ChannelID:   "lark:" + *msg.ChatId,
+		ChannelID:   *msg.ChatId,
 		ChannelName: "lark",
 		SenderID:    senderID,
 		Text:        text,
@@ -223,13 +223,11 @@ func truncateForLog(s string, maxLen int) string {
 func (l *LarkChannel) Send(
 	ctx context.Context, msg channel.OutgoingMessage,
 ) error {
-	chatID := strings.TrimPrefix(msg.ChannelID, "lark:")
-
-	if _, alreadySent := l.sentChats.LoadOrStore(chatID, true); alreadySent {
-		l.logger.Debug("skipping duplicate send", zap.String("chat_id", chatID))
+	if _, alreadySent := l.sentChats.LoadOrStore(msg.ChannelID, true); alreadySent {
+		l.logger.Debug("skipping duplicate send", zap.String("chat_id", msg.ChannelID))
 		return nil
 	}
-	return l.sendCard(ctx, chatID, msg.Text)
+	return l.sendCard(ctx, msg.ChannelID, msg.Text)
 }
 
 // SendTyping is a no-op for Lark.
@@ -249,8 +247,7 @@ func (l *LarkChannel) SendStream(
 	ctx context.Context, channelID string,
 	tokenCh <-chan string,
 ) error {
-	chatID := strings.TrimPrefix(channelID, "lark:")
-	l.sentChats.Store(chatID, true)
+	l.sentChats.Store(channelID, true)
 
 	var sb strings.Builder
 	var messageID string
@@ -266,7 +263,7 @@ func (l *LarkChannel) SendStream(
 				if messageID != "" {
 					l.patchCard(ctx, messageID, sb.String())
 				} else if sb.Len() > 0 {
-					l.sendCard(ctx, chatID, sb.String())
+					l.sendCard(ctx, channelID, sb.String())
 				}
 				return nil
 			}
@@ -279,7 +276,7 @@ func (l *LarkChannel) SendStream(
 			}
 			content := sb.String() + " ▍"
 			if messageID == "" {
-				id, err := l.sendCardReturnID(ctx, chatID, content)
+				id, err := l.sendCardReturnID(ctx, channelID, content)
 				if err != nil {
 					l.logger.Warn("lark stream: failed to send initial card", zap.Error(err))
 					continue
