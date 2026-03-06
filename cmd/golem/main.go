@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/joechenrh/golem/internal/app"
 	"github.com/joechenrh/golem/internal/config"
+	"github.com/joechenrh/golem/internal/metrics"
 )
 
 const version = "0.1.0"
@@ -52,10 +54,29 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 5. Print banner before entering the run loop.
+	// 5. Start metrics server if configured.
+	if cfg.MetricsPort != "" {
+		collector := metrics.NewCollector()
+		collector.RegisterAgent("default", defaultAgent.MetricsHook)
+		if defaultAgent.Sessions != nil {
+			collector.RegisterSessions("default", defaultAgent.Sessions)
+		}
+
+		mux := http.NewServeMux()
+		mux.Handle("/debug/metrics", metrics.NewHandler(collector))
+		go func() {
+			addr := ":" + cfg.MetricsPort
+			logger.Info("metrics server starting", zap.String("addr", addr))
+			if err := http.ListenAndServe(addr, mux); err != nil {
+				logger.Error("metrics server error", zap.Error(err))
+			}
+		}()
+	}
+
+	// 6. Print banner before entering the run loop.
 	defaultAgent.Printer.PrintBanner(cfg.Model, len(defaultAgent.Registry.ToolDefinitions()), defaultAgent.TapePath)
 
-	// 6. Setup signal handling.
+	// 7. Setup signal handling.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 

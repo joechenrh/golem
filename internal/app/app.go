@@ -53,6 +53,8 @@ type AgentInstance struct {
 	SchedStore *scheduler.Store     // schedule persistence (nil if no agent name)
 	Sched      *scheduler.Scheduler // background scheduler (nil until Run)
 
+	MetricsHook *hooks.MetricsHook // exposed for the metrics collector
+
 	// toolFactory builds a fresh tool registry for ephemeral sessions (scheduler, sub-agents).
 	toolFactory func() *tools.Registry
 }
@@ -442,6 +444,7 @@ func BuildAgent(
 		Registry:    registry,
 		TapePath:    tapePath,
 		SchedStore:  schedStore,
+		MetricsHook: metricsHook,
 		toolFactory: schedToolFactory,
 	}, nil
 }

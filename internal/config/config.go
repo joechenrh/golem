@@ -88,6 +88,9 @@ type Config struct {
 	// Rate limiting
 	LLMRateLimit int // max LLM API requests per second (default: 10, 0=unlimited)
 
+	// Observability
+	MetricsPort string // HTTP port for /debug/metrics (default: "", disabled)
+
 	// Web
 	WebSearchBackend string // "bing", "stub" (default: "bing")
 
@@ -136,6 +139,7 @@ func Load(
 		Model:            g.str("GOLEM_MODEL", "openai:gpt-4o"),
 		SkillsDir:        g.str("GOLEM_SKILLS_DIR", ".agent/skills"),
 		LLMRateLimit:     g.integer("GOLEM_LLM_RATE_LIMIT", 10),
+		MetricsPort:      g.str("GOLEM_METRICS_PORT", ""),
 		WebSearchBackend: g.str("GOLEM_WEB_SEARCH_BACKEND", "bing"),
 
 		// Agent tier: behavior, storage, logging.

@@ -80,6 +80,44 @@ func (h *MetricsHook) Handle(_ context.Context, event Event) error {
 	return nil
 }
 
+// Snapshot returns a point-in-time copy of all metrics for external consumption.
+type MetricsSnapshot struct {
+	LLMCalls         int64
+	LLMErrors        int64
+	TotalPromptTok   int64
+	TotalCompleteTok int64
+	LLMLatencyMs     []int64
+	ToolCalls        map[string]int64
+	ToolErrors       map[string]int64
+}
+
+// Snapshot returns an atomic snapshot of all collected metrics.
+func (h *MetricsHook) Snapshot() MetricsSnapshot {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	tc := make(map[string]int64, len(h.toolCalls))
+	for k, v := range h.toolCalls {
+		tc[k] = v
+	}
+	te := make(map[string]int64, len(h.toolErrors))
+	for k, v := range h.toolErrors {
+		te[k] = v
+	}
+	lat := make([]int64, len(h.llmLatencyMs))
+	copy(lat, h.llmLatencyMs)
+
+	return MetricsSnapshot{
+		LLMCalls:         h.llmCalls.Load(),
+		LLMErrors:        h.llmErrors.Load(),
+		TotalPromptTok:   h.totalPromptTok.Load(),
+		TotalCompleteTok: h.totalCompleteTok.Load(),
+		LLMLatencyMs:     lat,
+		ToolCalls:        tc,
+		ToolErrors:       te,
+	}
+}
+
 // Summary returns a formatted string of collected metrics.
 func (h *MetricsHook) Summary() string {
 	h.mu.Lock()
