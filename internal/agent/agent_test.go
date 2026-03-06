@@ -504,6 +504,43 @@ func TestHandleInput_ShellCommand(t *testing.T) {
 	}
 }
 
+func TestLooksLikePlan(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"english plan", "I'll read the file and check for errors.", true},
+		{"english let me", "Let me look into this.", true},
+		{"english answer", "The answer is 42.", false},
+		{"chinese plan", "我来看一下这个文件。", true},
+		{"chinese plan rang", "让我检查一下。", true},
+		{"chinese greeting", "你好！我是 Golem，你的助手。你现在想让我帮你做什么？", false},
+		{"chinese answer", "这个问题的答案是42。", false},
+		{"intent buried deep", strings.Repeat("正常内容。", 50) + "让我看看", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := looksLikePlan(tt.content); got != tt.want {
+				t.Errorf("looksLikePlan() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNudgeMessage(t *testing.T) {
+	en := nudgeMessage("I'll read the file now.")
+	if !strings.Contains(en, "Don't") {
+		t.Errorf("English nudge = %q", en)
+	}
+
+	cn := nudgeMessage("我来看一下这个文件的内容，然后分析。")
+	if !strings.Contains(cn, "工具") {
+		t.Errorf("Chinese nudge = %q", cn)
+	}
+}
+
 func TestTruncateForLog(t *testing.T) {
 	long := strings.Repeat("a", 200)
 	truncated := truncateForLog(long, 50)

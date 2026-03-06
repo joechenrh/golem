@@ -165,7 +165,7 @@ func (s *Session) runReActLoop(
 		// final answer, nudge the LLM to actually use tools.
 		if nudges < maxNudges && looksLikePlan(resp.Content) {
 			s.appendMessage(llm.RoleAssistant, resp.Content, nil, "")
-			s.appendMessage(llm.RoleUser, "Don't just describe what you'll do — use the available tools now to proceed.", nil, "")
+			s.appendMessage(llm.RoleUser, nudgeMessage(resp.Content), nil, "")
 			nudges++
 			s.logger.Debug("nudging LLM to use tools",
 				zap.Int("nudge", nudges), zap.Int("iter", iter))
@@ -180,36 +180,99 @@ func (s *Session) runReActLoop(
 	return "Tool calling limit reached. Please try a simpler request.", nil
 }
 
-// looksLikePlan returns true if the content appears to describe intended actions
-// rather than providing a final answer. Used to auto-nudge the LLM into actually
-// using tools instead of just planning.
+// planCheckPrefixLen is the number of characters at the start of a response
+// to check for intent phrases. Plans open with intent; greetings or
+// answers that happen to contain intent words deeper in the text should
+// not trigger a nudge.
+const planCheckPrefixLen = 200
+
+// looksLikePlan returns true if the opening of the content appears to
+// describe intended actions rather than providing a final answer.
 func looksLikePlan(content string) bool {
-	lower := strings.ToLower(content)
-	intentPhrases := []string{
-		// English
+	prefix := content
+	if len(prefix) > planCheckPrefixLen {
+		prefix = prefix[:planCheckPrefixLen]
+	}
+
+	lower := strings.ToLower(prefix)
+	for _, phrase := range []string{
 		"i'll ", "i will ", "let me ", "i'm going to ",
 		"i'll\n", "i will\n", "let me\n",
 		"first, i'll", "first, let me",
 		"i can help", "i can do",
-	}
-	for _, phrase := range intentPhrases {
+	} {
 		if strings.Contains(lower, phrase) {
 			return true
 		}
 	}
-	// Chinese intent phrases (no lowercasing needed).
-	cnPhrases := []string{
-		"我会", "我将", "我来", "让我",
-		"马上", "正在", "稍等", "请稍",
-		"收到", "好的，我",
+	// Chinese intent phrases must appear at a sentence boundary:
+	// start of text, or after a newline / period / comma / exclamation.
+	for _, phrase := range []string{
+		"我来", "让我", "我会", "我将",
 		"首先", "接下来我",
-	}
-	for _, phrase := range cnPhrases {
-		if strings.Contains(content, phrase) {
+	} {
+		if startsWithPhrase(prefix, phrase) {
 			return true
 		}
 	}
 	return false
+}
+
+// startsWithPhrase checks if phrase appears at the start of text or
+// immediately after a sentence boundary (newline or CJK punctuation).
+func startsWithPhrase(text, phrase string) bool {
+	idx := strings.Index(text, phrase)
+	if idx < 0 {
+		return false
+	}
+	if idx == 0 {
+		return true
+	}
+	// Check the rune immediately before the match.
+	for i := idx - 1; i >= 0; i-- {
+		r := rune(text[i])
+		// Skip whitespace.
+		if r == ' ' || r == '\t' {
+			continue
+		}
+		// Sentence boundaries.
+		switch r {
+		case '\n', '.', ',', '!', '?',
+			'\u3002', // fullwidth period
+			'\uff0c', // fullwidth comma
+			'\uff01', // fullwidth exclamation
+			'\uff1f': // fullwidth question mark
+			return true
+		}
+		// Part of a larger word/phrase — not a boundary.
+		return false
+	}
+	return true
+}
+
+// nudgeMessage returns a nudge prompt in the same language as the content.
+func nudgeMessage(content string) string {
+	if isMostlyCJK(content) {
+		return "不要只描述你打算做什么——现在就使用可用的工具来执行。"
+	}
+	return "Don't just describe what you'll do — use the available tools now to proceed."
+}
+
+// isMostlyCJK returns true if CJK characters make up the majority of
+// non-whitespace, non-punctuation runes in the text.
+func isMostlyCJK(s string) bool {
+	var cjk, other int
+	for _, r := range s {
+		if r <= ' ' {
+			continue
+		}
+		if r >= 0x2E80 && r <= 0x9FFF || r >= 0xF900 && r <= 0xFAFF {
+			cjk++
+		} else {
+			other++
+		}
+	}
+	return cjk > other
 }
 
 // executeLLMCall builds context, calls the LLM (streaming or not), and emits hooks.
