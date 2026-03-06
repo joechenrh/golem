@@ -55,8 +55,9 @@ func main() {
 	}
 
 	// 5. Start metrics server if configured.
+	var collector *metrics.Collector
 	if cfg.MetricsPort != "" {
-		collector := metrics.NewCollector()
+		collector = metrics.NewCollector()
 		collector.RegisterAgent("default", defaultAgent.MetricsHook)
 		if defaultAgent.Sessions != nil {
 			collector.RegisterSessions("default", defaultAgent.Sessions)
@@ -100,6 +101,12 @@ func main() {
 
 	// Background agents: errors logged, don't kill CLI.
 	for _, ba := range app.DiscoverAndBuildBackgroundAgents(defaultAgent.Printer, logger, claimedLarkApps) {
+		if collector != nil {
+			collector.RegisterAgent(ba.Name, ba.MetricsHook)
+			if ba.Sessions != nil {
+				collector.RegisterSessions(ba.Name, ba.Sessions)
+			}
+		}
 		g.Go(func() error {
 			if err := ba.Run(ctx); err != nil && !errors.Is(err, app.ErrAgentQuit) {
 				logger.Error("background agent error", zap.String("agent", ba.Name), zap.Error(err))
