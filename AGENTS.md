@@ -25,3 +25,8 @@ Target **Go 1.22+**. Use modern idioms:
 - Use `fmt.Errorf("context: %w", err)` for error wrapping.
 - Prefer table-driven tests with `t.Run` subtests.
 - Run `go vet ./...` and `go test -race ./...` before merging.
+
+## Documentation
+
+- Design documents live in `design/` (13 files covering all major subsystems).
+- When changing a subsystem's behavior, update the corresponding `design/*.md` file to keep docs in sync with the code.
