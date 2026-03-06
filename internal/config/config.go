@@ -205,6 +205,19 @@ func (c *Config) validate() error {
 	if strings.Count(c.Model, ":") > 1 {
 		return fmt.Errorf("invalid model format %q: expected \"provider:model\" or \"model\"", c.Model)
 	}
+	if c.LLMRateLimit <= 0 {
+		return fmt.Errorf("LLM rate limit must be positive, got %d", c.LLMRateLimit)
+	}
+	if c.MaxSessions <= 0 {
+		return fmt.Errorf("max sessions must be positive, got %d", c.MaxSessions)
+	}
+	if c.SessionIdleTime <= 0 {
+		return fmt.Errorf("session idle time must be positive, got %v", c.SessionIdleTime)
+	}
+	validStrategies := map[string]bool{"anchor": true, "masking": true, "hybrid": true}
+	if !validStrategies[c.ContextStrategy] {
+		return fmt.Errorf("invalid context strategy %q: must be one of anchor, masking, hybrid", c.ContextStrategy)
+	}
 	return nil
 }
 
