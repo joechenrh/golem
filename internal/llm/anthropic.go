@@ -295,8 +295,8 @@ func (c *anthropicClient) buildRequest(
 		MaxTokens: maxTokens,
 		Stream:    stream,
 	}
-	if req.Temperature != 0 {
-		wireReq.Temperature = &req.Temperature
+	if req.Temperature != nil {
+		wireReq.Temperature = req.Temperature
 	}
 
 	wireReq.Messages = convertMessages(req.Messages)

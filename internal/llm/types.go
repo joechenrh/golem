@@ -57,7 +57,7 @@ type ChatRequest struct {
 	Messages       []Message        `json:"messages"`
 	Tools          []ToolDefinition `json:"tools,omitempty"`
 	MaxTokens      int              `json:"max_tokens,omitempty"`
-	Temperature    float64          `json:"temperature,omitempty"`
+	Temperature    *float64         `json:"temperature,omitempty"`
 	SystemPrompt   string           `json:"system_prompt,omitempty"` // separate field; Anthropic requires top-level system
 	ResponseFormat *ResponseFormat  `json:"response_format,omitempty"`
 }

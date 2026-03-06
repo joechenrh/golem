@@ -291,8 +291,8 @@ func (c *openaiClient) buildRequest(
 		Stream:         stream,
 		ResponseFormat: req.ResponseFormat,
 	}
-	if req.Temperature != 0 {
-		wireReq.Temperature = &req.Temperature
+	if req.Temperature != nil {
+		wireReq.Temperature = req.Temperature
 	}
 
 	for _, td := range req.Tools {
