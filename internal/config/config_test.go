@@ -387,6 +387,84 @@ func TestDiscoverAgents(t *testing.T) {
 	})
 }
 
+func TestLoadPersona(t *testing.T) {
+	clearConfigEnv(t)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	golemDir := filepath.Join(home, ".golem")
+
+	// Global USER.md.
+	os.MkdirAll(golemDir, 0o755)
+	os.WriteFile(filepath.Join(golemDir, "USER.md"), []byte("Name: Alice\nTimezone: UTC"), 0o644)
+
+	// Agent persona files.
+	agentDir := filepath.Join(golemDir, "agents", "persona-bot")
+	os.MkdirAll(agentDir, 0o755)
+	os.WriteFile(filepath.Join(agentDir, "config.env"), []byte(""), 0o644)
+	os.WriteFile(filepath.Join(agentDir, "SOUL.md"), []byte("You are a research assistant."), 0o644)
+	os.WriteFile(filepath.Join(agentDir, "IDENTITY.md"), []byte("Name: Dwight\nEmoji: magnifier"), 0o644)
+	os.WriteFile(filepath.Join(agentDir, "AGENTS.md"), []byte("Always cite sources."), 0o644)
+	os.WriteFile(filepath.Join(agentDir, "MEMORY.md"), []byte("User prefers short answers."), 0o644)
+
+	cfg, err := Load("persona-bot", nil)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	p := cfg.Persona
+	if !p.HasPersona() {
+		t.Fatal("HasPersona() = false, want true")
+	}
+	if p.Soul != "You are a research assistant." {
+		t.Errorf("Soul = %q", p.Soul)
+	}
+	if p.Identity != "Name: Dwight\nEmoji: magnifier" {
+		t.Errorf("Identity = %q", p.Identity)
+	}
+	if p.User != "Name: Alice\nTimezone: UTC" {
+		t.Errorf("User = %q", p.User)
+	}
+	if p.Agents != "Always cite sources." {
+		t.Errorf("Agents = %q", p.Agents)
+	}
+	if p.Memory != "User prefers short answers." {
+		t.Errorf("Memory = %q", p.Memory)
+	}
+	if p.MemoryPath != filepath.Join(agentDir, "MEMORY.md") {
+		t.Errorf("MemoryPath = %q", p.MemoryPath)
+	}
+	// system-prompt.md should NOT be loaded when persona exists.
+	if cfg.SystemPrompt != "" {
+		t.Errorf("SystemPrompt = %q, want empty (persona takes precedence)", cfg.SystemPrompt)
+	}
+}
+
+func TestLoadPersonaFallbackToSystemPrompt(t *testing.T) {
+	clearConfigEnv(t)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Agent with system-prompt.md but no SOUL.md.
+	agentDir := filepath.Join(home, ".golem", "agents", "flat-bot")
+	os.MkdirAll(agentDir, 0o755)
+	os.WriteFile(filepath.Join(agentDir, "config.env"), []byte(""), 0o644)
+	os.WriteFile(filepath.Join(agentDir, "system-prompt.md"), []byte("You are a flat bot."), 0o644)
+
+	cfg, err := Load("flat-bot", nil)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Persona.HasPersona() {
+		t.Error("HasPersona() = true, want false (no SOUL.md)")
+	}
+	if cfg.SystemPrompt != "You are a flat bot." {
+		t.Errorf("SystemPrompt = %q, want fallback", cfg.SystemPrompt)
+	}
+}
+
 func TestExpandHome(t *testing.T) {
 	home, _ := os.UserHomeDir()
 

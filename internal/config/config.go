@@ -15,6 +15,26 @@ var validLogLevels = map[string]bool{
 	"debug": true, "info": true, "warn": true, "error": true,
 }
 
+// Persona holds the three-layer identity files for an agent.
+//
+//	Layer 1 (Identity): Soul, Identity, User
+//	Layer 2 (Operations): Agents
+//	Layer 3 (Knowledge): Memory
+type Persona struct {
+	Soul     string // SOUL.md — core identity and personality
+	Identity string // IDENTITY.md — quick reference card
+	User     string // USER.md — who the agent serves (global, shared)
+	Agents   string // AGENTS.md — behavioral rules
+	Memory   string // MEMORY.md — curated persistent knowledge
+
+	MemoryPath string // absolute path to MEMORY.md (for the tool to write)
+}
+
+// HasPersona reports whether persona files are configured (SOUL.md exists).
+func (p *Persona) HasPersona() bool {
+	return p != nil && p.Soul != ""
+}
+
 // GolemHome returns the root golem configuration directory (~/.golem).
 func GolemHome() string {
 	return expandHome("~/.golem")
@@ -32,9 +52,9 @@ type Config struct {
 	BaseURLs map[string]string // provider name -> custom base URL (optional)
 
 	// Agent behavior
-	MaxToolIter    int           // max tool-calling iterations per turn (default: 15)
-	MaxOutputTokens int          // max tokens in LLM response (default: 4096)
-	ShellTimeout   time.Duration // shell command timeout (default: 30s)
+	MaxToolIter     int           // max tool-calling iterations per turn (default: 15)
+	MaxOutputTokens int           // max tokens in LLM response (default: 4096)
+	ShellTimeout    time.Duration // shell command timeout (default: 30s)
 
 	// Context management
 	ContextStrategy string // "anchor", "masking", "hybrid" (default: "masking")
@@ -73,6 +93,9 @@ type Config struct {
 
 	// Logging
 	LogLevel string // "debug", "info", "warn", "error"
+
+	// Persona (three-layer identity system)
+	Persona *Persona
 }
 
 // Load reads config from two distinct sources with strict boundaries:
@@ -149,8 +172,11 @@ func Load(
 
 	applyFlagOverrides(cfg, flagOverrides)
 
-	// Load per-agent system prompt if present.
-	if agentName != "" {
+	// Load persona files (three-layer identity system).
+	cfg.Persona = loadPersona(agentName)
+
+	// Load per-agent system prompt if present (fallback when no persona).
+	if agentName != "" && !cfg.Persona.HasPersona() {
 		promptPath := filepath.Join(GolemHome(), "agents", agentName, "system-prompt.md")
 		if data, err := os.ReadFile(promptPath); err == nil {
 			cfg.SystemPrompt = strings.TrimSpace(string(data))
@@ -343,6 +369,46 @@ func DiscoverAgents() ([]string, error) {
 		}
 	}
 	return names, nil
+}
+
+// loadPersona reads the three-layer persona files for an agent.
+// USER.md is read from the global ~/.golem/ directory (shared by all agents).
+// All other files are read from ~/.golem/agents/<name>/.
+// Returns a Persona with whatever files exist; missing files are empty strings.
+func loadPersona(agentName string) *Persona {
+	p := &Persona{}
+
+	// Layer 1: USER.md is global.
+	if data, err := os.ReadFile(filepath.Join(GolemHome(), "USER.md")); err == nil {
+		p.User = strings.TrimSpace(string(data))
+	}
+
+	if agentName == "" {
+		return p
+	}
+
+	agentDir := filepath.Join(GolemHome(), "agents", agentName)
+
+	// Layer 1: SOUL.md, IDENTITY.md (agent-specific).
+	if data, err := os.ReadFile(filepath.Join(agentDir, "SOUL.md")); err == nil {
+		p.Soul = strings.TrimSpace(string(data))
+	}
+	if data, err := os.ReadFile(filepath.Join(agentDir, "IDENTITY.md")); err == nil {
+		p.Identity = strings.TrimSpace(string(data))
+	}
+
+	// Layer 2: AGENTS.md.
+	if data, err := os.ReadFile(filepath.Join(agentDir, "AGENTS.md")); err == nil {
+		p.Agents = strings.TrimSpace(string(data))
+	}
+
+	// Layer 3: MEMORY.md.
+	p.MemoryPath = filepath.Join(agentDir, "MEMORY.md")
+	if data, err := os.ReadFile(p.MemoryPath); err == nil {
+		p.Memory = strings.TrimSpace(string(data))
+	}
+
+	return p
 }
 
 func expandHome(path string) string {

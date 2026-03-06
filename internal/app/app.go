@@ -448,6 +448,11 @@ func BuildToolRegistry(
 		)
 	}
 
+	// Persona memory tool (only when persona is configured).
+	if cfg.Persona.HasPersona() && cfg.Persona.MemoryPath != "" {
+		registry.Register(builtin.NewPersonaMemoryTool(cfg.Persona.MemoryPath))
+	}
+
 	// Discover skills.
 	if err := registry.DiscoverSkills(cfg.SkillsDir); err != nil {
 		logger.Debug("skills discovery", zap.Error(err))

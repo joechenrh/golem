@@ -531,3 +531,72 @@ func TestBuildSystemPrompt(t *testing.T) {
 		t.Errorf("prompt should contain workspace context: %s", prompt)
 	}
 }
+
+func TestBuildSystemPrompt_Persona(t *testing.T) {
+	agent := newTestAgent(t, &mockLLMClient{})
+	agent.config.Persona = &config.Persona{
+		Soul:     "You are Dwight, a research brain.",
+		Identity: "Name: Dwight\nEmoji: magnifier",
+		User:     "Name: Alice\nTimezone: UTC",
+		Agents:   "Always cite sources.",
+		Memory:   "User prefers short answers.",
+	}
+
+	prompt := agent.buildSystemPrompt()
+
+	// Layer 1: Identity.
+	if !strings.Contains(prompt, "You are Dwight") {
+		t.Errorf("prompt missing SOUL.md content")
+	}
+	if !strings.Contains(prompt, "Name: Dwight") {
+		t.Errorf("prompt missing IDENTITY.md content")
+	}
+	if !strings.Contains(prompt, "Name: Alice") {
+		t.Errorf("prompt missing USER.md content")
+	}
+
+	// Layer 2: Operations.
+	if !strings.Contains(prompt, "Always cite sources.") {
+		t.Errorf("prompt missing AGENTS.md content")
+	}
+	if !strings.Contains(prompt, "use the available tools immediately") {
+		t.Errorf("prompt missing built-in tool-use instructions")
+	}
+
+	// Layer 3: Knowledge.
+	if !strings.Contains(prompt, "MEMORY.md") {
+		t.Errorf("prompt missing memory system description")
+	}
+	if !strings.Contains(prompt, "User prefers short answers.") {
+		t.Errorf("prompt missing MEMORY.md content")
+	}
+
+	// Environment.
+	if !strings.Contains(prompt, "Working directory") {
+		t.Errorf("prompt missing environment info")
+	}
+
+	// Should NOT contain legacy identity.
+	if strings.Contains(prompt, "You are golem") {
+		t.Errorf("persona prompt should not contain legacy identity")
+	}
+}
+
+func TestBuildSystemPrompt_PersonaMinimal(t *testing.T) {
+	agent := newTestAgent(t, &mockLLMClient{})
+	agent.config.Persona = &config.Persona{
+		Soul: "You are a minimal agent.",
+	}
+
+	prompt := agent.buildSystemPrompt()
+	if !strings.Contains(prompt, "You are a minimal agent.") {
+		t.Errorf("prompt missing SOUL.md content")
+	}
+	// Optional sections should not have empty headers with no content.
+	if strings.Contains(prompt, "User Profile") {
+		t.Errorf("prompt should not contain User Profile header when USER.md is empty")
+	}
+	if strings.Contains(prompt, "Current Memory") {
+		t.Errorf("prompt should not contain Current Memory header when MEMORY.md is empty")
+	}
+}

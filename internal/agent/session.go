@@ -592,12 +592,86 @@ func (s *Session) helpText() string {
 }
 
 // buildSystemPrompt constructs the system prompt for LLM calls.
+// When persona files are configured, the prompt is assembled in three layers:
+//
+//	Layer 1 (Identity): SOUL.md, IDENTITY.md, USER.md
+//	Layer 2 (Operations): AGENTS.md + built-in tool-use instructions
+//	Layer 3 (Knowledge): memory system description + MEMORY.md
+//
+// Falls back to the flat system-prompt.md approach when no persona exists.
 func (s *Session) buildSystemPrompt() string {
+	if s.config.Persona.HasPersona() {
+		return s.buildPersonaPrompt()
+	}
+	return s.buildFlatPrompt()
+}
+
+// buildPersonaPrompt assembles the three-layer persona system prompt.
+func (s *Session) buildPersonaPrompt() string {
+	p := s.config.Persona
+	var b strings.Builder
+
+	// --- Layer 1: Identity ---
+	b.WriteString("# Identity\n\n")
+	b.WriteString(p.Soul)
+	b.WriteByte('\n')
+	if p.Identity != "" {
+		b.WriteString("\n## Reference Card\n\n")
+		b.WriteString(p.Identity)
+		b.WriteByte('\n')
+	}
+	if p.User != "" {
+		b.WriteString("\n## User Profile\n\n")
+		b.WriteString(p.User)
+		b.WriteByte('\n')
+	}
+
+	// --- Layer 2: Operations ---
+	b.WriteString("\n# Operations\n\n")
+	if p.Agents != "" {
+		b.WriteString(p.Agents)
+		b.WriteByte('\n')
+	}
+	b.WriteString("\n## Tool Use\n\n")
+	b.WriteString("When you need to perform actions, use the available tools immediately. ")
+	b.WriteString("You may briefly explain your reasoning alongside tool calls, but always ")
+	b.WriteString("include the tool calls in the same response — never respond with only a ")
+	b.WriteString("plan or description of what you intend to do.\n")
+
+	// --- Layer 3: Knowledge ---
+	b.WriteString("\n# Knowledge\n\n")
+	b.WriteString("## Memory System\n\n")
+	b.WriteString("You have two memory mechanisms:\n\n")
+	b.WriteString("- **MEMORY.md** (local): Your curated, distilled notes. Record only what truly ")
+	b.WriteString("matters — validated preferences, hard-won lessons, stable patterns. ")
+	b.WriteString("Keep it concise (under 200 lines). Use the persona_memory tool to read/write.\n\n")
+	b.WriteString("- **mnemos** (shared): Cross-agent long-term memory store. Use it for facts, ")
+	b.WriteString("research results, contextual details, and raw material that any agent can retrieve. ")
+	b.WriteString("Use memory_store / memory_recall tools.\n\n")
+	b.WriteString("Principle: mnemos is the warehouse; MEMORY.md is the distilled memo.\n")
+
+	if p.Memory != "" {
+		b.WriteString("\n## Current Memory\n\n")
+		b.WriteString(p.Memory)
+		b.WriteByte('\n')
+	}
+
+	// --- Environment ---
+	b.WriteString("\n# Environment\n\n")
+	if wd, err := os.Getwd(); err == nil {
+		fmt.Fprintf(&b, "Working directory: %s\n", wd)
+	}
+	fmt.Fprintf(&b, "Current time: %s\n", time.Now().Format(time.RFC3339))
+
+	return b.String()
+}
+
+// buildFlatPrompt is the legacy system prompt assembly (no persona files).
+func (s *Session) buildFlatPrompt() string {
 	var b strings.Builder
 
 	b.WriteString("You are golem, a helpful coding assistant.\n\n")
 
-	// Workspace context.
 	if wd, err := os.Getwd(); err == nil {
 		fmt.Fprintf(&b, "Working directory: %s\n", wd)
 	}
@@ -608,7 +682,6 @@ func (s *Session) buildSystemPrompt() string {
 	b.WriteString("include the tool calls in the same response — never respond with only a ")
 	b.WriteString("plan or description of what you intend to do.\n\n")
 
-	// Custom system prompt: prefer per-agent config, fall back to workspace file.
 	switch {
 	case s.config.SystemPrompt != "":
 		b.WriteString(s.config.SystemPrompt)
