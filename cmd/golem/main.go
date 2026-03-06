@@ -65,6 +65,8 @@ func main() {
 
 		mux := http.NewServeMux()
 		mux.Handle("/debug/metrics", metrics.NewHandler(collector))
+		mux.Handle("/debug/metrics.json", metrics.NewJSONHandler(collector))
+		mux.Handle("/debug/dashboard", metrics.NewDashboardHandler())
 		go func() {
 			addr := ":" + cfg.MetricsPort
 			logger.Info("metrics server starting", zap.String("addr", addr))
