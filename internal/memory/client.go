@@ -384,8 +384,13 @@ func (c *Client) hybridSearch(
 	kwSQL := c.keywordSQL(escaped, fetch)
 
 	// Execute both legs (sequentially — TiDB HTTP API is one query at a time).
-	vecResult, _ := c.execSQL(ctx, vecSQL)
-	kwResult, _ := c.execSQL(ctx, kwSQL)
+	// Individual leg errors are tolerated as long as at least one succeeds.
+	vecResult, vecErr := c.execSQL(ctx, vecSQL)
+	kwResult, kwErr := c.execSQL(ctx, kwSQL)
+
+	if vecErr != nil && kwErr != nil {
+		return nil, fmt.Errorf("both search legs failed: vec=%w, kw=%v", vecErr, kwErr)
+	}
 
 	vecRows := parseRows(vecResult)
 	kwRows := parseRows(kwResult)
