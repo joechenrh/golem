@@ -320,6 +320,7 @@ func (s *Session) executeLLMCall(
 		Messages:     messages,
 		Tools:        toolDefs,
 		MaxTokens:    s.config.MaxOutputTokens,
+		Temperature:  s.config.Temperature,
 	}
 
 	var resp *llm.ChatResponse
