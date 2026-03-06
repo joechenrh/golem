@@ -38,7 +38,11 @@ func main() {
 	}
 
 	// 3. Initialize logger.
-	logger := initLogger(cfg.LogLevel, cfg.TapeDir)
+	logger, err := initLogger(cfg.LogLevel, cfg.TapeDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "logger init error: %v\n", err)
+		os.Exit(1)
+	}
 	defer logger.Sync()
 
 	// 4. Build the default (interactive) agent.
@@ -121,7 +125,7 @@ func parseFlags() map[string]string {
 
 // initLogger creates a zap.Logger that writes to a file in logDir.
 // This keeps log output from mixing with the interactive REPL.
-func initLogger(level, logDir string) *zap.Logger {
+func initLogger(level, logDir string) (*zap.Logger, error) {
 	var zapLevel zapcore.Level
 	switch level {
 	case "debug":
@@ -145,9 +149,5 @@ func initLogger(level, logDir string) *zap.Logger {
 	}
 	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
-	logger, err := cfg.Build()
-	if err != nil {
-		return zap.NewNop()
-	}
-	return logger
+	return cfg.Build()
 }
