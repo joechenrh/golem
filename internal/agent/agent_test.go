@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"go.uber.org/zap"
@@ -635,5 +636,162 @@ func TestBuildSystemPromptPersonaMinimal(t *testing.T) {
 	}
 	if strings.Contains(prompt, "Current Memory") {
 		t.Errorf("prompt should not contain Current Memory header when MEMORY.md is empty")
+	}
+}
+
+// ── SessionManager Test Helpers ──────────────────────────────────
+
+func newTestSessionFactory(t *testing.T, tapeDir string) SessionFactory {
+	t.Helper()
+	return SessionFactory{
+		LLMClient: &mockLLMClient{
+			responses: []*llm.ChatResponse{
+				{Content: "ok", FinishReason: "stop"},
+			},
+		},
+		Config: &config.Config{
+			Model:           "openai:gpt-4o",
+			MaxToolIter:     15,
+			MaxSessions:     100,
+			TapeDir:         tapeDir,
+			ContextStrategy: "anchor",
+		},
+		Logger:          zap.NewNop(),
+		ToolFactory:     func() *tools.Registry { return tools.NewRegistry() },
+		ContextStrategy: "anchor",
+		AgentName:       "test",
+	}
+}
+
+// ── SessionManager Tests ─────────────────────────────────────────
+
+func TestSessionManager_GetOrCreate_ErrorPath(t *testing.T) {
+	// Use a nonexistent directory so tape.NewFileStore will fail.
+	factory := newTestSessionFactory(t, "/nonexistent/path/that/does/not/exist")
+	logger := zap.NewNop()
+	sm := NewSessionManager(factory, logger)
+
+	sess, err := sm.GetOrCreate("chan-error")
+	if err == nil {
+		t.Fatal("expected error from GetOrCreate with invalid tape dir, got nil")
+	}
+	if sess != nil {
+		t.Errorf("expected nil session on error, got %v", sess)
+	}
+	if sm.Len() != 0 {
+		t.Errorf("session map should be empty after failed create, got %d", sm.Len())
+	}
+}
+
+func TestSessionManager_GetOrCreate_SuccessPath(t *testing.T) {
+	dir := t.TempDir()
+	resolved, _ := filepath.EvalSymlinks(dir)
+	factory := newTestSessionFactory(t, resolved)
+	logger := zap.NewNop()
+	sm := NewSessionManager(factory, logger)
+
+	sess, err := sm.GetOrCreate("chan-ok")
+	if err != nil {
+		t.Fatalf("GetOrCreate failed: %v", err)
+	}
+	if sess == nil {
+		t.Fatal("expected non-nil session, got nil")
+	}
+	if sm.Len() != 1 {
+		t.Errorf("session count = %d, want 1", sm.Len())
+	}
+
+	// Calling again with the same ID should return the same session.
+	sess2, err := sm.GetOrCreate("chan-ok")
+	if err != nil {
+		t.Fatalf("GetOrCreate (second call) failed: %v", err)
+	}
+	if sess2 != sess {
+		t.Error("expected same session instance for same channel ID")
+	}
+	if sm.Len() != 1 {
+		t.Errorf("session count = %d, want 1 (no duplicate)", sm.Len())
+	}
+}
+
+func TestSessionManager_GetOrCreate_ConcurrentStress(t *testing.T) {
+	dir := t.TempDir()
+	resolved, _ := filepath.EvalSymlinks(dir)
+	factory := newTestSessionFactory(t, resolved)
+	logger := zap.NewNop()
+	sm := NewSessionManager(factory, logger)
+
+	const numUnique = 50
+	const numShared = 50
+	sharedID := "shared-channel"
+
+	var wg sync.WaitGroup
+
+	// Track errors from goroutines.
+	errCh := make(chan error, numUnique+numShared)
+
+	// 50 goroutines with unique channel IDs.
+	for i := range numUnique {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			chID := fmt.Sprintf("unique-%d", i)
+			sess, err := sm.GetOrCreate(chID)
+			if err != nil {
+				errCh <- fmt.Errorf("unique %s: %w", chID, err)
+				return
+			}
+			if sess == nil {
+				errCh <- fmt.Errorf("unique %s: nil session", chID)
+			}
+		}()
+	}
+
+	// 50 goroutines with the SAME channel ID.
+	sessions := make([]*Session, numShared)
+	var mu sync.Mutex
+	for i := range numShared {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sess, err := sm.GetOrCreate(sharedID)
+			if err != nil {
+				errCh <- fmt.Errorf("shared %d: %w", i, err)
+				return
+			}
+			if sess == nil {
+				errCh <- fmt.Errorf("shared %d: nil session", i)
+				return
+			}
+			mu.Lock()
+			sessions[i] = sess
+			mu.Unlock()
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Errorf("goroutine error: %v", err)
+	}
+
+	// All goroutines accessing the shared channel should get the same session.
+	var firstShared *Session
+	for i, s := range sessions {
+		if s == nil {
+			continue
+		}
+		if firstShared == nil {
+			firstShared = s
+		} else if s != firstShared {
+			t.Errorf("shared session %d differs from first; expected same instance", i)
+		}
+	}
+
+	// Total sessions: 50 unique + 1 shared = 51.
+	expectedCount := numUnique + 1
+	if sm.Len() != expectedCount {
+		t.Errorf("session count = %d, want %d", sm.Len(), expectedCount)
 	}
 }

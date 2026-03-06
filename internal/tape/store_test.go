@@ -297,6 +297,127 @@ func TestGracefulRecovery_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestGracefulRecovery_TruncatedJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "truncated.jsonl")
+
+	// Write a valid entry, then a truncated JSON line (simulating a crash mid-write).
+	validEntry := `{"id":"e1","kind":"message","payload":{"content":"valid"},"timestamp":"2025-01-01T00:00:00Z"}`
+	truncatedLine := `{"kind":"message","payl`
+
+	if err := os.WriteFile(path, []byte(validEntry+"\n"+truncatedLine+"\n"), 0644); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+
+	s, err := NewFileStore(path)
+	if err != nil {
+		t.Fatalf("NewFileStore() error: %v", err)
+	}
+	defer s.Close()
+
+	entries, err := s.Entries()
+	if err != nil {
+		t.Fatalf("Entries() error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1 (truncated line should be skipped)", len(entries))
+	}
+	if entries[0].ID != "e1" {
+		t.Errorf("entry ID = %q, want %q", entries[0].ID, "e1")
+	}
+}
+
+func TestGracefulRecovery_MultipleConsecutiveInvalidLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "multi-invalid.jsonl")
+
+	valid1 := `{"id":"e1","kind":"message","payload":{"content":"first"},"timestamp":"2025-01-01T00:00:00Z"}`
+	invalid1 := `{not json at all}`
+	invalid2 := `totally not json`
+	invalid3 := `{"kind":"message","truncated`
+	valid2 := `{"id":"e2","kind":"message","payload":{"content":"second"},"timestamp":"2025-01-02T00:00:00Z"}`
+
+	content := valid1 + "\n" + invalid1 + "\n" + invalid2 + "\n" + invalid3 + "\n" + valid2 + "\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+
+	s, err := NewFileStore(path)
+	if err != nil {
+		t.Fatalf("NewFileStore() error: %v", err)
+	}
+	defer s.Close()
+
+	entries, err := s.Entries()
+	if err != nil {
+		t.Fatalf("Entries() error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("len(entries) = %d, want 2 (all invalid lines should be skipped)", len(entries))
+	}
+	if entries[0].ID != "e1" {
+		t.Errorf("entries[0].ID = %q, want %q", entries[0].ID, "e1")
+	}
+	if entries[1].ID != "e2" {
+		t.Errorf("entries[1].ID = %q, want %q", entries[1].ID, "e2")
+	}
+}
+
+func TestGracefulRecovery_MixedValidEmptyAndInvalidLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mixed.jsonl")
+
+	valid1 := `{"id":"e1","kind":"message","payload":{"content":"one"},"timestamp":"2025-01-01T00:00:00Z"}`
+	valid2 := `{"id":"e2","kind":"event","payload":{"type":"session_start"},"timestamp":"2025-01-01T00:01:00Z"}`
+	valid3 := `{"id":"e3","kind":"message","payload":{"content":"three"},"timestamp":"2025-01-01T00:02:00Z"}`
+	invalid := `{"broken":`
+
+	// Construct a file with a mix: valid, empty, invalid, empty, valid, invalid, valid.
+	lines := []string{valid1, "", invalid, "", valid2, `{bad json}`, valid3, ""}
+	content := ""
+	for _, l := range lines {
+		content += l + "\n"
+	}
+
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+
+	s, err := NewFileStore(path)
+	if err != nil {
+		t.Fatalf("NewFileStore() error: %v", err)
+	}
+	defer s.Close()
+
+	entries, err := s.Entries()
+	if err != nil {
+		t.Fatalf("Entries() error: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("len(entries) = %d, want 3 (empty and invalid lines should be skipped)", len(entries))
+	}
+	if entries[0].ID != "e1" {
+		t.Errorf("entries[0].ID = %q, want %q", entries[0].ID, "e1")
+	}
+	if entries[1].ID != "e2" {
+		t.Errorf("entries[1].ID = %q, want %q", entries[1].ID, "e2")
+	}
+	if entries[2].ID != "e3" {
+		t.Errorf("entries[2].ID = %q, want %q", entries[2].ID, "e3")
+	}
+
+	// Verify the kinds loaded correctly.
+	if entries[0].Kind != KindMessage {
+		t.Errorf("entries[0].Kind = %q, want %q", entries[0].Kind, KindMessage)
+	}
+	if entries[1].Kind != KindEvent {
+		t.Errorf("entries[1].Kind = %q, want %q", entries[1].Kind, KindEvent)
+	}
+	if entries[2].Kind != KindMessage {
+		t.Errorf("entries[2].Kind = %q, want %q", entries[2].Kind, KindMessage)
+	}
+}
+
 func TestSessionRestore_LoadFromDisk(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "restore.jsonl")
 
