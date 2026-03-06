@@ -3,6 +3,8 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -97,15 +99,10 @@ func (h *MetricsHook) Snapshot() MetricsSnapshot {
 	defer h.mu.Unlock()
 
 	tc := make(map[string]int64, len(h.toolCalls))
-	for k, v := range h.toolCalls {
-		tc[k] = v
-	}
+	maps.Copy(tc, h.toolCalls)
 	te := make(map[string]int64, len(h.toolErrors))
-	for k, v := range h.toolErrors {
-		te[k] = v
-	}
-	lat := make([]int64, len(h.llmLatencyMs))
-	copy(lat, h.llmLatencyMs)
+	maps.Copy(te, h.toolErrors)
+	lat := slices.Clone(h.llmLatencyMs)
 
 	return MetricsSnapshot{
 		LLMCalls:         h.llmCalls.Load(),

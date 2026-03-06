@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 
@@ -60,8 +61,7 @@ func (b *Bus) Register(h Hook) {
 // For other events, errors are logged but do not affect the main flow.
 func (b *Bus) Emit(ctx context.Context, event Event) error {
 	b.mu.RLock()
-	hooks := make([]Hook, len(b.hooks))
-	copy(hooks, b.hooks)
+	hooks := slices.Clone(b.hooks)
 	b.mu.RUnlock()
 
 	isBefore := strings.HasPrefix(string(event.Type), "before_")

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -116,9 +117,7 @@ func (s *FileStore) Entries() ([]TapeEntry, error) {
 	defer s.mu.Unlock()
 
 	// Return a copy to prevent callers from mutating the cache.
-	result := make([]TapeEntry, len(s.entries))
-	copy(result, s.entries)
-	return result, nil
+	return slices.Clone(s.entries), nil
 }
 
 func (s *FileStore) Search(query string) ([]TapeEntry, error) {
@@ -157,10 +156,7 @@ func (s *FileStore) EntriesSince(anchorID string) ([]TapeEntry, error) {
 		return nil, nil
 	}
 
-	after := s.entries[anchorIdx+1:]
-	result := make([]TapeEntry, len(after))
-	copy(result, after)
-	return result, nil
+	return slices.Clone(s.entries[anchorIdx+1:]), nil
 }
 
 func (s *FileStore) LastAnchor() (*TapeEntry, error) {
