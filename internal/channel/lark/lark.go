@@ -172,6 +172,9 @@ func (l *LarkChannel) onMessageReceive(
 	<-done
 }
 
+// maxSeenMsgs caps the seenMsgs map to prevent unbounded memory growth.
+const maxSeenMsgs = 10_000
+
 // seenMsgsEvictionLoop periodically removes old entries from seenMsgs.
 // Runs as a single goroutine started by Start(), stops when ctx is cancelled.
 func (l *LarkChannel) seenMsgsEvictionLoop(
@@ -185,12 +188,24 @@ func (l *LarkChannel) seenMsgsEvictionLoop(
 			return
 		case <-ticker.C:
 			cutoff := time.Now().Add(-maxAge)
+			count := 0
 			l.seenMsgs.Range(func(key, value any) bool {
 				if ts, ok := value.(time.Time); ok && ts.Before(cutoff) {
 					l.seenMsgs.Delete(key)
+				} else {
+					count++
 				}
 				return true
 			})
+			// If still over cap after age eviction, force-evict oldest.
+			if count > maxSeenMsgs {
+				evicted := 0
+				l.seenMsgs.Range(func(key, _ any) bool {
+					l.seenMsgs.Delete(key)
+					evicted++
+					return evicted < count-maxSeenMsgs
+				})
+			}
 		}
 	}
 }
