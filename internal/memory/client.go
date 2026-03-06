@@ -357,31 +357,29 @@ func (c *Client) Search(
 		limit = 10
 	}
 	fetch := limit * 3
-	escaped := sqlEscape(queryText)
 
 	// If auto-embed is configured, run hybrid search (vector + keyword).
 	if c.autoEmbedModel != "" {
-		return c.hybridSearch(ctx, escaped, limit, fetch)
+		return c.hybridSearch(ctx, queryText, limit, fetch)
 	}
 
 	// Otherwise, keyword-only search.
-	return c.keywordSearch(ctx, escaped, limit, fetch)
+	return c.keywordSearch(ctx, queryText, limit, fetch)
 }
 
 func (c *Client) hybridSearch(
-	ctx context.Context, escaped string,
+	ctx context.Context, query string,
 	limit, fetch int,
 ) ([]Memory, error) {
 	// Vector leg: cosine distance via auto-embed.
-	// Note: escaped is already sqlEscape'd; wrap in quotes via concatenation.
-	qv := "'" + escaped + "'"
+	qv := sqlQ(query)
 	vecSQL := fmt.Sprintf(
 		"SELECT id, content, key_name, source, tags, version, updated_by, created_at, updated_at, VEC_EMBED_COSINE_DISTANCE(embedding, %s) AS distance FROM %s.memories WHERE space_id = %s AND embedding IS NOT NULL ORDER BY VEC_EMBED_COSINE_DISTANCE(embedding, %s) LIMIT %d",
 		qv, c.dbName, sqlQ(defaultSpaceID), qv, fetch,
 	)
 
 	// Keyword leg.
-	kwSQL := c.keywordSQL(escaped, fetch)
+	kwSQL := c.keywordSQL(query, fetch)
 
 	// Execute both legs (sequentially — TiDB HTTP API is one query at a time).
 	// Individual leg errors are tolerated as long as at least one succeeds.
@@ -399,10 +397,10 @@ func (c *Client) hybridSearch(
 }
 
 func (c *Client) keywordSearch(
-	ctx context.Context, escaped string,
+	ctx context.Context, query string,
 	limit, fetch int,
 ) ([]Memory, error) {
-	kwSQL := c.keywordSQL(escaped, fetch)
+	kwSQL := c.keywordSQL(query, fetch)
 
 	result, err := c.execSQL(ctx, kwSQL)
 	if err != nil {
@@ -416,9 +414,8 @@ func (c *Client) keywordSearch(
 	return memories, nil
 }
 
-func (c *Client) keywordSQL(escaped string, fetch int) string {
-	// escaped is already sqlEscape'd; wrap in quotes.
-	qv := "'" + escaped + "'"
+func (c *Client) keywordSQL(query string, fetch int) string {
+	qv := sqlQ(query)
 	qs := sqlQ(defaultSpaceID)
 	if c.ftsAvailable {
 		return fmt.Sprintf(
