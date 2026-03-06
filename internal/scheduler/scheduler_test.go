@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -137,7 +138,7 @@ func TestScheduler_HandlesSessionError(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 error message, got %d", len(msgs))
 	}
-	if !contains(msgs[0].Text, "failed") {
+	if !strings.Contains(msgs[0].Text, "failed") {
 		t.Errorf("expected error notification, got %q", msgs[0].Text)
 	}
 }
@@ -161,15 +162,3 @@ func TestScheduler_MissingChannel(t *testing.T) {
 	sched.tick(ctx)
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
-}
-
-func containsSubstr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}

@@ -147,7 +147,7 @@ func TestSeenMsgsEviction_OldEntriesRemoved(t *testing.T) {
 
 	// Insert 15000 entries with old timestamps (well beyond any maxAge).
 	oldTime := time.Now().Add(-1 * time.Hour)
-	for i := 0; i < 15000; i++ {
+	for i := range 15000 {
 		lc.seenMsgs.Store(fmt.Sprintf("msg-%d", i), oldTime)
 	}
 
@@ -177,7 +177,7 @@ func TestSeenMsgsEviction_CapEnforced(t *testing.T) {
 	// Insert 15000 entries with recent timestamps so age-based eviction
 	// won't remove them. This tests the force-evict cap logic.
 	now := time.Now()
-	for i := 0; i < 15000; i++ {
+	for i := range 15000 {
 		lc.seenMsgs.Store(fmt.Sprintf("msg-%d", i), now)
 	}
 
