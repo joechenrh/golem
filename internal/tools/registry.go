@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/joechenrh/golem/internal/llm"
@@ -124,7 +124,7 @@ func (r *Registry) DetectToolHints(text string) []string {
 			hints = append(hints, name)
 		}
 	}
-	sort.Strings(hints)
+	slices.Sort(hints)
 	return hints
 }
 

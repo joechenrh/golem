@@ -3,7 +3,7 @@ package tape
 import (
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -28,7 +28,7 @@ func Discover(dir, prefix string) ([]string, error) {
 			paths = append(paths, filepath.Join(dir, name))
 		}
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
 	return paths, nil
 }
 

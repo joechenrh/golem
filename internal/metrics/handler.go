@@ -1,9 +1,10 @@
 package metrics
 
 import (
+	"cmp"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -11,7 +12,7 @@ import (
 func NewHandler(c *Collector) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agents, uptime := c.Snapshot()
-		sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
+		slices.SortFunc(agents, func(a, b AgentMetrics) int { return cmp.Compare(a.Name, b.Name) })
 
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
@@ -89,6 +90,6 @@ func sortedKeys(m map[string]int64) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }

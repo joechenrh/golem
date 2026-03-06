@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -453,8 +454,8 @@ func rrfMerge(vecRows, kwRows []Memory, limit int) []Memory {
 	for id, s := range scores {
 		ranked = append(ranked, scored{id, s})
 	}
-	sort.Slice(ranked, func(i, j int) bool {
-		return ranked[i].score > ranked[j].score
+	slices.SortFunc(ranked, func(a, b scored) int {
+		return cmp.Compare(b.score, a.score)
 	})
 
 	if len(ranked) > limit {
