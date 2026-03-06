@@ -314,6 +314,17 @@ func (l *LarkChannel) sendCard(
 	return err
 }
 
+// buildCard returns a JSON-encoded Lark interactive card body.
+func buildCard(text string) []byte {
+	card := map[string]any{
+		"elements": []map[string]string{
+			{"tag": "markdown", "content": sanitizeLarkMarkdown(text)},
+		},
+	}
+	content, _ := json.Marshal(card)
+	return content
+}
+
 // sendCardReturnID sends a card and returns the message_id for later patching.
 func (l *LarkChannel) sendCardReturnID(
 	ctx context.Context, chatID, text string,
@@ -321,12 +332,7 @@ func (l *LarkChannel) sendCardReturnID(
 	l.logger.Info("sending lark card",
 		zap.String("chat_id", chatID),
 		zap.Int("text_len", len(text)))
-	card := map[string]any{
-		"elements": []map[string]string{
-			{"tag": "markdown", "content": sanitizeLarkMarkdown(text)},
-		},
-	}
-	content, _ := json.Marshal(card)
+	content := buildCard(text)
 
 	req := larkim.NewCreateMessageReqBuilder().
 		ReceiveIdType("chat_id").
@@ -358,12 +364,7 @@ func (l *LarkChannel) sendCardReturnID(
 func (l *LarkChannel) patchCard(
 	ctx context.Context, messageID, text string,
 ) {
-	card := map[string]any{
-		"elements": []map[string]string{
-			{"tag": "markdown", "content": sanitizeLarkMarkdown(text)},
-		},
-	}
-	content, _ := json.Marshal(card)
+	content := buildCard(text)
 
 	req := larkim.NewPatchMessageReqBuilder().
 		MessageId(messageID).
