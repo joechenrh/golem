@@ -75,12 +75,16 @@ func (h *SafetyHook) checkShell(args string) error {
 	var params struct {
 		Command string `json:"command"`
 	}
-	if json.Unmarshal([]byte(args), &params) != nil || params.Command == "" {
+	if err := json.Unmarshal([]byte(args), &params); err != nil {
+		return fmt.Errorf("safety: cannot parse shell_exec args: %w", err)
+	}
+	if params.Command == "" {
 		return nil
 	}
 
+	cmd := strings.ToLower(params.Command)
 	for _, pat := range dangerousPatterns {
-		if pat.MatchString(params.Command) {
+		if pat.MatchString(cmd) {
 			return fmt.Errorf("blocked dangerous shell command: %s", truncateStr(params.Command, 100))
 		}
 	}
@@ -114,7 +118,10 @@ func (h *SafetyHook) checkWebFetch(args string) error {
 	var params struct {
 		URL string `json:"url"`
 	}
-	if json.Unmarshal([]byte(args), &params) != nil || params.URL == "" {
+	if err := json.Unmarshal([]byte(args), &params); err != nil {
+		return fmt.Errorf("safety: cannot parse web/http args: %w", err)
+	}
+	if params.URL == "" {
 		return nil
 	}
 
@@ -164,7 +171,10 @@ func (h *SafetyHook) checkFileWrite(args string) error {
 	var params struct {
 		Path string `json:"path"`
 	}
-	if json.Unmarshal([]byte(args), &params) != nil || params.Path == "" {
+	if err := json.Unmarshal([]byte(args), &params); err != nil {
+		return fmt.Errorf("safety: cannot parse file write args: %w", err)
+	}
+	if params.Path == "" {
 		return nil
 	}
 
