@@ -261,6 +261,94 @@ func TestSearch_SQLInjection(t *testing.T) {
 	}
 }
 
+func TestHybridSearch_BothLegsFail(t *testing.T) {
+	// When both vector and keyword SQL queries fail, Search must return an error.
+	srv := mockTiDB(t, func(query string) (interface{}, int) {
+		// Both legs return HTTP 500.
+		return map[string]string{"error": "internal error"}, http.StatusInternalServerError
+	})
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	c.autoEmbedModel = "test-model" // triggers hybridSearch path
+
+	_, err := c.Search(context.Background(), "test query", 5)
+	if err == nil {
+		t.Fatal("expected error when both search legs fail, got nil")
+	}
+	if !strings.Contains(err.Error(), "both search legs failed") {
+		t.Errorf("expected 'both search legs failed' in error, got: %s", err.Error())
+	}
+}
+
+func TestHybridSearch_VectorFailsKeywordSucceeds(t *testing.T) {
+	// When only the vector leg fails but keyword succeeds, results are
+	// still returned without error.
+	srv := mockTiDB(t, func(query string) (interface{}, int) {
+		if strings.Contains(query, "VEC_EMBED_COSINE_DISTANCE") {
+			// Vector leg fails.
+			return map[string]string{"error": "vector error"}, http.StatusInternalServerError
+		}
+		// Keyword leg succeeds.
+		return sqlResponse{
+			Types: testColumns,
+			Rows: [][]interface{}{
+				{"kw-1", "keyword result", nil, "golem", nil, float64(1), nil, "2024-01-01", "2024-01-01"},
+			},
+		}, http.StatusOK
+	})
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	c.autoEmbedModel = "test-model"
+
+	results, err := c.Search(context.Background(), "test query", 5)
+	if err != nil {
+		t.Fatalf("expected no error when one leg succeeds, got: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].ID != "kw-1" {
+		t.Errorf("expected result id kw-1, got %s", results[0].ID)
+	}
+}
+
+func TestHybridSearch_KeywordFailsVectorSucceeds(t *testing.T) {
+	// When only the keyword leg fails but vector succeeds, results are
+	// still returned without error.
+	callCount := 0
+	srv := mockTiDB(t, func(query string) (interface{}, int) {
+		callCount++
+		if strings.Contains(query, "VEC_EMBED_COSINE_DISTANCE") {
+			// Vector leg succeeds.
+			return sqlResponse{
+				Types: append(testColumns, sqlColumn{Name: "distance"}),
+				Rows: [][]interface{}{
+					{"vec-1", "vector result", nil, "golem", nil, float64(1), nil, "2024-01-01", "2024-01-01", 0.1},
+				},
+			}, http.StatusOK
+		}
+		// Keyword leg fails.
+		return map[string]string{"error": "keyword error"}, http.StatusInternalServerError
+	})
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	c.autoEmbedModel = "test-model"
+
+	results, err := c.Search(context.Background(), "test query", 5)
+	if err != nil {
+		t.Fatalf("expected no error when one leg succeeds, got: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].ID != "vec-1" {
+		t.Errorf("expected result id vec-1, got %s", results[0].ID)
+	}
+}
+
 func TestRRFMerge(t *testing.T) {
 	vecRows := []Memory{
 		{ID: "a", Content: "alpha"},
