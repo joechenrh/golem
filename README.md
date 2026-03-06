@@ -1,7 +1,7 @@
 # 🤖 Golem
 
 <p align="center">
-  <img src="docs/logo.png" width="500" alt="Golem Logo">
+  <img src="logo.png" width="500" alt="Golem Logo">
 </p>
 
 
