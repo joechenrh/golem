@@ -559,6 +559,9 @@ var headerRe = regexp.MustCompile(`(?m)^(#{1,6})\s+(.+)$`)
 // blockquoteRe matches markdown blockquote lines (e.g. "> text").
 var blockquoteRe = regexp.MustCompile(`(?m)^>\s?(.*)$`)
 
+// inlineCodeRe matches inline code (e.g. "`text`") but not fenced blocks.
+var inlineCodeRe = regexp.MustCompile("`([^`]+)`")
+
 // codeBlockRe splits text on fenced code blocks (``` … ```).
 var codeBlockRe = regexp.MustCompile("(?s)(```.*?```)")
 
@@ -566,6 +569,7 @@ var codeBlockRe = regexp.MustCompile("(?s)(```.*?```)")
 // Lark card markdown supports. Unsupported elements:
 //   - Headers (# … ######) → bold text
 //   - Blockquotes (>) → italic text
+//   - Inline code (`text`) → plain text (backticks stripped)
 //
 // Content inside fenced code blocks is left untouched.
 func sanitizeLarkMarkdown(text string) string {
@@ -576,6 +580,7 @@ func sanitizeLarkMarkdown(text string) string {
 	for i, part := range parts {
 		part = headerRe.ReplaceAllString(part, "**$2**")
 		part = blockquoteRe.ReplaceAllString(part, "*$1*")
+		part = inlineCodeRe.ReplaceAllString(part, "$1")
 		sb.WriteString(part)
 		if i < len(codeBlocks) {
 			sb.WriteString(codeBlocks[i])

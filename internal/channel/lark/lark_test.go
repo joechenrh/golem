@@ -107,7 +107,7 @@ func TestSanitizeLarkMarkdown(t *testing.T) {
 		{
 			"no change for supported syntax",
 			"**bold** and *italic* and `code`",
-			"**bold** and *italic* and `code`",
+			"**bold** and *italic* and code",
 		},
 		{
 			"code block not touched",
