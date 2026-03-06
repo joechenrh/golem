@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,11 @@ type LarkChannel struct {
 	// handler takes too long (e.g. waiting for an LLM response). We track
 	// recently seen message IDs to discard duplicates.
 	seenMsgs sync.Map
+
+	// startedAt is the process startup time. Messages with a Lark
+	// CreateTime before this are stale redeliveries from a previous
+	// process and are dropped.
+	startedAt time.Time
 }
 
 // New creates a LarkChannel with the given credentials.
@@ -64,6 +70,7 @@ func New(
 		client:     client,
 		dispatcher: eventDispatcher,
 		logger:     logger,
+		startedAt:  time.Now(),
 	}
 }
 
@@ -124,6 +131,19 @@ func (l *LarkChannel) onMessageReceive(
 				zap.String("message_id", msgID),
 				zap.String("chat_id", *msg.ChatId))
 			return
+		}
+	}
+
+	// Drop stale redeliveries from before this process started.
+	if msg.CreateTime != nil {
+		if createMs, err := strconv.ParseInt(*msg.CreateTime, 10, 64); err == nil {
+			createAt := time.UnixMilli(createMs)
+			if createAt.Before(l.startedAt) {
+				l.logger.Info("dropping stale lark message from before startup",
+					zap.String("message_id", msgID),
+					zap.Time("create_time", createAt))
+				return
+			}
 		}
 	}
 
