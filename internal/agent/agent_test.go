@@ -532,7 +532,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestBuildSystemPrompt_Persona(t *testing.T) {
+func TestBuildSystemPromptPersona(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 	agent.config.Persona = &config.Persona{
 		Soul:     "You are Dwight, a research brain.",
@@ -557,7 +557,7 @@ func TestBuildSystemPrompt_Persona(t *testing.T) {
 
 	// Layer 2: Operations.
 	if !strings.Contains(prompt, "Always cite sources.") {
-		t.Errorf("prompt missing AGENTS.md content")
+		t.Errorf("prompt missing AGENT.md content")
 	}
 	if !strings.Contains(prompt, "use the available tools immediately") {
 		t.Errorf("prompt missing built-in tool-use instructions")
@@ -582,7 +582,7 @@ func TestBuildSystemPrompt_Persona(t *testing.T) {
 	}
 }
 
-func TestBuildSystemPrompt_PersonaMinimal(t *testing.T) {
+func TestBuildSystemPromptPersonaMinimal(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 	agent.config.Persona = &config.Persona{
 		Soul: "You are a minimal agent.",

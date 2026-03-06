@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestPersonaMemoryTool_ReadEmpty(t *testing.T) {
+func TestPersonaMemoryToolReadEmpty(t *testing.T) {
 	dir := resolvedTempDir(t)
 	memPath := filepath.Join(dir, "MEMORY.md")
 
@@ -22,7 +22,7 @@ func TestPersonaMemoryTool_ReadEmpty(t *testing.T) {
 	}
 }
 
-func TestPersonaMemoryTool_WriteAndRead(t *testing.T) {
+func TestPersonaMemoryToolWriteAndRead(t *testing.T) {
 	dir := resolvedTempDir(t)
 	memPath := filepath.Join(dir, "MEMORY.md")
 
@@ -47,7 +47,7 @@ func TestPersonaMemoryTool_WriteAndRead(t *testing.T) {
 	}
 }
 
-func TestPersonaMemoryTool_WriteCreatesDir(t *testing.T) {
+func TestPersonaMemoryToolWriteCreatesDir(t *testing.T) {
 	dir := resolvedTempDir(t)
 	memPath := filepath.Join(dir, "nested", "deep", "MEMORY.md")
 
@@ -66,7 +66,7 @@ func TestPersonaMemoryTool_WriteCreatesDir(t *testing.T) {
 	}
 }
 
-func TestPersonaMemoryTool_WriteEmptyContent(t *testing.T) {
+func TestPersonaMemoryToolWriteEmptyContent(t *testing.T) {
 	dir := resolvedTempDir(t)
 	memPath := filepath.Join(dir, "MEMORY.md")
 
@@ -77,7 +77,7 @@ func TestPersonaMemoryTool_WriteEmptyContent(t *testing.T) {
 	}
 }
 
-func TestPersonaMemoryTool_InvalidAction(t *testing.T) {
+func TestPersonaMemoryToolInvalidAction(t *testing.T) {
 	dir := resolvedTempDir(t)
 	tool := NewPersonaMemoryTool(filepath.Join(dir, "MEMORY.md"))
 
@@ -87,7 +87,7 @@ func TestPersonaMemoryTool_InvalidAction(t *testing.T) {
 	}
 }
 
-func TestPersonaMemoryTool_InvalidJSON(t *testing.T) {
+func TestPersonaMemoryToolInvalidJSON(t *testing.T) {
 	dir := resolvedTempDir(t)
 	tool := NewPersonaMemoryTool(filepath.Join(dir, "MEMORY.md"))
 
@@ -97,7 +97,7 @@ func TestPersonaMemoryTool_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestPersonaMemoryTool_Metadata(t *testing.T) {
+func TestPersonaMemoryToolMetadata(t *testing.T) {
 	tool := NewPersonaMemoryTool("/tmp/test.md")
 
 	if tool.Name() != "persona_memory" {
@@ -114,7 +114,7 @@ func TestPersonaMemoryTool_Metadata(t *testing.T) {
 	}
 }
 
-func TestPersonaMemoryTool_ReadEmptyFile(t *testing.T) {
+func TestPersonaMemoryToolReadEmptyFile(t *testing.T) {
 	dir := resolvedTempDir(t)
 	memPath := filepath.Join(dir, "MEMORY.md")
 	os.WriteFile(memPath, []byte(""), 0o644)

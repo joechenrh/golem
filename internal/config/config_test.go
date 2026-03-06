@@ -210,7 +210,7 @@ func TestLoadAgentConfig(t *testing.T) {
 	}
 
 	// Agent config: channel + behavior settings.
-	agentDir := filepath.Join(golemDir, "agents", "test-bot")
+	agentDir := filepath.Join(golemDir, "agent", "test-bot")
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestSourceIsolation(t *testing.T) {
 
 	// Put global-tier keys in agent config — they should NOT affect
 	// global-tier fields.
-	agentDir := filepath.Join(golemDir, "agents", "iso-bot")
+	agentDir := filepath.Join(golemDir, "agent", "iso-bot")
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestDiscoverAgents(t *testing.T) {
 	})
 
 	t.Run("with agent subdirs", func(t *testing.T) {
-		agentsDir := filepath.Join(tmpHome, ".golem", "agents")
+		agentsDir := filepath.Join(tmpHome, ".golem", "agent")
 		for _, name := range []string{"default", "lark-bot", "telegram-bot"} {
 			if err := os.MkdirAll(filepath.Join(agentsDir, name), 0o755); err != nil {
 				t.Fatal(err)
@@ -399,12 +399,12 @@ func TestLoadPersona(t *testing.T) {
 	os.WriteFile(filepath.Join(golemDir, "USER.md"), []byte("Name: Alice\nTimezone: UTC"), 0o644)
 
 	// Agent persona files.
-	agentDir := filepath.Join(golemDir, "agents", "persona-bot")
+	agentDir := filepath.Join(golemDir, "agent", "persona-bot")
 	os.MkdirAll(agentDir, 0o755)
 	os.WriteFile(filepath.Join(agentDir, "config.env"), []byte(""), 0o644)
 	os.WriteFile(filepath.Join(agentDir, "SOUL.md"), []byte("You are a research assistant."), 0o644)
 	os.WriteFile(filepath.Join(agentDir, "IDENTITY.md"), []byte("Name: Dwight\nEmoji: magnifier"), 0o644)
-	os.WriteFile(filepath.Join(agentDir, "AGENTS.md"), []byte("Always cite sources."), 0o644)
+	os.WriteFile(filepath.Join(agentDir, "AGENT.md"), []byte("Always cite sources."), 0o644)
 	os.WriteFile(filepath.Join(agentDir, "MEMORY.md"), []byte("User prefers short answers."), 0o644)
 
 	cfg, err := Load("persona-bot", nil)
@@ -440,14 +440,14 @@ func TestLoadPersona(t *testing.T) {
 	}
 }
 
-func TestLoadPersonaFallbackToSystemPrompt(t *testing.T) {
+func TestLoadPersonaFallback(t *testing.T) {
 	clearConfigEnv(t)
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	// Agent with system-prompt.md but no SOUL.md.
-	agentDir := filepath.Join(home, ".golem", "agents", "flat-bot")
+	agentDir := filepath.Join(home, ".golem", "agent", "flat-bot")
 	os.MkdirAll(agentDir, 0o755)
 	os.WriteFile(filepath.Join(agentDir, "config.env"), []byte(""), 0o644)
 	os.WriteFile(filepath.Join(agentDir, "system-prompt.md"), []byte("You are a flat bot."), 0o644)

@@ -24,7 +24,7 @@ type Persona struct {
 	Soul     string // SOUL.md — core identity and personality
 	Identity string // IDENTITY.md — quick reference card
 	User     string // USER.md — who the agent serves (global, shared)
-	Agents   string // AGENTS.md — behavioral rules
+	Agents   string // AGENT.md — behavioral rules
 	Memory   string // MEMORY.md — curated persistent knowledge
 
 	MemoryPath string // absolute path to MEMORY.md (for the tool to write)
@@ -104,7 +104,7 @@ type Config struct {
 //   - LLM settings: model, API keys, base URLs, rate limit
 //   - Skills directory, web search backend
 //
-// Agent config (~/.golem/agents/<agentName>/config.env) provides:
+// Agent config (~/.golem/agent/<agentName>/config.env) provides:
 //   - Agent behavior: max tool iter, shell timeout, context strategy, executor
 //   - Channel credentials: Lark, Telegram
 //   - Sessions, memory, tape dir, log level
@@ -123,7 +123,7 @@ func Load(
 	globalVars := readDotenv(filepath.Join(GolemHome(), "config.env"))
 	var agentVars map[string]string
 	if agentName != "" {
-		agentVars = readDotenv(filepath.Join(GolemHome(), "agents", agentName, "config.env"))
+		agentVars = readDotenv(filepath.Join(GolemHome(), "agent", agentName, "config.env"))
 	}
 
 	g := envLookup(globalVars)
@@ -177,7 +177,7 @@ func Load(
 
 	// Load per-agent system prompt if present (fallback when no persona).
 	if agentName != "" && !cfg.Persona.HasPersona() {
-		promptPath := filepath.Join(GolemHome(), "agents", agentName, "system-prompt.md")
+		promptPath := filepath.Join(GolemHome(), "agent", agentName, "system-prompt.md")
 		if data, err := os.ReadFile(promptPath); err == nil {
 			cfg.SystemPrompt = strings.TrimSpace(string(data))
 		}
@@ -350,11 +350,11 @@ func (c *Config) HasRemoteChannels() bool {
 	return false
 }
 
-// DiscoverAgents reads ~/.golem/agents/ and returns the names of all
+// DiscoverAgents reads ~/.golem/agent/ and returns the names of all
 // subdirectories. Each subdirectory represents a named agent configuration.
 // Returns nil (not an error) if the directory does not exist.
 func DiscoverAgents() ([]string, error) {
-	agentsDir := filepath.Join(GolemHome(), "agents")
+	agentsDir := filepath.Join(GolemHome(), "agent")
 	entries, err := os.ReadDir(agentsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -373,7 +373,7 @@ func DiscoverAgents() ([]string, error) {
 
 // loadPersona reads the three-layer persona files for an agent.
 // USER.md is read from the global ~/.golem/ directory (shared by all agents).
-// All other files are read from ~/.golem/agents/<name>/.
+// All other files are read from ~/.golem/agent/<name>/.
 // Returns a Persona with whatever files exist; missing files are empty strings.
 func loadPersona(agentName string) *Persona {
 	p := &Persona{}
@@ -387,7 +387,7 @@ func loadPersona(agentName string) *Persona {
 		return p
 	}
 
-	agentDir := filepath.Join(GolemHome(), "agents", agentName)
+	agentDir := filepath.Join(GolemHome(), "agent", agentName)
 
 	// Layer 1: SOUL.md, IDENTITY.md (agent-specific).
 	if data, err := os.ReadFile(filepath.Join(agentDir, "SOUL.md")); err == nil {
@@ -397,8 +397,8 @@ func loadPersona(agentName string) *Persona {
 		p.Identity = strings.TrimSpace(string(data))
 	}
 
-	// Layer 2: AGENTS.md.
-	if data, err := os.ReadFile(filepath.Join(agentDir, "AGENTS.md")); err == nil {
+	// Layer 2: AGENT.md.
+	if data, err := os.ReadFile(filepath.Join(agentDir, "AGENT.md")); err == nil {
 		p.Agents = strings.TrimSpace(string(data))
 	}
 
