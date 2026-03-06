@@ -408,6 +408,7 @@ func BuildAgent(
 			ToolFactory:     toolFactory,
 			ContextStrategy: cfg.ContextStrategy,
 			AgentName:       name,
+			MetricsHook:     metricsHook,
 		}, logger)
 
 		// Restore sessions from existing tape files.

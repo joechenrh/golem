@@ -26,6 +26,7 @@ type SessionFactory struct {
 	ToolFactory     func() *tools.Registry // creates a fresh registry per session
 	ContextStrategy string
 	AgentName       string
+	MetricsHook     *hooks.MetricsHook // shared across all sessions for this agent
 }
 
 // SessionManager maintains isolated Session instances keyed by channel ID
@@ -114,6 +115,9 @@ func (sm *SessionManager) createSession(
 	hookBus := hooks.NewBus(sm.logger)
 	hookBus.Register(hooks.NewLoggingHook(sm.logger))
 	hookBus.Register(hooks.NewSafetyHook())
+	if sm.factory.MetricsHook != nil {
+		hookBus.Register(sm.factory.MetricsHook)
+	}
 
 	registry := sm.factory.ToolFactory()
 
@@ -146,6 +150,9 @@ func (sm *SessionManager) createSessionFromTape(
 	hookBus := hooks.NewBus(sm.logger)
 	hookBus.Register(hooks.NewLoggingHook(sm.logger))
 	hookBus.Register(hooks.NewSafetyHook())
+	if sm.factory.MetricsHook != nil {
+		hookBus.Register(sm.factory.MetricsHook)
+	}
 
 	registry := sm.factory.ToolFactory()
 
