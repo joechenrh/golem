@@ -420,7 +420,7 @@ func (c *anthropicClient) convertResponse(
 			cr.ToolCalls = append(cr.ToolCalls, ToolCall{
 				ID:        block.ID,
 				Name:      block.Name,
-				Arguments: string(block.Input),
+				Arguments: NormalizeArgs(string(block.Input)),
 			})
 		}
 	}
