@@ -226,3 +226,74 @@ func TestSandboxError_Message(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", e.Error(), want)
 	}
 }
+
+func TestReadFile_SymlinkToFileOutsideSandbox(t *testing.T) {
+	// Symlink inside sandbox pointing directly to a file outside it.
+	sandbox := resolvedTempDir(t)
+	outside := resolvedTempDir(t)
+
+	secretPath := filepath.Join(outside, "secret.txt")
+	os.WriteFile(secretPath, []byte("top-secret"), 0o644)
+
+	// Create symlink: sandbox/link.txt -> outside/secret.txt
+	os.Symlink(secretPath, filepath.Join(sandbox, "link.txt"))
+
+	lfs, err := NewLocalFS(sandbox)
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+
+	// Reading through the symlink must be blocked.
+	_, err = lfs.ReadFile("link.txt")
+	if err == nil {
+		t.Fatal("expected error when reading symlink pointing outside sandbox")
+	}
+	var se *SandboxError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected SandboxError, got %T: %v", err, err)
+	}
+}
+
+func TestReadFile_NormalFileInsideSandbox(t *testing.T) {
+	sandbox := resolvedTempDir(t)
+
+	os.WriteFile(filepath.Join(sandbox, "safe.txt"), []byte("hello"), 0o644)
+
+	lfs, err := NewLocalFS(sandbox)
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+
+	data, err := lfs.ReadFile("safe.txt")
+	if err != nil {
+		t.Fatalf("ReadFile(safe.txt): %v", err)
+	}
+	if string(data) != "hello" {
+		t.Errorf("ReadFile = %q, want %q", data, "hello")
+	}
+}
+
+func TestReadFile_SymlinkWithinSandbox(t *testing.T) {
+	// A symlink that points to another file inside the same sandbox must work.
+	sandbox := resolvedTempDir(t)
+
+	// Create a real file inside the sandbox.
+	os.MkdirAll(filepath.Join(sandbox, "sub"), 0o755)
+	os.WriteFile(filepath.Join(sandbox, "sub", "real.txt"), []byte("allowed"), 0o644)
+
+	// Create symlink: sandbox/link.txt -> sandbox/sub/real.txt
+	os.Symlink(filepath.Join(sandbox, "sub", "real.txt"), filepath.Join(sandbox, "link.txt"))
+
+	lfs, err := NewLocalFS(sandbox)
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+
+	data, err := lfs.ReadFile("link.txt")
+	if err != nil {
+		t.Fatalf("ReadFile(link.txt): %v", err)
+	}
+	if string(data) != "allowed" {
+		t.Errorf("ReadFile = %q, want %q", data, "allowed")
+	}
+}
