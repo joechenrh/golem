@@ -273,6 +273,14 @@ func BuildAgent(
 	metricsHook := hooks.NewMetricsHook()
 	hookBus.Register(metricsHook)
 
+	auditPath := filepath.Join(cfg.TapeDir, fmt.Sprintf("audit-%s-%s.jsonl", name, time.Now().Format("20060102-150405")))
+	auditHook, err := hooks.NewAuditHook(auditPath)
+	if err != nil {
+		logger.Warn("failed to create audit hook", zap.Error(err))
+	} else {
+		hookBus.Register(auditHook)
+	}
+
 	// 6. Build channel registry.
 	channels := make(map[string]channel.Channel)
 
