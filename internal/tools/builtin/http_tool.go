@@ -12,6 +12,21 @@ import (
 	"github.com/joechenrh/golem/internal/llm"
 )
 
+// blockedHeaders are request headers that the LLM is not allowed to set
+// to prevent credential exfiltration and request smuggling.
+var blockedHeaders = map[string]bool{
+	"authorization":       true,
+	"proxy-authorization": true,
+	"cookie":              true,
+	"set-cookie":          true,
+	"x-forwarded-for":     true,
+	"x-real-ip":           true,
+}
+
+func isBlockedHeader(name string) bool {
+	return blockedHeaders[strings.ToLower(name)]
+}
+
 // HTTPRequestTool makes arbitrary HTTP requests (GET, POST, PUT, etc.).
 // Unlike web_fetch which extracts readable text from HTML, this tool returns
 // raw response bodies and exposes headers, status codes, and custom methods.
@@ -97,6 +112,9 @@ func (t *HTTPRequestTool) Execute(
 		return "Error: " + err.Error(), nil
 	}
 	for k, v := range params.Headers {
+		if isBlockedHeader(k) {
+			return fmt.Sprintf("Error: setting header %q is not allowed for security reasons", k), nil
+		}
 		req.Header.Set(k, v)
 	}
 
