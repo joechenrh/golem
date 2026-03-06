@@ -161,4 +161,3 @@ func TestScheduler_MissingChannel(t *testing.T) {
 	// Should not panic.
 	sched.tick(ctx)
 }
-

@@ -13,8 +13,8 @@ import (
 )
 
 type tidbResponse struct {
-	Types []tidbColumn    `json:"types"`
-	Rows  [][]any `json:"rows"`
+	Types []tidbColumn `json:"types"`
+	Rows  [][]any      `json:"rows"`
 }
 
 type tidbColumn struct {

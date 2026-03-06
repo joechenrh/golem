@@ -93,7 +93,7 @@ func estimateStringTokens(s string) int {
 			ascii++
 		}
 	}
-	return (ascii + 3) / 4 + cjk
+	return (ascii+3)/4 + cjk
 }
 
 // isCJK returns true for CJK Unified Ideographs and common CJK ranges.

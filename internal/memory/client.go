@@ -2,12 +2,12 @@ package memory
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"cmp"
 	"slices"
 	"strings"
 	"sync"
@@ -154,8 +154,8 @@ func (c *Client) doInitSchema(ctx context.Context) {
 
 // sqlResponse is the TiDB HTTP Data API response format.
 type sqlResponse struct {
-	Types []sqlColumn     `json:"types"`
-	Rows  [][]any `json:"rows"`
+	Types []sqlColumn `json:"types"`
+	Rows  [][]any     `json:"rows"`
 }
 
 type sqlColumn struct {
