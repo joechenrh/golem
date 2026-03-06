@@ -3,7 +3,9 @@ package lark
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -137,6 +139,63 @@ func TestSendSkipsDuplicateChat(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Send to duplicate chat returned error: %v", err)
+	}
+}
+
+func TestSeenMsgsEviction_OldEntriesRemoved(t *testing.T) {
+	lc := &LarkChannel{logger: zap.NewNop()}
+
+	// Insert 15000 entries with old timestamps (well beyond any maxAge).
+	oldTime := time.Now().Add(-1 * time.Hour)
+	for i := 0; i < 15000; i++ {
+		lc.seenMsgs.Store(fmt.Sprintf("msg-%d", i), oldTime)
+	}
+
+	// Run the eviction loop with a very short maxAge so entries are immediately
+	// considered expired. Cancel the context after the first tick fires.
+	maxAge := 10 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	lc.seenMsgsEvictionLoop(ctx, maxAge)
+
+	// Count remaining entries -- all should be evicted because they are older
+	// than maxAge.
+	remaining := 0
+	lc.seenMsgs.Range(func(_, _ any) bool {
+		remaining++
+		return true
+	})
+	if remaining > 0 {
+		t.Errorf("expected 0 remaining entries after eviction of old entries, got %d", remaining)
+	}
+}
+
+func TestSeenMsgsEviction_CapEnforced(t *testing.T) {
+	lc := &LarkChannel{logger: zap.NewNop()}
+
+	// Insert 15000 entries with recent timestamps so age-based eviction
+	// won't remove them. This tests the force-evict cap logic.
+	now := time.Now()
+	for i := 0; i < 15000; i++ {
+		lc.seenMsgs.Store(fmt.Sprintf("msg-%d", i), now)
+	}
+
+	// Use a long maxAge so none expire by age, but the cap (maxSeenMsgs=10000)
+	// triggers force-eviction.
+	maxAge := 10 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	lc.seenMsgsEvictionLoop(ctx, maxAge)
+
+	remaining := 0
+	lc.seenMsgs.Range(func(_, _ any) bool {
+		remaining++
+		return true
+	})
+	if remaining > maxSeenMsgs {
+		t.Errorf("expected at most %d remaining entries after cap enforcement, got %d", maxSeenMsgs, remaining)
 	}
 }
 
