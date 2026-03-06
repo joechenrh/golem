@@ -18,7 +18,7 @@ var testColumns = []sqlColumn{
 // mockTiDB creates a test server that mimics the TiDB HTTP Data API.
 // handler receives the SQL query and returns the response. Init DDL queries
 // (CREATE TABLE, ALTER TABLE, fts probe) are auto-handled with empty success.
-func mockTiDB(t *testing.T, handler func(query string) (interface{}, int)) *httptest.Server {
+func mockTiDB(t *testing.T, handler func(query string) (any, int)) *httptest.Server {
 	t.Helper()
 	return httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -60,7 +60,7 @@ func newTestClient(srv *httptest.Server) *Client {
 }
 
 func TestStore(t *testing.T) {
-	srv := mockTiDB(t, func(query string) (interface{}, int) {
+	srv := mockTiDB(t, func(query string) (any, int) {
 		if !strings.Contains(query, "INSERT INTO") {
 			t.Errorf("expected INSERT, got: %s", query)
 		}
@@ -97,7 +97,7 @@ func TestStore(t *testing.T) {
 }
 
 func TestStore_NoOptionals(t *testing.T) {
-	srv := mockTiDB(t, func(query string) (interface{}, int) {
+	srv := mockTiDB(t, func(query string) (any, int) {
 		if !strings.Contains(query, "INSERT INTO") {
 			t.Errorf("expected INSERT, got: %s", query)
 		}
@@ -116,13 +116,13 @@ func TestStore_NoOptionals(t *testing.T) {
 }
 
 func TestSearch_LIKE(t *testing.T) {
-	srv := mockTiDB(t, func(query string) (interface{}, int) {
+	srv := mockTiDB(t, func(query string) (any, int) {
 		// Client has no autoEmbedModel and FTS probe succeeds (empty response = ok),
 		// so ftsAvailable=true and it will use FTS. But since our mock returns success
 		// for init, it thinks FTS is available. Let's just accept any search query.
 		return sqlResponse{
 			Types: testColumns,
-			Rows: [][]interface{}{
+			Rows: [][]any{
 				{"mem-1", "first result", nil, "golem", `["tag1"]`, float64(1), nil, "2024-01-01", "2024-01-01"},
 				{"mem-2", "second result", "k2", nil, nil, float64(1), nil, "2024-01-01", "2024-01-01"},
 			},
@@ -147,8 +147,8 @@ func TestSearch_LIKE(t *testing.T) {
 }
 
 func TestSearch_EmptyResults(t *testing.T) {
-	srv := mockTiDB(t, func(query string) (interface{}, int) {
-		return sqlResponse{Types: testColumns, Rows: [][]interface{}{}}, http.StatusOK
+	srv := mockTiDB(t, func(query string) (any, int) {
+		return sqlResponse{Types: testColumns, Rows: [][]any{}}, http.StatusOK
 	})
 	defer srv.Close()
 
@@ -163,7 +163,7 @@ func TestSearch_EmptyResults(t *testing.T) {
 }
 
 func TestStore_ServerError(t *testing.T) {
-	srv := mockTiDB(t, func(query string) (interface{}, int) {
+	srv := mockTiDB(t, func(query string) (any, int) {
 		return map[string]string{"error": "internal error"}, http.StatusInternalServerError
 	})
 	defer srv.Close()
@@ -217,7 +217,7 @@ func TestSQLNullableQ(t *testing.T) {
 
 func TestStore_SQLInjection(t *testing.T) {
 	var capturedQuery string
-	srv := mockTiDB(t, func(query string) (interface{}, int) {
+	srv := mockTiDB(t, func(query string) (any, int) {
 		capturedQuery = query
 		return sqlResponse{}, http.StatusOK
 	})
@@ -243,9 +243,9 @@ func TestStore_SQLInjection(t *testing.T) {
 
 func TestSearch_SQLInjection(t *testing.T) {
 	var capturedQuery string
-	srv := mockTiDB(t, func(query string) (interface{}, int) {
+	srv := mockTiDB(t, func(query string) (any, int) {
 		capturedQuery = query
-		return sqlResponse{Types: testColumns, Rows: [][]interface{}{}}, http.StatusOK
+		return sqlResponse{Types: testColumns, Rows: [][]any{}}, http.StatusOK
 	})
 	defer srv.Close()
 
@@ -263,7 +263,7 @@ func TestSearch_SQLInjection(t *testing.T) {
 
 func TestHybridSearch_BothLegsFail(t *testing.T) {
 	// When both vector and keyword SQL queries fail, Search must return an error.
-	srv := mockTiDB(t, func(query string) (interface{}, int) {
+	srv := mockTiDB(t, func(query string) (any, int) {
 		// Both legs return HTTP 500.
 		return map[string]string{"error": "internal error"}, http.StatusInternalServerError
 	})
@@ -284,7 +284,7 @@ func TestHybridSearch_BothLegsFail(t *testing.T) {
 func TestHybridSearch_VectorFailsKeywordSucceeds(t *testing.T) {
 	// When only the vector leg fails but keyword succeeds, results are
 	// still returned without error.
-	srv := mockTiDB(t, func(query string) (interface{}, int) {
+	srv := mockTiDB(t, func(query string) (any, int) {
 		if strings.Contains(query, "VEC_EMBED_COSINE_DISTANCE") {
 			// Vector leg fails.
 			return map[string]string{"error": "vector error"}, http.StatusInternalServerError
@@ -292,7 +292,7 @@ func TestHybridSearch_VectorFailsKeywordSucceeds(t *testing.T) {
 		// Keyword leg succeeds.
 		return sqlResponse{
 			Types: testColumns,
-			Rows: [][]interface{}{
+			Rows: [][]any{
 				{"kw-1", "keyword result", nil, "golem", nil, float64(1), nil, "2024-01-01", "2024-01-01"},
 			},
 		}, http.StatusOK
@@ -318,13 +318,13 @@ func TestHybridSearch_KeywordFailsVectorSucceeds(t *testing.T) {
 	// When only the keyword leg fails but vector succeeds, results are
 	// still returned without error.
 	callCount := 0
-	srv := mockTiDB(t, func(query string) (interface{}, int) {
+	srv := mockTiDB(t, func(query string) (any, int) {
 		callCount++
 		if strings.Contains(query, "VEC_EMBED_COSINE_DISTANCE") {
 			// Vector leg succeeds.
 			return sqlResponse{
 				Types: append(testColumns, sqlColumn{Name: "distance"}),
-				Rows: [][]interface{}{
+				Rows: [][]any{
 					{"vec-1", "vector result", nil, "golem", nil, float64(1), nil, "2024-01-01", "2024-01-01", 0.1},
 				},
 			}, http.StatusOK

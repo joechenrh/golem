@@ -14,7 +14,7 @@ import (
 
 type tidbResponse struct {
 	Types []tidbColumn    `json:"types"`
-	Rows  [][]interface{} `json:"rows"`
+	Rows  [][]any `json:"rows"`
 }
 
 type tidbColumn struct {
@@ -99,7 +99,7 @@ func TestMemoryRecallTool_Execute(t *testing.T) {
 	client := newTestMemoryClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(tidbResponse{
 			Types: memoryColumns,
-			Rows: [][]interface{}{
+			Rows: [][]any{
 				{"mem-1", "deploy key is on server X", "deploy-key", "golem", `["infra"]`, float64(1), nil, "2024-01-01", "2024-01-01"},
 				{"mem-2", "auth flow uses JWT tokens", nil, "claude", nil, float64(1), nil, "2024-01-01", "2024-01-01"},
 			},
@@ -127,7 +127,7 @@ func TestMemoryRecallTool_Execute(t *testing.T) {
 
 func TestMemoryRecallTool_EmptyResults(t *testing.T) {
 	client := newTestMemoryClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(tidbResponse{Types: memoryColumns, Rows: [][]interface{}{}})
+		json.NewEncoder(w).Encode(tidbResponse{Types: memoryColumns, Rows: [][]any{}})
 	}))
 
 	tool := NewMemoryRecallTool(client)

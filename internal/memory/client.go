@@ -154,7 +154,7 @@ func (c *Client) doInitSchema(ctx context.Context) {
 // sqlResponse is the TiDB HTTP Data API response format.
 type sqlResponse struct {
 	Types []sqlColumn     `json:"types"`
-	Rows  [][]interface{} `json:"rows"`
+	Rows  [][]any `json:"rows"`
 }
 
 type sqlColumn struct {
@@ -201,7 +201,7 @@ func (c *Client) execSQL(
 // Row parsing helpers
 // ---------------------------------------------------------------------------
 
-func rowToMemory(row []interface{}, colIdx map[string]int) Memory {
+func rowToMemory(row []any, colIdx map[string]int) Memory {
 	m := Memory{}
 	if i, ok := colIdx["id"]; ok {
 		m.ID, _ = row[i].(string)
