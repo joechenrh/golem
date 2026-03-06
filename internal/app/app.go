@@ -545,6 +545,17 @@ func BuildToolRegistry(
 		logger.Debug("skills discovery", zap.Error(err))
 	}
 
+	// Load external plugin tools from ~/.golem/plugins/.
+	pluginDir := filepath.Join(config.GolemHome(), "plugins")
+	extTools, err := tools.LoadExternalTools(pluginDir)
+	if err != nil {
+		logger.Warn("external tool loading failed", zap.Error(err))
+	}
+	for _, et := range extTools {
+		registry.Register(et)
+		logger.Info("loaded external tool", zap.String("name", et.Name()))
+	}
+
 	// Cache read-only tool results to avoid redundant calls.
 	cache := middleware.NewCacheMiddleware(60*time.Second, []string{
 		"read_file", "list_directory", "search_files", "web_search", "web_fetch",
