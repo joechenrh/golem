@@ -419,6 +419,7 @@ func BuildToolRegistry(
 	registry.RegisterAll(
 		builtin.NewWebSearchTool(webClient, cfg.WebSearchBackend),
 		builtin.NewWebFetchTool(webClient),
+		builtin.NewHTTPRequestTool(webClient),
 	)
 
 	// Lark tools (pre-expanded for immediate full schema).

@@ -32,7 +32,7 @@ func (h *SafetyHook) Handle(_ context.Context, event Event) error {
 	switch toolName {
 	case "shell_exec":
 		return h.checkShell(args)
-	case "web_fetch":
+	case "web_fetch", "http_request":
 		return h.checkWebFetch(args)
 	case "write_file", "edit_file":
 		return h.checkFileWrite(args)
@@ -46,21 +46,21 @@ func (h *SafetyHook) Handle(_ context.Context, event Event) error {
 // exfiltrating, or otherwise unsafe for an autonomous agent.
 var dangerousPatterns = []*regexp.Regexp{
 	// Destructive filesystem operations.
-	regexp.MustCompile(`\brm\s+(-[a-zA-Z]*[rR]|-[a-zA-Z]*f)[a-zA-Z]*\s+/`),    // rm -rf / or rm -r /
-	regexp.MustCompile(`\brm\s+(-[a-zA-Z]*[rR]|-[a-zA-Z]*f)[a-zA-Z]*\s+~`),     // rm -rf ~
-	regexp.MustCompile(`\bmkfs\b`),                                                // format filesystem
-	regexp.MustCompile(`\bdd\b.*\bof=/dev/`),                                      // raw disk write
-	regexp.MustCompile(`>\s*/dev/sd[a-z]`),                                        // redirect to block device
-	regexp.MustCompile(`:\(\)\s*\{\s*:\|\s*:\s*&\s*\}`),                           // fork bomb
-	regexp.MustCompile(`\bchmod\s+(-[a-zA-Z]*\s+)*777\s+/`),                      // chmod 777 on root paths
-	regexp.MustCompile(`\bchown\s+(-[a-zA-Z]*\s+)*root\b.*\s+/`),                 // chown root on system paths
+	regexp.MustCompile(`\brm\s+(-[a-zA-Z]*[rR]|-[a-zA-Z]*f)[a-zA-Z]*\s+/`), // rm -rf / or rm -r /
+	regexp.MustCompile(`\brm\s+(-[a-zA-Z]*[rR]|-[a-zA-Z]*f)[a-zA-Z]*\s+~`), // rm -rf ~
+	regexp.MustCompile(`\bmkfs\b`),                                         // format filesystem
+	regexp.MustCompile(`\bdd\b.*\bof=/dev/`),                               // raw disk write
+	regexp.MustCompile(`>\s*/dev/sd[a-z]`),                                 // redirect to block device
+	regexp.MustCompile(`:\(\)\s*\{\s*:\|\s*:\s*&\s*\}`),                    // fork bomb
+	regexp.MustCompile(`\bchmod\s+(-[a-zA-Z]*\s+)*777\s+/`),                // chmod 777 on root paths
+	regexp.MustCompile(`\bchown\s+(-[a-zA-Z]*\s+)*root\b.*\s+/`),           // chown root on system paths
 
 	// Exfiltration / remote code execution.
-	regexp.MustCompile(`\bcurl\b.*\|\s*(ba)?sh`),                                  // curl | sh
-	regexp.MustCompile(`\bwget\b.*\|\s*(ba)?sh`),                                  // wget | sh
-	regexp.MustCompile(`\bcurl\b.*\|\s*python`),                                   // curl | python
-	regexp.MustCompile(`\bwget\b.*-O\s*-\s*\|\s*(ba)?sh`),                         // wget -O - | sh
-	regexp.MustCompile(`\beval\s*\$\(curl`),                                       // eval $(curl ...)
+	regexp.MustCompile(`\bcurl\b.*\|\s*(ba)?sh`),                                // curl | sh
+	regexp.MustCompile(`\bwget\b.*\|\s*(ba)?sh`),                                // wget | sh
+	regexp.MustCompile(`\bcurl\b.*\|\s*python`),                                 // curl | python
+	regexp.MustCompile(`\bwget\b.*-O\s*-\s*\|\s*(ba)?sh`),                       // wget -O - | sh
+	regexp.MustCompile(`\beval\s*\$\(curl`),                                     // eval $(curl ...)
 	regexp.MustCompile(`\bnc\s+(-[a-zA-Z]*\s+)*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+`), // netcat to IP
 
 	// Shutdown / reboot.
@@ -99,7 +99,7 @@ var privateNetworks = func() []*net.IPNet {
 		"169.254.0.0/16", // link-local + AWS metadata
 		"0.0.0.0/8",
 		"::1/128",
-		"fc00::/7", // IPv6 ULA
+		"fc00::/7",  // IPv6 ULA
 		"fe80::/10", // IPv6 link-local
 	}
 	var nets []*net.IPNet
@@ -149,15 +149,15 @@ func (h *SafetyHook) checkWebFetch(args string) error {
 
 var sensitivePathPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(^|/)\.env($|\.)`),           // .env, .env.local, .env.production
-	regexp.MustCompile(`(^|/)\.git/config$`),          // git config
-	regexp.MustCompile(`(^|/)id_rsa`),                 // SSH keys
-	regexp.MustCompile(`(^|/)id_ed25519`),             // SSH keys
-	regexp.MustCompile(`(^|/)\.ssh/`),                 // SSH directory
-	regexp.MustCompile(`(^|/)credentials(\.json)?$`),  // credential files
-	regexp.MustCompile(`(^|/)\.aws/`),                 // AWS config
-	regexp.MustCompile(`(^|/)\.kube/`),                // Kubernetes config
-	regexp.MustCompile(`(^|/)\.gnupg/`),               // GPG keys
-	regexp.MustCompile(`(^|/)authorized_keys$`),       // SSH authorized keys
+	regexp.MustCompile(`(^|/)\.git/config$`),         // git config
+	regexp.MustCompile(`(^|/)id_rsa`),                // SSH keys
+	regexp.MustCompile(`(^|/)id_ed25519`),            // SSH keys
+	regexp.MustCompile(`(^|/)\.ssh/`),                // SSH directory
+	regexp.MustCompile(`(^|/)credentials(\.json)?$`), // credential files
+	regexp.MustCompile(`(^|/)\.aws/`),                // AWS config
+	regexp.MustCompile(`(^|/)\.kube/`),               // Kubernetes config
+	regexp.MustCompile(`(^|/)\.gnupg/`),              // GPG keys
+	regexp.MustCompile(`(^|/)authorized_keys$`),      // SSH authorized keys
 }
 
 func (h *SafetyHook) checkFileWrite(args string) error {
