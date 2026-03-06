@@ -396,7 +396,7 @@ processMessages()
 
 ```
 main() creates the "default" CLI agent, then:
-    ├─ config.DiscoverAgents() → list ~/.golem/agent/ subdirs
+    ├─ config.DiscoverAgents() → list ~/.golem/agents/ subdirs
     ├─ For each agent with remote channels (Lark/Telegram):
     │   ├─ BuildAgent(agentName) with agent-specific config
     │   └─ Run in background goroutine
@@ -412,7 +412,7 @@ main() creates the "default" CLI agent, then:
 | Tier | File | Scope |
 |---|---|---|
 | Global | `~/.golem/config.env` | LLM keys, model, skills dir, rate limits, web search backend |
-| Agent | `~/.golem/agent/<name>/config.env` | Behavior (max iterations, timeout, context strategy), channels (Lark, Telegram), storage, logging |
+| Agent | `~/.golem/agents/<name>/config.env` | Behavior (max iterations, timeout, context strategy), channels (Lark, Telegram), storage, logging |
 
 Precedence: **CLI flags** > **shell environment** > **config.env** > **defaults**.
 
@@ -609,7 +609,7 @@ Prefixed with `:` in the CLI. Also detected in assistant output (lines starting 
    - Tool registry with middleware chain
    - CLI channel + optional Lark/Telegram channels
    - SessionManager for remote channels
-5. Discover and build background agents (`~/.golem/agent/*/`)
+5. Discover and build background agents (`~/.golem/agents/*/`)
 6. Start all agents concurrently via errgroup
 7. Signal handling: SIGINT/SIGTERM trigger graceful shutdown
 

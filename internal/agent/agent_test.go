@@ -557,7 +557,7 @@ func TestBuildSystemPromptPersona(t *testing.T) {
 
 	// Layer 2: Operations.
 	if !strings.Contains(prompt, "Always cite sources.") {
-		t.Errorf("prompt missing AGENT.md content")
+		t.Errorf("prompt missing AGENTS.md content")
 	}
 	if !strings.Contains(prompt, "use the available tools immediately") {
 		t.Errorf("prompt missing built-in tool-use instructions")

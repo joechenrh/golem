@@ -595,7 +595,7 @@ func (s *Session) helpText() string {
 // When persona files are configured, the prompt is assembled in three layers:
 //
 //	Layer 1 (Identity): SOUL.md, IDENTITY.md, USER.md
-//	Layer 2 (Operations): AGENT.md + built-in tool-use instructions
+//	Layer 2 (Operations): AGENTS.md + built-in tool-use instructions
 //	Layer 3 (Knowledge): memory system description + MEMORY.md
 //
 // Falls back to the flat system-prompt.md approach when no persona exists.

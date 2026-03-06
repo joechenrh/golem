@@ -470,7 +470,7 @@ func BuildToolRegistry(
 	return registry
 }
 
-// DiscoverAndBuildBackgroundAgents finds agent configs in ~/.golem/agent/,
+// DiscoverAndBuildBackgroundAgents finds agent configs in ~/.golem/agents/,
 // loads each one, and builds an AgentInstance for those with remote channels.
 // claimedLarkApps tracks Lark app IDs already in use to avoid duplicate
 // WebSocket connections — agents whose LarkAppID is already claimed are skipped.
