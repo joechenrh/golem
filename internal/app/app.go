@@ -29,6 +29,7 @@ import (
 	"github.com/joechenrh/golem/internal/memory"
 	"github.com/joechenrh/golem/internal/middleware"
 	"github.com/joechenrh/golem/internal/redact"
+	"github.com/joechenrh/golem/internal/scheduler"
 	"github.com/joechenrh/golem/internal/tape"
 	"github.com/joechenrh/golem/internal/tools"
 	"github.com/joechenrh/golem/internal/tools/builtin"
@@ -39,15 +40,21 @@ var ErrAgentQuit = errors.New("agent quit")
 
 // AgentInstance bundles a running agent with its channels and metadata.
 type AgentInstance struct {
-	Name     string
-	Config   *config.Config
-	Logger   *zap.Logger
-	Session  *agent.Session        // default session (used by CLI)
-	Sessions *agent.SessionManager // per-chat sessions (used by remote channels)
-	Channels map[string]channel.Channel
-	Printer  channel.SystemPrinter // formatted output (e.g. CLI channel)
-	Registry *tools.Registry
-	TapePath string
+	Name       string
+	Config     *config.Config
+	Logger     *zap.Logger
+	LLMClient  llm.Client
+	Session    *agent.Session        // default session (used by CLI)
+	Sessions   *agent.SessionManager // per-chat sessions (used by remote channels)
+	Channels   map[string]channel.Channel
+	Printer    channel.SystemPrinter // formatted output (e.g. CLI channel)
+	Registry   *tools.Registry
+	TapePath   string
+	SchedStore *scheduler.Store     // schedule persistence (nil if no agent name)
+	Sched      *scheduler.Scheduler // background scheduler (nil until Run)
+
+	// toolFactory builds a fresh tool registry for ephemeral sessions (scheduler, sub-agents).
+	toolFactory func() *tools.Registry
 }
 
 // Run starts all channels, processes incoming messages, and blocks until the
@@ -70,6 +77,18 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 		inst.Sessions.StartEvictionLoop(gctx,
 			10*time.Minute, inst.Config.SessionIdleTime)
 		defer inst.Sessions.Shutdown()
+	}
+
+	// Start the scheduler if schedules are configured.
+	if inst.SchedStore != nil {
+		factory := &appSessionFactory{
+			llmClient:   inst.LLMClient,
+			cfg:         inst.Config,
+			logger:      inst.Logger,
+			toolFactory: inst.toolFactory,
+		}
+		inst.Sched = scheduler.New(inst.SchedStore, inst.Channels, factory, inst.Logger)
+		go inst.Sched.Run(gctx)
 	}
 
 	var g errgroup.Group
@@ -298,10 +317,33 @@ func BuildAgent(
 		channels["lark"] = larkCh
 	}
 
-	// 7. Build tool registry.
+	// 7. Initialize schedule store (per-agent persistence).
+	var schedStore *scheduler.Store
+	if name != "" {
+		schedPath := filepath.Join(config.GolemHome(), "agents", name, "schedules.json")
+		schedStore = scheduler.NewStore(schedPath)
+		if err := schedStore.Load(); err != nil {
+			logger.Warn("failed to load schedules", zap.Error(err))
+		}
+	}
+
+	// 8. Build tool registry.
 	registry := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
 
-	// 8. Register spawn_agent tool. The runner creates a sub-agent that
+	// Register schedule tools on the default registry.
+	// The scheduler reference (nil here) is set later in Run() once the Scheduler exists.
+	if schedStore != nil {
+		registry.RegisterAll(
+			builtin.NewScheduleAddTool(schedStore, nil),
+			builtin.NewScheduleListTool(schedStore),
+			builtin.NewScheduleRemoveTool(schedStore, nil),
+		)
+		registry.Expand("schedule_add")
+		registry.Expand("schedule_list")
+		registry.Expand("schedule_remove")
+	}
+
+	// 9. Register spawn_agent tool. The runner creates a sub-agent that
 	//    shares the LLM client and infra but has its own tape and registry
 	//    WITHOUT spawn capability (prevents recursive spawning).
 	var subAgentSeq atomic.Int64
@@ -329,16 +371,27 @@ func BuildAgent(
 	}
 	registry.Register(builtin.NewSpawnAgentTool(runner))
 
-	// 9. Create default session.
+	// 10. Create default session.
 	defaultSess := agent.NewSession(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
 	defaultSess.MetricsSummary = metricsHook.Summary
 
-	// 10. Create SessionManager for agents with remote channels.
+	// 11. Create SessionManager for agents with remote channels.
 	// Each remote chat gets its own Session with isolated tape and tools.
 	var sessions *agent.SessionManager
 	if cfg.HasRemoteChannels() {
 		toolFactory := func() *tools.Registry {
-			return BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
+			r := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
+			if schedStore != nil {
+				r.RegisterAll(
+					builtin.NewScheduleAddTool(schedStore, nil),
+					builtin.NewScheduleListTool(schedStore),
+					builtin.NewScheduleRemoveTool(schedStore, nil),
+				)
+				r.Expand("schedule_add")
+				r.Expand("schedule_list")
+				r.Expand("schedule_remove")
+			}
+			return r
 		}
 		sessions = agent.NewSessionManager(agent.SessionFactory{
 			LLMClient:       llmClient,
@@ -355,16 +408,35 @@ func BuildAgent(
 		}
 	}
 
+	// Build a reusable tool factory for ephemeral sessions (scheduler).
+	schedToolFactory := func() *tools.Registry {
+		r := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
+		if schedStore != nil {
+			r.RegisterAll(
+				builtin.NewScheduleAddTool(schedStore, nil),
+				builtin.NewScheduleListTool(schedStore),
+				builtin.NewScheduleRemoveTool(schedStore, nil),
+			)
+			r.Expand("schedule_add")
+			r.Expand("schedule_list")
+			r.Expand("schedule_remove")
+		}
+		return r
+	}
+
 	return &AgentInstance{
-		Name:     name,
-		Config:   cfg,
-		Logger:   logger,
-		Session:  defaultSess,
-		Sessions: sessions,
-		Channels: channels,
-		Printer:  printer,
-		Registry: registry,
-		TapePath: tapePath,
+		Name:        name,
+		Config:      cfg,
+		Logger:      logger,
+		LLMClient:   llmClient,
+		Session:     defaultSess,
+		Sessions:    sessions,
+		Channels:    channels,
+		Printer:     printer,
+		Registry:    registry,
+		TapePath:    tapePath,
+		SchedStore:  schedStore,
+		toolFactory: schedToolFactory,
 	}, nil
 }
 
@@ -535,4 +607,32 @@ func DiscoverAndBuildBackgroundAgents(
 		agents = append(agents, inst)
 	}
 	return agents
+}
+
+// appSessionFactory implements scheduler.SessionFactory by creating ephemeral
+// sessions for scheduled task execution.
+type appSessionFactory struct {
+	llmClient   llm.Client
+	cfg         *config.Config
+	logger      *zap.Logger
+	toolFactory func() *tools.Registry
+}
+
+func (f *appSessionFactory) HandleScheduledPrompt(
+	ctx context.Context, tapePath string, msg channel.IncomingMessage,
+) (string, error) {
+	fullTapePath := filepath.Join(f.cfg.TapeDir, tapePath)
+	tapeStore, err := tape.NewFileStore(fullTapePath)
+	if err != nil {
+		return "", fmt.Errorf("scheduler tape: %w", err)
+	}
+
+	ctxStrategy, _ := ctxmgr.NewContextStrategy(f.cfg.ContextStrategy)
+	hookBus := hooks.NewBus(f.logger.Named("scheduler"))
+	hookBus.Register(hooks.NewLoggingHook(f.logger.Named("scheduler")))
+
+	registry := f.toolFactory()
+	sess := agent.NewSession(f.llmClient, registry, tapeStore, ctxStrategy, hookBus, f.cfg, f.logger.Named("scheduler"))
+
+	return sess.HandleInput(ctx, msg)
 }
