@@ -235,7 +235,7 @@ func (inst *AgentInstance) processMessage(
 			if errors.Is(err, agent.ErrQuit) {
 				return true
 			}
-			inst.logOrPrintError(ch, "Error: "+err.Error())
+			inst.sendErrorFeedback(sessCtx, ch, msg.ChannelID, err)
 		}
 	} else {
 		response, err := sess.HandleInput(sessCtx, msg)
@@ -243,7 +243,7 @@ func (inst *AgentInstance) processMessage(
 			if errors.Is(err, agent.ErrQuit) {
 				return true
 			}
-			inst.logOrPrintError(ch, "Error: "+err.Error())
+			inst.sendErrorFeedback(sessCtx, ch, msg.ChannelID, err)
 			return false
 		}
 		if err := ch.Send(sessCtx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response}); err != nil {
@@ -251,6 +251,22 @@ func (inst *AgentInstance) processMessage(
 		}
 	}
 	return false
+}
+
+// sendErrorFeedback sends a user-facing error message. For channels that
+// support SendError (e.g. Lark), a styled error card is sent. For CLI,
+// PrintError is used. The real error is always logged server-side.
+func (inst *AgentInstance) sendErrorFeedback(
+	ctx context.Context, ch channel.Channel, channelID string, err error,
+) {
+	inst.Logger.Error("message processing error", zap.Error(err))
+	if se, ok := ch.(interface {
+		SendError(context.Context, string, string)
+	}); ok {
+		se.SendError(ctx, channelID, "Something went wrong. Please try again later.")
+	} else if p, ok := ch.(interface{ PrintError(string) }); ok {
+		p.PrintError("Error: " + err.Error())
+	}
 }
 
 // logOrPrintError uses PrintError for colored output when the channel supports

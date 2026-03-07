@@ -923,6 +923,25 @@ func (l *LarkChannel) UploadImage(
 	return *resp.Data.ImageKey, nil
 }
 
+// SendError sends a user-facing error card to the given chat.
+// It bypasses sentChats dedup so errors are always delivered.
+func (l *LarkChannel) SendError(ctx context.Context, chatID, text string) {
+	card := map[string]any{
+		"header": map[string]any{
+			"template": "red",
+			"title": map[string]string{
+				"tag":     "plain_text",
+				"content": "Error",
+			},
+		},
+		"elements": []map[string]string{
+			{"tag": "markdown", "content": text},
+		},
+	}
+	content, _ := json.Marshal(card)
+	l.sendCardRaw(ctx, chatID, content)
+}
+
 // SendImageToChat sends an image message to a Lark chat.
 func (l *LarkChannel) SendImageToChat(
 	ctx context.Context, chatID, imageKey string,
