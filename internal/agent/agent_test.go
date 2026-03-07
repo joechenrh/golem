@@ -573,11 +573,10 @@ func TestBuildSystemPrompt(t *testing.T) {
 func TestBuildSystemPromptPersona(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 	agent.config.Persona = &config.Persona{
-		Soul:     "You are Dwight, a research brain.",
-		Identity: "Name: Dwight\nEmoji: magnifier",
-		User:     "Name: Alice\nTimezone: UTC",
-		Agents:   "Always cite sources.",
-		Memory:   "User prefers short answers.",
+		Soul:   "You are Dwight, a research brain.",
+		User:   "Name: Alice\nTimezone: UTC",
+		Agents: "Always cite sources.",
+		Memory: "User prefers short answers.",
 	}
 
 	prompt := agent.buildSystemPrompt()
@@ -585,9 +584,6 @@ func TestBuildSystemPromptPersona(t *testing.T) {
 	// Layer 1: Identity.
 	if !strings.Contains(prompt, "You are Dwight") {
 		t.Errorf("prompt missing SOUL.md content")
-	}
-	if !strings.Contains(prompt, "Name: Dwight") {
-		t.Errorf("prompt missing IDENTITY.md content")
 	}
 	if !strings.Contains(prompt, "Name: Alice") {
 		t.Errorf("prompt missing USER.md content")

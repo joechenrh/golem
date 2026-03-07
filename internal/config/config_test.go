@@ -403,7 +403,6 @@ func TestLoadPersona(t *testing.T) {
 	os.MkdirAll(agentDir, 0o755)
 	os.WriteFile(filepath.Join(agentDir, "config.env"), []byte(""), 0o644)
 	os.WriteFile(filepath.Join(agentDir, "SOUL.md"), []byte("You are a research assistant."), 0o644)
-	os.WriteFile(filepath.Join(agentDir, "IDENTITY.md"), []byte("Name: Dwight\nEmoji: magnifier"), 0o644)
 	os.WriteFile(filepath.Join(agentDir, "AGENTS.md"), []byte("Always cite sources."), 0o644)
 	os.WriteFile(filepath.Join(agentDir, "MEMORY.md"), []byte("User prefers short answers."), 0o644)
 
@@ -418,9 +417,6 @@ func TestLoadPersona(t *testing.T) {
 	}
 	if p.Soul != "You are a research assistant." {
 		t.Errorf("Soul = %q", p.Soul)
-	}
-	if p.Identity != "Name: Dwight\nEmoji: magnifier" {
-		t.Errorf("Identity = %q", p.Identity)
 	}
 	if p.User != "Name: Alice\nTimezone: UTC" {
 		t.Errorf("User = %q", p.User)

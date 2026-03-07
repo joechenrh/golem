@@ -17,15 +17,14 @@ var validLogLevels = map[string]bool{
 
 // Persona holds the three-layer identity files for an agent.
 //
-//	Layer 1 (Identity): Soul, Identity, User
+//	Layer 1 (Identity): Soul, User
 //	Layer 2 (Operations): Agents
 //	Layer 3 (Knowledge): Memory
 type Persona struct {
-	Soul     string // SOUL.md — core identity and personality
-	Identity string // IDENTITY.md — quick reference card
-	User     string // USER.md — who the agent serves (global, shared)
-	Agents   string // AGENTS.md — behavioral rules
-	Memory   string // MEMORY.md — curated persistent knowledge
+	Soul   string // SOUL.md — core identity and personality
+	User   string // USER.md — who the agent serves (global, shared)
+	Agents string // AGENTS.md — behavioral rules
+	Memory string // MEMORY.md — curated persistent knowledge
 
 	MemoryPath string // absolute path to MEMORY.md (for the tool to write)
 }
@@ -435,12 +434,9 @@ func loadPersona(agentName string) *Persona {
 
 	agentDir := filepath.Join(GolemHome(), "agents", agentName)
 
-	// Layer 1: SOUL.md, IDENTITY.md (agent-specific).
+	// Layer 1: SOUL.md (agent-specific).
 	if data, err := os.ReadFile(filepath.Join(agentDir, "SOUL.md")); err == nil {
 		p.Soul = strings.TrimSpace(string(data))
-	}
-	if data, err := os.ReadFile(filepath.Join(agentDir, "IDENTITY.md")); err == nil {
-		p.Identity = strings.TrimSpace(string(data))
 	}
 
 	// Layer 2: AGENTS.md.

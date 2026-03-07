@@ -12,7 +12,6 @@ Golem uses a **two-tier configuration** model (global + per-agent) loaded from `
     ├── alice/
     │   ├── config.env             # Agent tier (behavior, channels, storage)
     │   ├── SOUL.md                # Layer 1 — core personality
-    │   ├── IDENTITY.md            # Layer 1 — quick reference card
     │   ├── AGENTS.md              # Layer 2 — behavioral rules
     │   ├── MEMORY.md              # Layer 3 — persistent knowledge (agent-writable)
     │   └── system-prompt.md       # Legacy fallback (used when no SOUL.md)
@@ -97,14 +96,13 @@ The persona system gives each agent a layered identity assembled into the LLM sy
 | Layer | File(s) | Location | Purpose |
 |---|---|---|---|
 | **1 — Identity** | `SOUL.md` | `~/.golem/agents/<name>/` | Core personality and voice. Activates the persona system (`HasPersona()` checks `Soul != ""`). |
-| | `IDENTITY.md` | `~/.golem/agents/<name>/` | Quick reference card (name, role, capabilities). Optional. |
 | | `USER.md` | `~/.golem/` (global) | Who the agent serves. Shared across all agents. Optional. |
 | **2 — Operations** | `AGENTS.md` | `~/.golem/agents/<name>/` | Behavioral rules, constraints, interaction style. Optional. |
 | **3 — Knowledge** | `MEMORY.md` | `~/.golem/agents/<name>/` | Persistent curated knowledge. Read at startup; writable by the agent at runtime via the `persona_memory` tool. Optional. |
 
 ### System Prompt Assembly
 
-When `HasPersona()` is true, `buildPersonaPrompt()` assembles the system prompt in three major sections. The **Identity** section contains the SOUL.md content, optionally followed by the IDENTITY.md reference card and USER.md user profile. The **Operations** section includes AGENTS.md behavioral rules (if present) followed by built-in tool-use instructions that are always present. The **Knowledge** section describes the memory system architecture and includes current MEMORY.md content. Finally, an **Environment** block appends the working directory and current time.
+When `HasPersona()` is true, `buildPersonaPrompt()` assembles the system prompt in three major sections. The **Identity** section contains the SOUL.md content, optionally followed by the USER.md user profile. The **Operations** section includes AGENTS.md behavioral rules (if present) followed by built-in tool-use instructions that are always present. The **Knowledge** section describes the memory system architecture and includes current MEMORY.md content. Finally, an **Environment** block appends the working directory and current time.
 
 ### Fallback: Legacy `system-prompt.md`
 
@@ -127,7 +125,7 @@ See [10-memory.md](10-memory.md) for details on the `persona_memory` tool.
 - **No hot-reload.** Config is loaded once at startup. Changing `config.env` or persona files requires a restart (except `MEMORY.md`, which the agent writes directly to disk).
 - **No per-agent model override.** `GOLEM_MODEL` is global-tier only; all agents share the same model. An agent-tier model override would allow mixing cheap/expensive models.
 - **No config validation for channel credentials.** Partial Lark config (e.g., `LARK_APP_ID` set but `LARK_APP_SECRET` missing) is silently accepted. `HasRemoteChannels()` checks both, but the gap is not surfaced as an error.
-- **No schema for persona files.** SOUL.md, IDENTITY.md, etc. are free-form markdown. There is no validation that the content is well-formed or within a size budget.
+- **No schema for persona files.** SOUL.md, AGENTS.md, etc. are free-form markdown. There is no validation that the content is well-formed or within a size budget.
 - **Temperature not overridable by CLI flag.** `applyFlagOverrides` only handles string fields; `Temperature` (optional float pointer) has no flag path.
 - **MEMORY.md size is advisory.** The 200-line limit is mentioned in the system prompt but not enforced by the `persona_memory` tool.
 - **`hybrid` context strategy accepted but not implemented.** `validate()` allows `"hybrid"` but only `anchor` and `masking` strategies exist in `internal/ctxmgr/`.

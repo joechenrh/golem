@@ -658,7 +658,7 @@ func (s *Session) helpText() string {
 // buildSystemPrompt constructs the system prompt for LLM calls.
 // When persona files are configured, the prompt is assembled in three layers:
 //
-//	Layer 1 (Identity): SOUL.md, IDENTITY.md, USER.md
+//	Layer 1 (Identity): SOUL.md, USER.md
 //	Layer 2 (Operations): AGENTS.md + built-in tool-use instructions
 //	Layer 3 (Knowledge): memory system description + MEMORY.md
 //
@@ -679,11 +679,6 @@ func (s *Session) buildPersonaPrompt() string {
 	b.WriteString("# Identity\n\n")
 	b.WriteString(p.Soul)
 	b.WriteByte('\n')
-	if p.Identity != "" {
-		b.WriteString("\n## Reference Card\n\n")
-		b.WriteString(p.Identity)
-		b.WriteByte('\n')
-	}
 	if p.User != "" {
 		b.WriteString("\n## User Profile\n\n")
 		b.WriteString(p.User)
