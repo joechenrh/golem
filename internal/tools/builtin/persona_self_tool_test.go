@@ -187,12 +187,12 @@ func TestPersonaSelfToolLineLimitSoul(t *testing.T) {
 	// 101 lines should fail.
 	content := strings.Repeat("line\n", 100) + "last"
 	args, _ := json.Marshal(map[string]string{"action": "write", "file": "soul", "content": content})
-	_, err := tool.Execute(context.Background(), string(args))
-	if err == nil {
-		t.Fatal("expected error for exceeding soul line limit")
+	result, err := tool.Execute(context.Background(), string(args))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "100 line limit") {
-		t.Errorf("error = %q, want line limit message", err.Error())
+	if !strings.HasPrefix(result, "Error:") || !strings.Contains(result, "100 line limit") {
+		t.Errorf("result = %q, want Error with line limit message", result)
 	}
 }
 
@@ -203,12 +203,12 @@ func TestPersonaSelfToolLineLimitAgents(t *testing.T) {
 
 	content := strings.Repeat("line\n", 150) + "last"
 	args, _ := json.Marshal(map[string]string{"action": "write", "file": "agents", "content": content})
-	_, err := tool.Execute(context.Background(), string(args))
-	if err == nil {
-		t.Fatal("expected error for exceeding agents line limit")
+	result, err := tool.Execute(context.Background(), string(args))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "150 line limit") {
-		t.Errorf("error = %q, want line limit message", err.Error())
+	if !strings.HasPrefix(result, "Error:") || !strings.Contains(result, "150 line limit") {
+		t.Errorf("result = %q, want Error with line limit message", result)
 	}
 }
 
@@ -219,12 +219,12 @@ func TestPersonaSelfToolLineLimitMemory(t *testing.T) {
 
 	content := strings.Repeat("line\n", 200) + "last"
 	args, _ := json.Marshal(map[string]string{"action": "write", "content": content})
-	_, err := tool.Execute(context.Background(), string(args))
-	if err == nil {
-		t.Fatal("expected error for exceeding memory line limit")
+	result, err := tool.Execute(context.Background(), string(args))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "200 line limit") {
-		t.Errorf("error = %q, want line limit message", err.Error())
+	if !strings.HasPrefix(result, "Error:") || !strings.Contains(result, "200 line limit") {
+		t.Errorf("result = %q, want Error with line limit message", result)
 	}
 }
 
@@ -233,9 +233,12 @@ func TestPersonaSelfToolWriteEmptyContent(t *testing.T) {
 	persona := newTestPersona(dir)
 	tool := NewPersonaSelfTool(persona)
 
-	_, err := tool.Execute(context.Background(), `{"action":"write","content":""}`)
-	if err == nil {
-		t.Fatal("expected error for empty content")
+	result, err := tool.Execute(context.Background(), `{"action":"write","content":""}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(result, "Error:") {
+		t.Fatalf("expected Error result for empty content, got %q", result)
 	}
 }
 
@@ -244,9 +247,12 @@ func TestPersonaSelfToolInvalidAction(t *testing.T) {
 	persona := newTestPersona(dir)
 	tool := NewPersonaSelfTool(persona)
 
-	_, err := tool.Execute(context.Background(), `{"action":"delete"}`)
-	if err == nil {
-		t.Fatal("expected error for invalid action")
+	result, err := tool.Execute(context.Background(), `{"action":"delete"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(result, "Error:") {
+		t.Fatalf("expected Error result for invalid action, got %q", result)
 	}
 }
 
@@ -255,9 +261,12 @@ func TestPersonaSelfToolInvalidFile(t *testing.T) {
 	persona := newTestPersona(dir)
 	tool := NewPersonaSelfTool(persona)
 
-	_, err := tool.Execute(context.Background(), `{"action":"read","file":"identity"}`)
-	if err == nil {
-		t.Fatal("expected error for invalid file")
+	result, err := tool.Execute(context.Background(), `{"action":"read","file":"identity"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(result, "Error:") {
+		t.Fatalf("expected Error result for invalid file, got %q", result)
 	}
 }
 
@@ -266,9 +275,12 @@ func TestPersonaSelfToolInvalidJSON(t *testing.T) {
 	persona := newTestPersona(dir)
 	tool := NewPersonaSelfTool(persona)
 
-	_, err := tool.Execute(context.Background(), `not json`)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
+	result, err := tool.Execute(context.Background(), `not json`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(result, "Error:") {
+		t.Fatalf("expected Error result for invalid JSON, got %q", result)
 	}
 }
 

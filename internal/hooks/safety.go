@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // SafetyHook blocks dangerous tool calls before execution.
@@ -137,15 +138,18 @@ func (h *SafetyHook) checkWebFetch(args string) error {
 		return fmt.Errorf("blocked request to cloud metadata endpoint: %s", hostname)
 	}
 
-	// Resolve and check IP.
-	ips, err := net.LookupIP(hostname)
+	// Resolve and check IP with a timeout to avoid blocking the agent loop.
+	resolver := &net.Resolver{}
+	dnsCtx, dnsCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer dnsCancel()
+	ips, err := resolver.LookupIPAddr(dnsCtx, hostname)
 	if err != nil {
 		return nil // DNS failure will be handled by the tool
 	}
 	for _, ip := range ips {
 		for _, pn := range privateNetworks {
-			if pn.Contains(ip) {
-				return fmt.Errorf("blocked request to private/reserved IP: %s (%s)", hostname, ip)
+			if pn.Contains(ip.IP) {
+				return fmt.Errorf("blocked request to private/reserved IP: %s (%s)", hostname, ip.IP)
 			}
 		}
 	}

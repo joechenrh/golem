@@ -56,6 +56,30 @@ func (b *Bus) Register(h Hook) {
 	b.hooks = append(b.hooks, h)
 }
 
+// BuildDefaultBus creates a Bus pre-loaded with the standard hooks:
+// LoggingHook, SafetyHook, and optionally MetricsHook and AuditHook.
+// This is the single source of truth for hook wiring so that all session
+// creation paths (default, per-chat, restored, scheduled) are consistent.
+func BuildDefaultBus(logger *zap.Logger, metricsHook *MetricsHook, auditPath string) (*Bus, *MetricsHook) {
+	bus := NewBus(logger)
+	bus.Register(NewLoggingHook(logger))
+	bus.Register(NewSafetyHook())
+
+	if metricsHook == nil {
+		metricsHook = NewMetricsHook()
+	}
+	bus.Register(metricsHook)
+
+	if auditPath != "" {
+		if auditHook, err := NewAuditHook(auditPath); err != nil {
+			logger.Warn("failed to create audit hook", zap.Error(err))
+		} else {
+			bus.Register(auditHook)
+		}
+	}
+	return bus, metricsHook
+}
+
 // Emit sends an event to all hooks.
 // For "before_*" events, the first error stops further hooks and returns the error.
 // For other events, errors are logged but do not affect the main flow.

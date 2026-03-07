@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 const defaultSpaceID = "default"
@@ -382,10 +383,20 @@ func (c *Client) hybridSearch(
 	// Keyword leg.
 	kwSQL := c.keywordSQL(query, fetch)
 
-	// Execute both legs (sequentially — TiDB HTTP API is one query at a time).
+	// Execute both legs concurrently.
 	// Individual leg errors are tolerated as long as at least one succeeds.
-	vecResult, vecErr := c.execSQL(ctx, vecSQL)
-	kwResult, kwErr := c.execSQL(ctx, kwSQL)
+	var vecResult, kwResult *sqlResponse
+	var vecErr, kwErr error
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		vecResult, vecErr = c.execSQL(gctx, vecSQL)
+		return nil // errors handled below
+	})
+	g.Go(func() error {
+		kwResult, kwErr = c.execSQL(gctx, kwSQL)
+		return nil
+	})
+	g.Wait()
 
 	if vecErr != nil && kwErr != nil {
 		return nil, fmt.Errorf("both search legs failed: vec=%w, kw=%v", vecErr, kwErr)

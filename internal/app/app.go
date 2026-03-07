@@ -348,6 +348,7 @@ func BuildAgent(
 			ContextStrategy: cfg.ContextStrategy,
 			AgentName:       name,
 			MetricsHook:     metricsHook,
+			AuditDir:        agentTapeDir,
 		}, logger)
 		if err := sessions.LoadExisting(cfg.TapeDir); err != nil {
 			logger.Warn("failed to restore sessions", zap.Error(err))
@@ -395,19 +396,8 @@ func buildExecutorAndFS(cfg *config.Config) (executor.Executor, *fs.LocalFS, err
 // buildHookBus creates the event bus with standard hooks (logging, safety,
 // metrics, audit).
 func buildHookBus(logger *zap.Logger, agentTapeDir string) (*hooks.Bus, *hooks.MetricsHook) {
-	bus := hooks.NewBus(logger)
-	bus.Register(hooks.NewLoggingHook(logger))
-	bus.Register(hooks.NewSafetyHook())
-	metricsHook := hooks.NewMetricsHook()
-	bus.Register(metricsHook)
-
 	auditPath := filepath.Join(agentTapeDir, fmt.Sprintf("audit-%s.jsonl", time.Now().Format("20060102-150405")))
-	if auditHook, err := hooks.NewAuditHook(auditPath); err != nil {
-		logger.Warn("failed to create audit hook", zap.Error(err))
-	} else {
-		bus.Register(auditHook)
-	}
-	return bus, metricsHook
+	return hooks.BuildDefaultBus(logger, nil, auditPath)
 }
 
 // buildChannels creates the channel map based on the agent name and config.

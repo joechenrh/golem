@@ -27,6 +27,7 @@ type SessionFactory struct {
 	ContextStrategy string
 	AgentName       string
 	MetricsHook     *hooks.MetricsHook // shared across all sessions for this agent
+	AuditDir        string             // directory for audit log files (empty to skip)
 }
 
 // SessionManager maintains isolated Session instances keyed by channel ID
@@ -117,12 +118,12 @@ func (sm *SessionManager) createSession(
 		return nil, fmt.Errorf("context strategy: %w", err)
 	}
 
-	hookBus := hooks.NewBus(sm.logger)
-	hookBus.Register(hooks.NewLoggingHook(sm.logger))
-	hookBus.Register(hooks.NewSafetyHook())
-	if sm.factory.MetricsHook != nil {
-		hookBus.Register(sm.factory.MetricsHook)
+	auditPath := ""
+	if sm.factory.AuditDir != "" {
+		auditPath = filepath.Join(sm.factory.AuditDir,
+			fmt.Sprintf("audit-%s-%s.jsonl", sanitizeForFilename(channelID), time.Now().Format("20060102-150405")))
 	}
+	hookBus, _ := hooks.BuildDefaultBus(sm.logger, sm.factory.MetricsHook, auditPath)
 
 	registry := sm.factory.ToolFactory()
 
@@ -152,12 +153,12 @@ func (sm *SessionManager) createSessionFromTape(
 		return nil, fmt.Errorf("context strategy: %w", err)
 	}
 
-	hookBus := hooks.NewBus(sm.logger)
-	hookBus.Register(hooks.NewLoggingHook(sm.logger))
-	hookBus.Register(hooks.NewSafetyHook())
-	if sm.factory.MetricsHook != nil {
-		hookBus.Register(sm.factory.MetricsHook)
+	auditPath := ""
+	if sm.factory.AuditDir != "" {
+		auditPath = filepath.Join(sm.factory.AuditDir,
+			fmt.Sprintf("audit-restore-%s.jsonl", time.Now().Format("20060102-150405")))
 	}
+	hookBus, _ := hooks.BuildDefaultBus(sm.logger, sm.factory.MetricsHook, auditPath)
 
 	registry := sm.factory.ToolFactory()
 

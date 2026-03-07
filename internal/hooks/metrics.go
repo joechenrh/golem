@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const latencyRingSize = 100
+
 // MetricsHook collects operational metrics from agent lifecycle events.
 type MetricsHook struct {
 	mu sync.Mutex
@@ -25,9 +27,9 @@ type MetricsHook struct {
 	toolCalls  map[string]int64
 	toolErrors map[string]int64
 
-	// Timing.
-	llmCallStart time.Time // set in before_llm_call, read in after_llm_call
-	llmLatencyMs []int64   // ring buffer of recent latencies
+	// Timing — llmCallStarts is keyed per-goroutine to handle concurrent calls.
+	llmCallStarts sync.Map   // goroutine-safe: event payload key → time.Time
+	llmLatencyMs  []int64    // ring buffer of recent latencies (guarded by mu)
 }
 
 // NewMetricsHook creates a MetricsHook.
@@ -43,9 +45,9 @@ func (h *MetricsHook) Name() string { return "metrics" }
 func (h *MetricsHook) Handle(_ context.Context, event Event) error {
 	switch event.Type {
 	case EventBeforeLLMCall:
-		h.mu.Lock()
-		h.llmCallStart = time.Now()
-		h.mu.Unlock()
+		// Use the iteration number as key so concurrent calls don't clobber each other.
+		key := event.Payload["iteration"]
+		h.llmCallStarts.Store(key, time.Now())
 
 	case EventAfterLLMCall:
 		h.llmCalls.Add(1)
@@ -55,16 +57,16 @@ func (h *MetricsHook) Handle(_ context.Context, event Event) error {
 		if ct, ok := event.Payload["completion_tokens"].(int); ok {
 			h.totalCompleteTok.Add(int64(ct))
 		}
-		h.mu.Lock()
-		if !h.llmCallStart.IsZero() {
-			ms := time.Since(h.llmCallStart).Milliseconds()
-			if len(h.llmLatencyMs) >= 100 {
+		key := event.Payload["iteration"]
+		if startVal, ok := h.llmCallStarts.LoadAndDelete(key); ok {
+			ms := time.Since(startVal.(time.Time)).Milliseconds()
+			h.mu.Lock()
+			if len(h.llmLatencyMs) >= latencyRingSize {
 				h.llmLatencyMs = h.llmLatencyMs[1:]
 			}
 			h.llmLatencyMs = append(h.llmLatencyMs, ms)
-			h.llmCallStart = time.Time{}
+			h.mu.Unlock()
 		}
-		h.mu.Unlock()
 
 	case EventAfterToolExec:
 		name, _ := event.Payload["tool_name"].(string)

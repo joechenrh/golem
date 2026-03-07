@@ -15,6 +15,9 @@ import (
 	"github.com/joechenrh/golem/internal/llm"
 )
 
+// defaultUserAgent is the User-Agent header used for web requests to avoid bot blocking.
+const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
 // searchResult holds a single web search result.
 type searchResult struct {
 	Title   string
@@ -135,7 +138,7 @@ func (t *WebSearchTool) searchBing(
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", defaultUserAgent)
 
 	resp, err := t.client.Do(req)
 	if err != nil {
@@ -353,7 +356,7 @@ func (t *WebFetchTool) Execute(
 	if err != nil {
 		return "Error: " + err.Error(), nil
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", defaultUserAgent)
 
 	resp, err := t.client.Do(req)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/joechenrh/golem/internal/config"
+	"github.com/joechenrh/golem/internal/llm"
 )
 
 // Line limits per persona file.
@@ -120,17 +121,17 @@ func (t *PersonaSelfTool) Execute(_ context.Context, args string) (string, error
 		File    string `json:"file"`
 		Content string `json:"content"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("invalid arguments: %w", err)
+	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
+		return "Error: invalid arguments: " + err.Error(), nil
 	}
 
 	spec, err := t.resolveFile(params.File)
 	if err != nil {
-		return "", err
+		return "Error: " + err.Error(), nil
 	}
 
 	if spec.path == "" {
-		return "", fmt.Errorf("%s path is not configured", spec.name)
+		return fmt.Sprintf("Error: %s path is not configured", spec.name), nil
 	}
 
 	switch params.Action {
@@ -140,7 +141,7 @@ func (t *PersonaSelfTool) Execute(_ context.Context, args string) (string, error
 			if os.IsNotExist(err) {
 				return fmt.Sprintf("(%s does not exist yet)", spec.name), nil
 			}
-			return "", fmt.Errorf("reading %s: %w", spec.name, err)
+			return fmt.Sprintf("Error: reading %s: %s", spec.name, err), nil
 		}
 		if len(data) == 0 {
 			return fmt.Sprintf("(%s is empty)", spec.name), nil
@@ -149,17 +150,17 @@ func (t *PersonaSelfTool) Execute(_ context.Context, args string) (string, error
 
 	case "write":
 		if params.Content == "" {
-			return "", fmt.Errorf("content is required for write action")
+			return "Error: content is required for write action", nil
 		}
 
 		// Enforce line limit.
 		lines := strings.Count(params.Content, "\n") + 1
 		if lines > spec.lineLimit {
-			return "", fmt.Errorf("%s exceeds %d line limit (got %d lines)", spec.name, spec.lineLimit, lines)
+			return fmt.Sprintf("Error: %s exceeds %d line limit (got %d lines)", spec.name, spec.lineLimit, lines), nil
 		}
 
 		if err := os.MkdirAll(filepath.Dir(spec.path), 0o755); err != nil {
-			return "", fmt.Errorf("creating directory: %w", err)
+			return "Error: creating directory: " + err.Error(), nil
 		}
 
 		// Backup for soul/agents before overwriting.
@@ -167,13 +168,13 @@ func (t *PersonaSelfTool) Execute(_ context.Context, args string) (string, error
 			if existing, err := os.ReadFile(spec.path); err == nil && len(existing) > 0 {
 				bakPath := spec.path + ".bak"
 				if err := os.WriteFile(bakPath, existing, 0o644); err != nil {
-					return "", fmt.Errorf("creating backup %s: %w", bakPath, err)
+					return fmt.Sprintf("Error: creating backup %s: %s", bakPath, err), nil
 				}
 			}
 		}
 
 		if err := os.WriteFile(spec.path, []byte(params.Content), 0o644); err != nil {
-			return "", fmt.Errorf("writing %s: %w", spec.name, err)
+			return fmt.Sprintf("Error: writing %s: %s", spec.name, err), nil
 		}
 
 		// Update in-memory persona so the next system prompt reflects the change.
@@ -182,6 +183,6 @@ func (t *PersonaSelfTool) Execute(_ context.Context, args string) (string, error
 		return fmt.Sprintf("%s updated successfully.", spec.name), nil
 
 	default:
-		return "", fmt.Errorf("unknown action %q: must be \"read\" or \"write\"", params.Action)
+		return fmt.Sprintf("Error: unknown action %q: must be \"read\" or \"write\"", params.Action), nil
 	}
 }
