@@ -1,5 +1,5 @@
 bin/
-golem
+/golem
 .env
 *.exe
 
