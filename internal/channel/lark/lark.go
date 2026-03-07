@@ -318,18 +318,24 @@ func (l *LarkChannel) SupportsStreaming() bool { return true }
 // streamUpdateInterval controls how often the Lark card is patched during streaming.
 const streamUpdateInterval = 800 * time.Millisecond
 
-// SendStream sends an initial card and patches it as tokens arrive.
-// Tokens are buffered and the card is updated at streamUpdateInterval.
-// The typing cursor (▍) is appended during streaming and removed on
-// the final update.
+// SendStream sends an initial "Thinking..." card immediately, then patches it
+// as tokens arrive. Tokens are buffered and the card is updated at
+// streamUpdateInterval. The typing cursor (▍) is appended during streaming
+// and removed on the final update.
 func (l *LarkChannel) SendStream(
 	ctx context.Context, channelID string,
 	tokenCh <-chan string,
 ) error {
 	l.sentChats.Store(channelID, true)
 
+	// Send a thinking indicator immediately so the user sees feedback.
+	messageID, err := l.sendCardReturnID(ctx, channelID, "Thinking... ▍")
+	if err != nil {
+		l.logger.Warn("lark stream: failed to send thinking indicator", zap.Error(err))
+		messageID = ""
+	}
+
 	var sb strings.Builder
-	var messageID string
 	ticker := time.NewTicker(streamUpdateInterval)
 	defer ticker.Stop()
 	dirty := false
@@ -341,11 +347,15 @@ func (l *LarkChannel) SendStream(
 				// Stream done. Final update: upload any images
 				// and build a card with interleaved md + img elements.
 				finalText := sb.String()
-				cardJSON := l.buildCardWithImages(ctx, finalText)
 				if messageID != "" {
-					l.patchCardRaw(ctx, messageID, cardJSON)
-				} else if sb.Len() > 0 {
-					l.sendCardRaw(ctx, channelID, cardJSON)
+					if finalText == "" {
+						// No content produced; clear the thinking indicator.
+						l.patchCard(ctx, messageID, "...")
+					} else {
+						l.patchCardRaw(ctx, messageID, l.buildCardWithImages(ctx, finalText))
+					}
+				} else if finalText != "" {
+					l.sendCardRaw(ctx, channelID, l.buildCardWithImages(ctx, finalText))
 				}
 				l.logger.Debug("stream complete",
 					zap.String("chat_id", channelID),
