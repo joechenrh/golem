@@ -69,7 +69,7 @@ func TestScheduler_FiresDueSchedule(t *testing.T) {
 	channels := map[string]channel.Channel{"mock": ch}
 	factory := &mockSessionFactory{response: "done!"}
 
-	sched := New(store, channels, factory, nil, zap.NewNop())
+	sched := New(store, channels, factory, zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -104,7 +104,7 @@ func TestScheduler_SkipsNotDueSchedule(t *testing.T) {
 	channels := map[string]channel.Channel{"mock": ch}
 	factory := &mockSessionFactory{response: "done!"}
 
-	sched := New(store, channels, factory, nil, zap.NewNop())
+	sched := New(store, channels, factory, zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -127,7 +127,7 @@ func TestScheduler_HandlesSessionError(t *testing.T) {
 	channels := map[string]channel.Channel{"mock": ch}
 	factory := &mockSessionFactory{err: fmt.Errorf("LLM exploded")}
 
-	sched := New(store, channels, factory, nil, zap.NewNop())
+	sched := New(store, channels, factory, zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -153,7 +153,7 @@ func TestScheduler_MissingChannel(t *testing.T) {
 	channels := map[string]channel.Channel{}
 	factory := &mockSessionFactory{response: "done!"}
 
-	sched := New(store, channels, factory, nil, zap.NewNop())
+	sched := New(store, channels, factory, zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -18,36 +18,28 @@ type SessionFactory interface {
 	HandleScheduledPrompt(ctx context.Context, tapePath string, msg channel.IncomingMessage) (string, error)
 }
 
-// NotifyFunc delivers a message to a specific channel/chat, bypassing any
-// per-message deduplication. Used for scheduled task output delivery.
-type NotifyFunc func(ctx context.Context, channelName, channelID, text string) error
-
 // Scheduler runs a background tick loop that checks cron schedules and fires
 // prompts through isolated sessions.
 type Scheduler struct {
 	store     *Store
 	channels  map[string]channel.Channel
 	factory   SessionFactory
-	notify    NotifyFunc
 	logger    *zap.Logger
 	cronCache map[string]cron.Schedule
 	parser    cron.Parser
 }
 
 // New creates a Scheduler. Call Run() to start the tick loop.
-// If notify is non-nil, it is used to deliver messages instead of ch.Send().
 func New(
 	store *Store,
 	channels map[string]channel.Channel,
 	factory SessionFactory,
-	notify NotifyFunc,
 	logger *zap.Logger,
 ) *Scheduler {
 	s := &Scheduler{
 		store:     store,
 		channels:  channels,
 		factory:   factory,
-		notify:    notify,
 		logger:    logger.Named("scheduler"),
 		cronCache: make(map[string]cron.Schedule),
 		parser:    cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
@@ -161,24 +153,26 @@ func (s *Scheduler) fire(ctx context.Context, sched Schedule) {
 		text = response
 	}
 
-	// Use NotifyFunc if available (bypasses sentChats dedup), otherwise
-	// fall back to ch.Send().
-	if s.notify != nil {
-		if sendErr := s.notify(ctx, sched.ChannelName, sched.ChannelID, text); sendErr != nil {
-			s.logger.Error("failed to deliver scheduled message", zap.Error(sendErr))
-		}
-	} else {
-		ch, ok := s.channels[sched.ChannelName]
-		if !ok {
-			s.logger.Error("schedule target channel not found",
-				zap.String("channel_name", sched.ChannelName), zap.String("id", sched.ID))
-		} else if sendErr := ch.Send(ctx, channel.OutgoingMessage{
-			ChannelID: sched.ChannelID,
-			Text:      text,
-		}); sendErr != nil {
-			s.logger.Error("failed to send scheduled response", zap.Error(sendErr))
-		}
+	ch, ok := s.channels[sched.ChannelName]
+	if !ok {
+		s.logger.Error("schedule target channel not found",
+			zap.String("channel_name", sched.ChannelName), zap.String("id", sched.ID))
+	} else if err := s.sendToChannel(ctx, ch, sched.ChannelID, text); err != nil {
+		s.logger.Error("failed to deliver scheduled message", zap.Error(err))
 	}
 
 	s.store.UpdateLastFired(sched.ID, time.Now())
+}
+
+// sendToChannel delivers text to a channel, preferring SendToChat (which
+// bypasses per-message deduplication) when available, falling back to Send.
+func (s *Scheduler) sendToChannel(
+	ctx context.Context, ch channel.Channel, channelID, text string,
+) error {
+	if sc, ok := ch.(interface {
+		SendToChat(context.Context, string, string) error
+	}); ok {
+		return sc.SendToChat(ctx, channelID, text)
+	}
+	return ch.Send(ctx, channel.OutgoingMessage{ChannelID: channelID, Text: text})
 }

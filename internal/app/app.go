@@ -99,21 +99,7 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 			toolFactory: inst.toolFactory,
 			agentName:   inst.Name,
 		}
-		// Build a NotifyFunc that delivers messages via the appropriate channel's
-		// SendToChat (bypassing sentChats dedup) for Lark, or Send for others.
-		notifyFunc := func(ctx context.Context, channelName, channelID, text string) error {
-			ch, ok := inst.Channels[channelName]
-			if !ok {
-				return fmt.Errorf("channel %q not found", channelName)
-			}
-			if sc, ok := ch.(interface {
-				SendToChat(context.Context, string, string) error
-			}); ok {
-				return sc.SendToChat(ctx, channelID, text)
-			}
-			return ch.Send(ctx, channel.OutgoingMessage{ChannelID: channelID, Text: text})
-		}
-		inst.Sched = scheduler.New(inst.SchedStore, inst.Channels, factory, notifyFunc, inst.Logger)
+		inst.Sched = scheduler.New(inst.SchedStore, inst.Channels, factory, inst.Logger)
 		go inst.Sched.Run(gctx)
 	}
 
