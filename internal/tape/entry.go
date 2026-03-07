@@ -112,6 +112,26 @@ func BuildMessages(entries []TapeEntry) []llm.Message {
 			}
 		}
 
+		// The tape stores image metadata (media_type) without base64
+		// data to avoid bloat. Strip these stubs so the LLM API
+		// doesn't receive empty image payloads.
+		if len(msg.Images) > 0 {
+			valid := msg.Images[:0]
+			for _, img := range msg.Images {
+				if img.Base64 != "" {
+					valid = append(valid, img)
+				}
+			}
+			if len(valid) > 0 {
+				msg.Images = valid
+			} else {
+				msg.Images = nil
+				if msg.Content == "" {
+					msg.Content = "[User sent an image]"
+				}
+			}
+		}
+
 		msgs = append(msgs, msg)
 	}
 

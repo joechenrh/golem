@@ -127,6 +127,92 @@ func TestSanitizeLarkMarkdown(t *testing.T) {
 	}
 }
 
+func TestExtractPostContent(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantText   string
+		wantImages []string
+	}{
+		{
+			"text only",
+			`{"zh_cn":{"title":"","content":[[{"tag":"text","text":"hello world"}]]}}`,
+			"hello world",
+			nil,
+		},
+		{
+			"with title",
+			`{"zh_cn":{"title":"My Title","content":[[{"tag":"text","text":"body"}]]}}`,
+			"My Title\nbody",
+			nil,
+		},
+		{
+			"image only",
+			`{"zh_cn":{"title":"","content":[[{"tag":"img","image_key":"img_abc123"}]]}}`,
+			"",
+			[]string{"img_abc123"},
+		},
+		{
+			"text and image",
+			`{"zh_cn":{"title":"","content":[[{"tag":"text","text":"check this "},{"tag":"img","image_key":"img_xyz"}]]}}`,
+			"check this",
+			[]string{"img_xyz"},
+		},
+		{
+			"multiple images",
+			`{"zh_cn":{"title":"","content":[[{"tag":"img","image_key":"img_1"}],[{"tag":"img","image_key":"img_2"}]]}}`,
+			"",
+			[]string{"img_1", "img_2"},
+		},
+		{
+			"en_us locale",
+			`{"en_us":{"title":"","content":[[{"tag":"text","text":"english"}]]}}`,
+			"english",
+			nil,
+		},
+		{
+			"invalid json",
+			`not json`,
+			"",
+			nil,
+		},
+		{
+			"empty content",
+			`{"zh_cn":{"title":"","content":[]}}`,
+			"",
+			nil,
+		},
+		{
+			"direct format text",
+			`{"title":"","content":[[{"tag":"text","text":"direct msg"}]]}`,
+			"direct msg",
+			nil,
+		},
+		{
+			"direct format image",
+			`{"title":"","content":[[{"tag":"img","image_key":"img_direct"}]]}`,
+			"",
+			[]string{"img_direct"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotText, gotImages := extractPostContent(tt.input)
+			if gotText != tt.wantText {
+				t.Errorf("text = %q, want %q", gotText, tt.wantText)
+			}
+			if len(gotImages) != len(tt.wantImages) {
+				t.Fatalf("images len = %d, want %d", len(gotImages), len(tt.wantImages))
+			}
+			for i, key := range gotImages {
+				if key != tt.wantImages[i] {
+					t.Errorf("images[%d] = %q, want %q", i, key, tt.wantImages[i])
+				}
+			}
+		})
+	}
+}
+
 func TestSendSkipsDuplicateChat(t *testing.T) {
 	lc := &LarkChannel{logger: zap.NewNop()}
 	lc.sentChats.Store("chat_123", true)

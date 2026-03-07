@@ -115,13 +115,19 @@ func (l *LarkChannel) onMessageReceive(
 ) {
 	msg := event.Event.Message
 	if msg == nil || msg.MessageType == nil {
+		l.logger.Warn("lark event with nil message or message_type")
 		return
 	}
 	msgType := *msg.MessageType
-	if msgType != "text" && msgType != "image" {
+	if msgType != "text" && msgType != "image" && msgType != "post" {
+		l.logger.Info("ignoring unsupported lark message type", zap.String("type", msgType))
 		return
 	}
 	if msg.Content == nil || msg.ChatId == nil {
+		l.logger.Warn("lark message missing content or chat_id",
+			zap.String("type", msgType),
+			zap.Bool("content_nil", msg.Content == nil),
+			zap.Bool("chat_id_nil", msg.ChatId == nil))
 		return
 	}
 
@@ -181,6 +187,26 @@ func (l *LarkChannel) onMessageReceive(
 			MediaType: mediaType,
 		})
 		text = "[User sent an image]"
+	case "post":
+		postText, imageKeys := extractPostContent(*msg.Content)
+		for _, key := range imageKeys {
+			imgData, mediaType, err := l.downloadImage(context.Background(), msgID, key)
+			if err != nil {
+				l.logger.Error("failed to download lark post image",
+					zap.String("message_id", msgID),
+					zap.String("image_key", key), zap.Error(err))
+				continue
+			}
+			encoded := base64.StdEncoding.EncodeToString(imgData)
+			images = append(images, channel.ImageData{
+				Base64:    encoded,
+				MediaType: mediaType,
+			})
+		}
+		text = postText
+		if text == "" && len(images) > 0 {
+			text = "[User sent an image]"
+		}
 	}
 
 	// Strip @bot mentions.
@@ -605,6 +631,71 @@ type ChatInfo struct {
 	ChatID      string
 	Name        string
 	Description string
+}
+
+// extractPostContent parses a Lark rich-text (post) message and returns the
+// combined text and any image keys found. The content may be either:
+//
+//	Locale-wrapped: {"zh_cn":{"title":"…","content":[[{"tag":"text","text":"…"}]]}}
+//	Direct:         {"title":"…","content":[[{"tag":"text","text":"…"}]]}
+func extractPostContent(content string) (text string, imageKeys []string) {
+	type node struct {
+		Tag      string `json:"tag"`
+		Text     string `json:"text"`
+		ImageKey string `json:"image_key"`
+	}
+	type post struct {
+		Title   string   `json:"title"`
+		Content [][]node `json:"content"`
+	}
+
+	flatten := func(p post) (string, []string) {
+		var sb strings.Builder
+		var keys []string
+		if p.Title != "" {
+			sb.WriteString(p.Title)
+			sb.WriteString("\n")
+		}
+		for _, line := range p.Content {
+			for _, n := range line {
+				switch n.Tag {
+				case "text":
+					sb.WriteString(n.Text)
+				case "img":
+					if n.ImageKey != "" {
+						keys = append(keys, n.ImageKey)
+					}
+				}
+			}
+		}
+		return strings.TrimSpace(sb.String()), keys
+	}
+
+	// Try direct post format first.
+	var direct post
+	if err := json.Unmarshal([]byte(content), &direct); err == nil && len(direct.Content) > 0 {
+		text, imageKeys = flatten(direct)
+		if text != "" || len(imageKeys) > 0 {
+			return text, imageKeys
+		}
+	}
+
+	// Try locale-wrapped format.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		return "", nil
+	}
+	for _, locale := range raw {
+		var p post
+		if err := json.Unmarshal(locale, &p); err != nil {
+			continue
+		}
+		text, imageKeys = flatten(p)
+		if text != "" || len(imageKeys) > 0 {
+			return text, imageKeys
+		}
+	}
+	return "", nil
 }
 
 // extractImageKey parses the Lark image message content JSON and returns the image_key.
