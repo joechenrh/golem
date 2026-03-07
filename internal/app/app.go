@@ -340,21 +340,25 @@ func BuildAgent(
 		}
 	}
 
-	// 8. Build tool registry.
-	registry := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
-
-	// Register schedule tools on the default registry.
-	// The scheduler reference (nil here) is set later in Run() once the Scheduler exists.
-	if schedStore != nil {
-		registry.RegisterAll(
-			builtin.NewScheduleAddTool(schedStore, nil),
-			builtin.NewScheduleListTool(schedStore),
-			builtin.NewScheduleRemoveTool(schedStore, nil),
-		)
-		registry.Expand("schedule_add")
-		registry.Expand("schedule_list")
-		registry.Expand("schedule_remove")
+	// 8. Build tool registry factory.
+	// This closure builds a fresh registry with all tools including schedule
+	// tools. Used for the default session, SessionManager, and scheduler.
+	toolFactory := func() *tools.Registry {
+		r := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
+		if schedStore != nil {
+			r.RegisterAll(
+				builtin.NewScheduleAddTool(schedStore, nil),
+				builtin.NewScheduleListTool(schedStore),
+				builtin.NewScheduleRemoveTool(schedStore, nil),
+			)
+			r.Expand("schedule_add")
+			r.Expand("schedule_list")
+			r.Expand("schedule_remove")
+		}
+		return r
 	}
+
+	registry := toolFactory()
 
 	// 9. Register spawn_agent tool. The runner creates a sub-agent that
 	//    shares the LLM client and infra but has its own tape and registry
@@ -392,20 +396,6 @@ func BuildAgent(
 	// Each remote chat gets its own Session with isolated tape and tools.
 	var sessions *agent.SessionManager
 	if cfg.HasRemoteChannels() {
-		toolFactory := func() *tools.Registry {
-			r := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
-			if schedStore != nil {
-				r.RegisterAll(
-					builtin.NewScheduleAddTool(schedStore, nil),
-					builtin.NewScheduleListTool(schedStore),
-					builtin.NewScheduleRemoveTool(schedStore, nil),
-				)
-				r.Expand("schedule_add")
-				r.Expand("schedule_list")
-				r.Expand("schedule_remove")
-			}
-			return r
-		}
 		sessions = agent.NewSessionManager(agent.SessionFactory{
 			LLMClient:       llmClient,
 			Config:          cfg,
@@ -422,22 +412,6 @@ func BuildAgent(
 		}
 	}
 
-	// Build a reusable tool factory for ephemeral sessions (scheduler).
-	schedToolFactory := func() *tools.Registry {
-		r := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
-		if schedStore != nil {
-			r.RegisterAll(
-				builtin.NewScheduleAddTool(schedStore, nil),
-				builtin.NewScheduleListTool(schedStore),
-				builtin.NewScheduleRemoveTool(schedStore, nil),
-			)
-			r.Expand("schedule_add")
-			r.Expand("schedule_list")
-			r.Expand("schedule_remove")
-		}
-		return r
-	}
-
 	return &AgentInstance{
 		Name:        name,
 		Config:      cfg,
@@ -451,7 +425,7 @@ func BuildAgent(
 		TapePath:    tapePath,
 		SchedStore:  schedStore,
 		MetricsHook: metricsHook,
-		toolFactory: schedToolFactory,
+		toolFactory: toolFactory,
 	}, nil
 }
 
