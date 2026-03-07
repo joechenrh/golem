@@ -11,10 +11,11 @@ import (
 type EntryKind string
 
 const (
-	KindEvent   EntryKind = "event"   // system events (session start, config change)
-	KindMessage EntryKind = "message" // user/assistant messages
-	KindAnchor  EntryKind = "anchor"  // context boundary markers
-	KindSummary EntryKind = "summary" // auto-generated conversation summary
+	KindEvent    EntryKind = "event"    // system events (session start, config change)
+	KindMessage  EntryKind = "message"  // user/assistant messages
+	KindAnchor   EntryKind = "anchor"   // context boundary markers
+	KindSummary  EntryKind = "summary"  // auto-generated conversation summary
+	KindFeedback EntryKind = "feedback" // user satisfaction signals (thumbs up/down)
 )
 
 // TapeEntry is a single record in the append-only tape.

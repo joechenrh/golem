@@ -653,6 +653,17 @@ func truncateForLog(s string, maxLen int) string {
 	return s
 }
 
+// RecordFeedback appends a KindFeedback entry to the tape.
+func (s *Session) RecordFeedback(chatID, value string) {
+	s.tape.Append(tape.TapeEntry{
+		Kind: tape.KindFeedback,
+		Payload: tape.MarshalPayload(map[string]string{
+			"chat_id": chatID,
+			"value":   value,
+		}),
+	})
+}
+
 // StatusInfo returns a human-readable status summary for this session.
 func (s *Session) StatusInfo() string {
 	model := s.config.Model

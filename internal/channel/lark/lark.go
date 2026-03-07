@@ -26,6 +26,9 @@ import (
 	"github.com/joechenrh/golem/internal/channel"
 )
 
+// CardActionCallback is called when a user clicks a button on a Lark card.
+type CardActionCallback func(chatID string, action map[string]any)
+
 // LarkChannel implements channel.Channel for Lark/Feishu bot integration
 // using long-lived WebSocket connections (no public URL required).
 type LarkChannel struct {
@@ -50,6 +53,10 @@ type LarkChannel struct {
 	// CreateTime before this are stale redeliveries from a previous
 	// process and are dropped.
 	startedAt time.Time
+
+	// onCardAction is called when a user clicks a button on a card.
+	// Set via SetCardActionHandler before Start.
+	onCardAction CardActionCallback
 }
 
 // New creates a LarkChannel with the given credentials.
@@ -78,6 +85,54 @@ func New(
 }
 
 func (l *LarkChannel) Name() string { return "lark" }
+
+// SetCardActionHandler registers a callback for card button clicks.
+func (l *LarkChannel) SetCardActionHandler(handler CardActionCallback) {
+	l.onCardAction = handler
+}
+
+// CardActionHTTPHandler returns an http.HandlerFunc that processes
+// Lark card action callbacks. Mount this on an HTTP server to enable
+// interactive card buttons (reset session, feedback).
+func (l *LarkChannel) CardActionHTTPHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		var payload struct {
+			Challenge  string `json:"challenge"`
+			OpenChatID string `json:"open_chat_id"`
+			Action     struct {
+				Value map[string]any `json:"value"`
+			} `json:"action"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+
+		// URL verification challenge.
+		if payload.Challenge != "" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"challenge": payload.Challenge})
+			return
+		}
+
+		if l.onCardAction != nil && payload.OpenChatID != "" && len(payload.Action.Value) > 0 {
+			l.onCardAction(payload.OpenChatID, payload.Action.Value)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{}"))
+	}
+}
 
 // Start connects to Lark via WebSocket and dispatches incoming messages to inCh.
 // Blocks until the context is cancelled or the connection is permanently lost.
@@ -410,11 +465,46 @@ func (l *LarkChannel) sendCard(
 	return err
 }
 
+// actionButtons is the shared action row appended to response cards.
+// It contains a "New conversation" button and thumbs up/down feedback buttons.
+var actionButtons = map[string]any{
+	"tag": "action",
+	"actions": []map[string]any{
+		{
+			"tag":  "button",
+			"text": map[string]string{"tag": "plain_text", "content": "New conversation"},
+			"type": "default",
+			"value": map[string]string{
+				"action": "reset_session",
+			},
+		},
+		{
+			"tag":  "button",
+			"text": map[string]string{"tag": "plain_text", "content": "\U0001F44D"},
+			"type": "default",
+			"value": map[string]string{
+				"action": "feedback",
+				"value":  "up",
+			},
+		},
+		{
+			"tag":  "button",
+			"text": map[string]string{"tag": "plain_text", "content": "\U0001F44E"},
+			"type": "default",
+			"value": map[string]string{
+				"action": "feedback",
+				"value":  "down",
+			},
+		},
+	},
+}
+
 // buildCard returns a JSON-encoded Lark interactive card body.
 func buildCard(text string) []byte {
 	card := map[string]any{
-		"elements": []map[string]string{
-			{"tag": "markdown", "content": sanitizeLarkMarkdown(text)},
+		"elements": []any{
+			map[string]string{"tag": "markdown", "content": sanitizeLarkMarkdown(text)},
+			actionButtons,
 		},
 	}
 	content, _ := json.Marshal(card)
@@ -512,7 +602,7 @@ func (l *LarkChannel) buildCardWithImages(ctx context.Context, text string) []by
 	wg.Wait()
 
 	// Build interleaved elements: markdown text segments + img elements.
-	var elements []map[string]any
+	var elements []any
 	prev := 0
 	for i, m := range matches {
 		matchStart, matchEnd := m[0], m[1]
@@ -529,10 +619,10 @@ func (l *LarkChannel) buildCardWithImages(ctx context.Context, text string) []by
 
 		if imageKeys[i] != "" {
 			elements = append(elements, map[string]any{
-				"tag":      "img",
-				"img_key":  imageKeys[i],
-				"alt":      map[string]string{"tag": "plain_text", "content": "image"},
-				"mode":     "fit_horizontal",
+				"tag":          "img",
+				"img_key":      imageKeys[i],
+				"alt":          map[string]string{"tag": "plain_text", "content": "image"},
+				"mode":         "fit_horizontal",
 				"compact_width": false,
 			})
 		}
@@ -553,6 +643,7 @@ func (l *LarkChannel) buildCardWithImages(ctx context.Context, text string) []by
 		return buildCard(text)
 	}
 
+	elements = append(elements, actionButtons)
 	card := map[string]any{"elements": elements}
 	content, _ := json.Marshal(card)
 	return content

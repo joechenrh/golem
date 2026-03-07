@@ -414,7 +414,31 @@ func BuildAgent(
 	defaultSess := agent.NewSession(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
 	defaultSess.MetricsSummary = metricsHook.Summary
 
+	// Wire card action handler for Lark (reset session, feedback buttons).
+	// Must be set before SessionManager is created since the handler uses it.
 	var sessions *agent.SessionManager
+	if larkCh != nil {
+		larkCh.SetCardActionHandler(func(chatID string, action map[string]any) {
+			act, _ := action["action"].(string)
+			switch act {
+			case "reset_session":
+				if sessions != nil {
+					sessions.Reset(chatID)
+				}
+				larkCh.SendToChat(context.Background(), chatID, "Session reset. Starting a fresh conversation.")
+			case "feedback":
+				val, _ := action["value"].(string)
+				if sessions != nil {
+					if sess := sessions.Get(chatID); sess != nil {
+						sess.RecordFeedback(chatID, val)
+					}
+				}
+				logger.Info("user feedback received",
+					zap.String("chat_id", chatID), zap.String("value", val))
+			}
+		})
+	}
+
 	if cfg.HasRemoteChannels() {
 		sessions = agent.NewSessionManager(agent.SessionFactory{
 			LLMClient:       llmClient,
@@ -493,9 +517,29 @@ func buildChannels(
 	if cfg.LarkAppID != "" && cfg.LarkAppSecret != "" {
 		larkCh = larkchan.New(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkVerifyToken, logger)
 		channels["lark"] = larkCh
+
+		// Start HTTP server for card action callbacks if port is configured.
+		if cfg.LarkCallbackPort != "" {
+			startCardCallbackServer(cfg.LarkCallbackPort, larkCh, logger)
+		}
 	}
 
 	return channels, printer, larkCh
+}
+
+// startCardCallbackServer starts a background HTTP server for Lark card
+// action callbacks (button clicks for reset session, feedback).
+func startCardCallbackServer(port string, larkCh *larkchan.LarkChannel, logger *zap.Logger) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/lark/card/action", larkCh.CardActionHTTPHandler())
+
+	go func() {
+		addr := ":" + port
+		logger.Info("starting Lark card callback server", zap.String("addr", addr))
+		if err := http.ListenAndServe(addr, mux); err != nil {
+			logger.Error("card callback server error", zap.Error(err))
+		}
+	}()
 }
 
 // buildScheduleStore creates the per-agent schedule persistence store.

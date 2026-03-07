@@ -118,6 +118,7 @@ type Config struct {
 	LarkAppID       string
 	LarkAppSecret   string
 	LarkVerifyToken string
+	LarkCallbackPort string // HTTP port for Lark card action callbacks (e.g. "9876", empty = disabled)
 
 	// Memory (mnemos direct mode — TiDB Cloud Serverless)
 	MnemosDBHost         string // TiDB gateway host (e.g. gateway01.us-east-1.prod.aws.tidbcloud.com)
@@ -209,7 +210,8 @@ func Load(
 		TelegramACL:     a.int64List("TELEGRAM_ALLOW_FROM"),
 		LarkAppID:       a.str("LARK_APP_ID", ""),
 		LarkAppSecret:   a.str("LARK_APP_SECRET", ""),
-		LarkVerifyToken: a.str("LARK_VERIFY_TOKEN", ""),
+		LarkVerifyToken:  a.str("LARK_VERIFY_TOKEN", ""),
+		LarkCallbackPort: a.str("LARK_CALLBACK_PORT", ""),
 
 		// Agent tier: memory (mnemos direct mode).
 		MnemosDBHost:         a.str("MNEMO_DB_HOST", ""),
