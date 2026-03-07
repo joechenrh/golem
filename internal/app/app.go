@@ -256,13 +256,11 @@ func (inst *AgentInstance) logOrPrintError(
 func BuildAgent(
 	name string, cfg *config.Config, logger *zap.Logger,
 ) (*AgentInstance, error) {
-	// 1. Initialize LLM client.
 	llmClient, err := BuildLLMClient(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Initialize tape store.
 	agentTapeDir, err := tape.AgentDir(cfg.TapeDir, name)
 	if err != nil {
 		return nil, err
@@ -273,76 +271,23 @@ func BuildAgent(
 		return nil, fmt.Errorf("tape store: %w", err)
 	}
 
-	// 3. Initialize executor and filesystem.
-	workDir := cfg.WorkspaceDir
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating workspace dir: %w", err)
-	}
-
-	var exec executor.Executor
-	switch cfg.Executor {
-	case "noop":
-		exec = executor.NewNoop()
-	default:
-		exec = executor.NewLocal(workDir)
-	}
-
-	filesystem, err := fs.NewLocalFS(workDir)
+	exec, filesystem, err := buildExecutorAndFS(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("filesystem: %w", err)
+		return nil, err
 	}
 
-	// 4. Initialize context strategy.
 	ctxStrategy, err := ctxmgr.NewContextStrategy(cfg.ContextStrategy)
 	if err != nil {
 		return nil, fmt.Errorf("context strategy: %w", err)
 	}
 
-	// 5. Build hook bus.
-	hookBus := hooks.NewBus(logger)
-	hookBus.Register(hooks.NewLoggingHook(logger))
-	hookBus.Register(hooks.NewSafetyHook())
-	metricsHook := hooks.NewMetricsHook()
-	hookBus.Register(metricsHook)
+	hookBus, metricsHook := buildHookBus(logger, agentTapeDir)
+	channels, printer, larkCh := buildChannels(name, cfg, logger)
+	schedStore := buildScheduleStore(name, logger)
 
-	auditPath := filepath.Join(agentTapeDir, fmt.Sprintf("audit-%s.jsonl", time.Now().Format("20060102-150405")))
-	auditHook, err := hooks.NewAuditHook(auditPath)
-	if err != nil {
-		logger.Warn("failed to create audit hook", zap.Error(err))
-	} else {
-		hookBus.Register(auditHook)
-	}
-
-	// 6. Build channel registry.
-	channels := make(map[string]channel.Channel)
-
-	// CLI channel only for the default (interactive) agent.
-	var printer channel.SystemPrinter
-	if name == "default" {
-		cliCh := cli.New()
-		channels["cli"] = cliCh
-		printer = cliCh
-	}
-
-	var larkCh *larkchan.LarkChannel
-	if cfg.LarkAppID != "" && cfg.LarkAppSecret != "" {
-		larkCh = larkchan.New(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkVerifyToken, logger)
-		channels["lark"] = larkCh
-	}
-
-	// 7. Initialize schedule store (per-agent persistence).
-	var schedStore *scheduler.Store
-	if name != "" {
-		schedPath := filepath.Join(config.GolemHome(), "agents", name, "schedules.json")
-		schedStore = scheduler.NewStore(schedPath)
-		if err := schedStore.Load(); err != nil {
-			logger.Warn("failed to load schedules", zap.Error(err))
-		}
-	}
-
-	// 8. Build tool registry factory.
-	// This closure builds a fresh registry with all tools including schedule
-	// tools. Used for the default session, SessionManager, and scheduler.
+	// Tool factory builds a fresh registry with all tools including
+	// schedule tools. Shared by the default session, SessionManager,
+	// and scheduler.
 	toolFactory := func() *tools.Registry {
 		r := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
 		if schedStore != nil {
@@ -360,11 +305,10 @@ func BuildAgent(
 
 	registry := toolFactory()
 
-	// 9. Register spawn_agent tool. The runner creates a sub-agent that
-	//    shares the LLM client and infra but has its own tape and registry
-	//    WITHOUT spawn capability (prevents recursive spawning).
+	// spawn_agent creates a sub-agent with its own tape and registry
+	// WITHOUT spawn capability (prevents recursive spawning).
 	var subAgentSeq atomic.Int64
-	runner := func(ctx context.Context, prompt string) (string, error) {
+	registry.Register(builtin.NewSpawnAgentTool(func(ctx context.Context, prompt string) (string, error) {
 		seq := subAgentSeq.Add(1)
 		subTapePath := filepath.Join(agentTapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
 		subTape, err := tape.NewFileStore(subTapePath)
@@ -375,25 +319,18 @@ func BuildAgent(
 		subHooks := hooks.NewBus(logger.Named("sub-agent"))
 		subHooks.Register(hooks.NewLoggingHook(logger.Named("sub-agent")))
 
-		// Build a registry without spawn_agent.
 		subRegistry := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
-
 		subSess := agent.NewSession(llmClient, subRegistry, subTape, subCtxStrategy, subHooks, cfg, logger.Named("sub-agent"))
 
-		msg := channel.IncomingMessage{
+		return subSess.HandleInput(ctx, channel.IncomingMessage{
 			ChannelName: "internal",
 			Text:        prompt,
-		}
-		return subSess.HandleInput(ctx, msg)
-	}
-	registry.Register(builtin.NewSpawnAgentTool(runner))
+		})
+	}))
 
-	// 10. Create default session.
 	defaultSess := agent.NewSession(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
 	defaultSess.MetricsSummary = metricsHook.Summary
 
-	// 11. Create SessionManager for agents with remote channels.
-	// Each remote chat gets its own Session with isolated tape and tools.
 	var sessions *agent.SessionManager
 	if cfg.HasRemoteChannels() {
 		sessions = agent.NewSessionManager(agent.SessionFactory{
@@ -405,8 +342,6 @@ func BuildAgent(
 			AgentName:       name,
 			MetricsHook:     metricsHook,
 		}, logger)
-
-		// Restore sessions from existing tape files.
 		if err := sessions.LoadExisting(cfg.TapeDir); err != nil {
 			logger.Warn("failed to restore sessions", zap.Error(err))
 		}
@@ -427,6 +362,80 @@ func BuildAgent(
 		MetricsHook: metricsHook,
 		toolFactory: toolFactory,
 	}, nil
+}
+
+// buildExecutorAndFS creates the command executor and sandboxed filesystem.
+func buildExecutorAndFS(cfg *config.Config) (executor.Executor, *fs.LocalFS, error) {
+	if err := os.MkdirAll(cfg.WorkspaceDir, 0o755); err != nil {
+		return nil, nil, fmt.Errorf("creating workspace dir: %w", err)
+	}
+
+	var exec executor.Executor
+	switch cfg.Executor {
+	case "noop":
+		exec = executor.NewNoop()
+	default:
+		exec = executor.NewLocal(cfg.WorkspaceDir)
+	}
+
+	filesystem, err := fs.NewLocalFS(cfg.WorkspaceDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("filesystem: %w", err)
+	}
+	return exec, filesystem, nil
+}
+
+// buildHookBus creates the event bus with standard hooks (logging, safety,
+// metrics, audit).
+func buildHookBus(logger *zap.Logger, agentTapeDir string) (*hooks.Bus, *hooks.MetricsHook) {
+	bus := hooks.NewBus(logger)
+	bus.Register(hooks.NewLoggingHook(logger))
+	bus.Register(hooks.NewSafetyHook())
+	metricsHook := hooks.NewMetricsHook()
+	bus.Register(metricsHook)
+
+	auditPath := filepath.Join(agentTapeDir, fmt.Sprintf("audit-%s.jsonl", time.Now().Format("20060102-150405")))
+	if auditHook, err := hooks.NewAuditHook(auditPath); err != nil {
+		logger.Warn("failed to create audit hook", zap.Error(err))
+	} else {
+		bus.Register(auditHook)
+	}
+	return bus, metricsHook
+}
+
+// buildChannels creates the channel map based on the agent name and config.
+func buildChannels(
+	name string, cfg *config.Config, logger *zap.Logger,
+) (map[string]channel.Channel, channel.SystemPrinter, *larkchan.LarkChannel) {
+	channels := make(map[string]channel.Channel)
+
+	var printer channel.SystemPrinter
+	if name == "default" {
+		cliCh := cli.New()
+		channels["cli"] = cliCh
+		printer = cliCh
+	}
+
+	var larkCh *larkchan.LarkChannel
+	if cfg.LarkAppID != "" && cfg.LarkAppSecret != "" {
+		larkCh = larkchan.New(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkVerifyToken, logger)
+		channels["lark"] = larkCh
+	}
+
+	return channels, printer, larkCh
+}
+
+// buildScheduleStore creates the per-agent schedule persistence store.
+func buildScheduleStore(name string, logger *zap.Logger) *scheduler.Store {
+	if name == "" {
+		return nil
+	}
+	schedPath := filepath.Join(config.GolemHome(), "agents", name, "schedules.json")
+	store := scheduler.NewStore(schedPath)
+	if err := store.Load(); err != nil {
+		logger.Warn("failed to load schedules", zap.Error(err))
+	}
+	return store
 }
 
 // BuildLLMClient creates an LLM client from the config, auto-registering
