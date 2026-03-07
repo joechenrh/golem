@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -69,22 +70,9 @@ func TestLarkSendTool_Validation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if result == "" || !contains(result, tt.wantErr) {
+			if !strings.Contains(result, tt.wantErr) {
 				t.Errorf("result = %q, want to contain %q", result, tt.wantErr)
 			}
 		})
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
