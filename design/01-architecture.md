@@ -18,7 +18,7 @@ A single golem process can run **multiple agents** concurrently: one interactive
 
 Source: `cmd/golem/main.go`
 
-The process begins by parsing CLI flags (`--model`, `--tape-dir`, `--skills-dir`, `--log-level`, `--version`) into a map of overrides, then loading the two-tier config. Global settings live in `~/.golem/config.env` (LLM keys, provider URLs), while agent-specific settings live in `~/.golem/agents/default/config.env` (behavior, channel credentials). CLI flags override both tiers. The config loader also reads persona files (SOUL.md, USER.md, AGENTS.md, MEMORY.md). A file-only zap logger is initialized next, writing to `<tapeDir>/golem-<timestamp>.log` so log output never mixes with the interactive REPL.
+The process begins by parsing CLI flags (`--model`, `--tape-dir`, `--log-level`, `--version`) into a map of overrides, then loading the two-tier config. Global settings live in `~/.golem/config.env` (LLM keys, provider URLs), while agent-specific settings live in `~/.golem/agents/default/config.env` (behavior, channel credentials). CLI flags override both tiers. The config loader also reads persona files (SOUL.md, USER.md, AGENTS.md, MEMORY.md). A file-only zap logger is initialized next, writing to `<tapeDir>/golem-<timestamp>.log` so log output never mixes with the interactive REPL.
 
 With config and logging in place, `app.BuildAgent("default", cfg, logger)` wires together the full `AgentInstance` (see section 3). If `GOLEM_METRICS_PORT` is set, an HTTP server starts on that port exposing `/debug/metrics` and registers the default agent's `MetricsHook` and `SessionManager`. A startup banner displays the model name, tool count, and tape file path.
 

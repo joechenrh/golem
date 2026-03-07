@@ -64,7 +64,6 @@ ANTHROPIC_API_KEY=sk-ant-...
 GOLEM_MAX_TOOL_ITER=15
 GOLEM_SHELL_TIMEOUT=30s
 GOLEM_TAPE_DIR=~/.golem/tapes
-GOLEM_SKILLS_DIR=.agent/skills
 GOLEM_LOG_LEVEL=info
 
 # Telegram (Phase 3)

@@ -151,7 +151,7 @@ type Config struct {
 //
 // Global config (~/.golem/config.env) provides:
 //   - LLM settings: model, API keys, base URLs, rate limit
-//   - Skills directory, web search backend
+//   - Web search backend
 //
 // Agent config (~/.golem/agents/<agentName>/config.env) provides:
 //   - Agent behavior: max tool iter, shell timeout, context strategy, executor

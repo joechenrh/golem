@@ -19,7 +19,6 @@ Flags:
   --model string       LLM model (e.g. "openai:gpt-4o") (env: GOLEM_MODEL)
   --channel string     Channel to run: cli, telegram, lark, all (default: cli)
   --tape-dir string    Directory for tape files (env: GOLEM_TAPE_DIR)
-  --skills-dir string  Skills discovery directory (env: GOLEM_SKILLS_DIR)
   --log-level string   Log level: debug, info, warn, error (env: GOLEM_LOG_LEVEL)
   --help               Show help
   --version            Show version
@@ -75,7 +74,8 @@ func main() {
         builtin.NewMemorySearchTool(),
         // ... other stubs
     )
-    registry.DiscoverSkills(cfg.SkillsDir)
+    registry.DiscoverSkills(filepath.Join(config.GolemHome(), "skills"))           // global scope
+    registry.DiscoverSkills(filepath.Join(config.GolemHome(), "agents", name, "skills")) // agent scope
 
     // 10. Create agent loop
     agent := agent.New(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)

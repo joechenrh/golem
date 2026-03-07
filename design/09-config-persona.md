@@ -35,7 +35,6 @@ All fields live in `config.Config`. Source: `internal/config/config.go`.
 | Behavior | `ContextStrategy` | `GOLEM_CONTEXT_STRATEGY` | `string` | `"masking"` | Agent |
 | Behavior | `Executor` | `GOLEM_EXECUTOR` | `string` | `"local"` | Agent |
 | Storage | `TapeDir` | `GOLEM_TAPE_DIR` | `string` | `~/.golem/tapes` | Agent |
-| Storage | `SkillsDir` | `GOLEM_SKILLS_DIR` | `string` | `.agent/skills` | Global |
 | Channels | `TelegramToken` | `TELEGRAM_BOT_TOKEN` | `string` | `""` | Agent |
 | Channels | `TelegramACL` | `TELEGRAM_ALLOW_FROM` | `[]int64` | `nil` | Agent |
 | Channels | `LarkAppID` | `LARK_APP_ID` | `string` | `""` | Agent |
@@ -56,7 +55,7 @@ All fields live in `config.Config`. Source: `internal/config/config.go`.
 
 ## 3. Two-Tier Loading
 
-`Load(agentName, flagOverrides)` reads two independent `.env` files via `godotenv.Read` without polluting `os.Environ`. The **global tier** (`~/.golem/config.env`) holds LLM model, API keys/base URLs, skills dir, rate limit, metrics port, and web search backend. The **agent tier** (`~/.golem/agents/<name>/config.env`) holds behavior settings, channel credentials, storage paths, memory config, sessions, and logging. Each tier gets its own `envLookup` instance, so a global-tier variable read through the agent lookup (or vice versa) simply misses and falls back to the default — the tiers do not bleed into each other.
+`Load(agentName, flagOverrides)` reads two independent `.env` files via `godotenv.Read` without polluting `os.Environ`. The **global tier** (`~/.golem/config.env`) holds LLM model, API keys/base URLs, rate limit, metrics port, and web search backend. The **agent tier** (`~/.golem/agents/<name>/config.env`) holds behavior settings, channel credentials, storage paths, memory config, sessions, and logging. Each tier gets its own `envLookup` instance, so a global-tier variable read through the agent lookup (or vice versa) simply misses and falls back to the default — the tiers do not bleed into each other.
 
 When `agentName` is `""`, only the global tier is loaded and agent-tier fields receive their hardcoded defaults.
 
@@ -74,7 +73,7 @@ CLI flags  >  shell environment  >  config.env file  >  hardcoded default
 
 ### CLI flag overrides
 
-`applyFlagOverrides` runs after the struct is populated. It overwrites a fixed set of string fields (`model`, `tape-dir`, `skills-dir`, `log-level`, `context-strategy`, `executor`) from the `flagOverrides` map when the value is non-empty. This gives CLI flags the highest precedence.
+`applyFlagOverrides` runs after the struct is populated. It overwrites a fixed set of string fields (`model`, `tape-dir`, `log-level`, `context-strategy`, `executor`) from the `flagOverrides` map when the value is non-empty. This gives CLI flags the highest precedence.
 
 ## 5. Provider Key Discovery
 

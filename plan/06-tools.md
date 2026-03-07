@@ -50,6 +50,9 @@ func (r *Registry) ToolDefinitions() []llm.ToolDefinition
 func (r *Registry) Expand(name string)
 
 // DiscoverSkills scans a directory for SKILL.md files and registers them.
+// Called twice: first for global scope (~/.golem/skills/), then for
+// agent scope (~/.golem/agents/<name>/skills/). Agent skills override
+// global ones on name collision.
 // Path pattern: <dir>/*/SKILL.md
 func (r *Registry) DiscoverSkills(dir string) error
 

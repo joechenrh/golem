@@ -24,7 +24,6 @@ type Config struct {
 
     // Storage
     TapeDir   string // directory for tape JSONL files (default: ~/.golem/tapes)
-    SkillsDir string // skills discovery directory (default: .agent/skills)
 
     // Channels (stubs for now)
     TelegramToken string
@@ -74,7 +73,6 @@ func (c *Config) ModelProvider() (provider, model string)
 | MaxToolIter | `GOLEM_MAX_TOOL_ITER` | `15` |
 | ShellTimeout | `GOLEM_SHELL_TIMEOUT` | `30s` |
 | TapeDir | `GOLEM_TAPE_DIR` | `~/.golem/tapes` |
-| SkillsDir | `GOLEM_SKILLS_DIR` | `.agent/skills` |
 | LogLevel | `GOLEM_LOG_LEVEL` | `info` |
 
 ### Validation

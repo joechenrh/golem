@@ -52,7 +52,7 @@ Middlewares wrap `Execute` in registration order (outermost first). The app curr
 5. Persona memory tool (if persona is configured)
 6. Schedule tools (added later, on the default registry)
 7. Spawn agent tool
-8. Skills (discovered from `cfg.SkillsDir`)
+8. Skills (global from `~/.golem/skills/`, then per-agent from `~/.golem/agents/<name>/skills/`)
 9. External plugins (from `~/.golem/plugins/*.tool.json`)
 
 ## 4. Progressive Disclosure
@@ -63,7 +63,10 @@ Detection uses word-boundary matching so that e.g. "file" does not false-match "
 
 ## 5. Skills
 
-Skills are markdown-based prompt injections discovered from the filesystem. They live under `<skills-dir>/<skill-name>/SKILL.md`.
+Skills are markdown-based prompt injections discovered from the filesystem. They are loaded from two scopes:
+
+1. **Global**: `~/.golem/skills/<skill-name>/SKILL.md` — shared by all agents
+2. **Per-agent**: `~/.golem/agents/<name>/skills/<skill-name>/SKILL.md` — agent-specific, overrides global on name collision
 
 ### File format
 
@@ -78,7 +81,7 @@ description: Summarize the current session
 
 Frontmatter is delimited by `---` lines and must contain `name` and `description` fields. The tool is registered as `skill_<name>`. Skills accept a single `input` string parameter but their `Execute` simply returns the markdown body — they are context injections, not executable code.
 
-`Registry.DiscoverSkills(dir)` walks immediate subdirectories of `dir`, looking for `SKILL.md` in each. Invalid files are silently skipped.
+`Registry.DiscoverSkills(dir)` walks immediate subdirectories of `dir`, looking for `SKILL.md` in each. Invalid files are silently skipped. `BuildToolRegistry` calls it twice — first for the global scope, then for the agent scope — so agent skills override global ones on name collision.
 
 Source: `internal/tools/skill.go`
 

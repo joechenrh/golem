@@ -14,7 +14,7 @@ This project is a **Go clone** of [CrabClaw](https://github.com/jackwener/crabcl
 - **Multi-channel**: CLI REPL with streaming, Lark/Feishu bot via WebSocket
 - **Multiple LLM providers**: OpenAI, Anthropic, any OpenAI-compatible service
 - **Tool system**: 12+ built-in tools with progressive disclosure to save tokens
-- **Skill discovery**: Auto-discover skills from `.agent/skills/` directory
+- **Skill discovery**: Two-scope skill loading from `~/.golem/skills/` (global) and `~/.golem/agents/<name>/skills/` (per-agent)
 - **Context management**: Tape-based conversation log with anchor/masking strategies
 - **Sandboxed execution**: Filesystem and shell commands confined to workspace root
 - **Persistent memory**: Optional vector-similarity memory via mnemos/TiDB
