@@ -131,7 +131,13 @@ func (s *Session) runReActLoop(
 	const maxNudges = 2
 	nudges := 0
 
+	const shrinkAfterIters = 10
+
 	for iter := range s.config.MaxToolIter {
+		// Shrink tool schemas not used in the last few iterations to
+		// save context window space in long multi-step chains.
+		s.tools.ShrinkUnused(iter, shrinkAfterIters)
+
 		resp, err := s.executeLLMCall(ctx, modelName, maxTokens, iter, stream, tokenCh, pendingMsg)
 		if err != nil {
 			return "", err
@@ -156,7 +162,7 @@ func (s *Session) runReActLoop(
 
 		// Tool calls present — execute them and continue the loop.
 		if len(resp.ToolCalls) > 0 {
-			s.processToolCalls(ctx, resp)
+			s.processToolCalls(ctx, resp, iter)
 			continue
 		}
 
@@ -376,14 +382,14 @@ func (s *Session) executeLLMCall(
 // processToolCalls records the assistant message, expands tool schemas, and
 // executes each tool call in parallel, recording results to the tape in order.
 func (s *Session) processToolCalls(
-	ctx context.Context, resp *llm.ChatResponse,
+	ctx context.Context, resp *llm.ChatResponse, iter int,
 ) {
 	s.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "", nil)
 
 	// Auto-expand any tool the model calls, so the next iteration
 	// sends the full parameter schema (progressive disclosure).
 	for _, tc := range resp.ToolCalls {
-		s.tools.Expand(tc.Name)
+		s.tools.ExpandAt(tc.Name, iter)
 	}
 	if resp.Content != "" {
 		s.tools.ExpandHints(resp.Content)

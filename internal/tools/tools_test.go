@@ -283,6 +283,41 @@ func TestRegistry_ExpandHints(t *testing.T) {
 	}
 }
 
+func TestRegistry_ShrinkUnused(t *testing.T) {
+	r := NewRegistry()
+	r.Register(newMockTool("read_file", "Read", "Read full"))
+	r.Register(newMockTool("write_file", "Write", "Write full"))
+	r.Register(newMockTool("shell_exec", "Shell", "Shell full"))
+
+	// Expand read_file at iter 0, write_file at iter 1.
+	r.ExpandAt("read_file", 0)
+	r.ExpandAt("write_file", 1)
+	// Expand shell_exec without iteration (e.g. pre-expanded by config).
+	r.Expand("shell_exec")
+
+	// At iter 5 with staleAfter=3: read_file (last=0, gap=5) should shrink,
+	// write_file (last=1, gap=4) should shrink, shell_exec should stay.
+	r.ShrinkUnused(5, 3)
+
+	defs := r.ToolDefinitions()
+	for _, d := range defs {
+		switch d.Name {
+		case "read_file":
+			if d.Description != "Read" {
+				t.Errorf("read_file should be shrunk back to short desc, got %q", d.Description)
+			}
+		case "write_file":
+			if d.Description != "Write" {
+				t.Errorf("write_file should be shrunk back to short desc, got %q", d.Description)
+			}
+		case "shell_exec":
+			if d.Description != "Shell full" {
+				t.Errorf("shell_exec should stay expanded (no iter tracking), got %q", d.Description)
+			}
+		}
+	}
+}
+
 // ─── Skill Tests ─────────────────────────────────────────────────
 
 func TestParseSkill(t *testing.T) {

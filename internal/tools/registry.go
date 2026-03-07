@@ -18,7 +18,8 @@ var compactParams = json.RawMessage(`{"type":"object","properties":{}}`)
 type Registry struct {
 	tools       map[string]Tool
 	expanded    map[string]bool
-	order       []string // insertion order for deterministic listing
+	lastUsed    map[string]int // iteration when tool was last expanded/called
+	order       []string       // insertion order for deterministic listing
 	middlewares []middleware.Middleware
 }
 
@@ -27,6 +28,7 @@ func NewRegistry() *Registry {
 	return &Registry{
 		tools:    make(map[string]Tool),
 		expanded: make(map[string]bool),
+		lastUsed: make(map[string]int),
 	}
 }
 
@@ -101,9 +103,34 @@ func (r *Registry) ToolDefinitions() []llm.ToolDefinition {
 }
 
 // Expand marks a tool for full description in subsequent ToolDefinitions() calls.
+// iter is optional — pass 0 if iteration tracking is not needed.
 func (r *Registry) Expand(name string) {
 	if _, ok := r.tools[name]; ok {
 		r.expanded[name] = true
+	}
+}
+
+// ExpandAt marks a tool as expanded and records the iteration for shrink tracking.
+func (r *Registry) ExpandAt(name string, iter int) {
+	if _, ok := r.tools[name]; ok {
+		r.expanded[name] = true
+		r.lastUsed[name] = iter
+	}
+}
+
+// ShrinkUnused collapses tools that haven't been called in the last
+// staleAfter iterations, returning their schemas to compact mode.
+// Tools expanded via Expand (without iteration tracking) are never shrunk.
+func (r *Registry) ShrinkUnused(currentIter, staleAfter int) {
+	for name := range r.expanded {
+		lastUsed, tracked := r.lastUsed[name]
+		if !tracked {
+			continue // expanded without iteration tracking — keep expanded
+		}
+		if currentIter-lastUsed > staleAfter {
+			delete(r.expanded, name)
+			delete(r.lastUsed, name)
+		}
 	}
 }
 
