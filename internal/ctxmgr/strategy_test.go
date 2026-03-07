@@ -16,6 +16,7 @@ func TestNewContextStrategy(t *testing.T) {
 	}{
 		{"anchor", false},
 		{"masking", false},
+		{"hybrid", false},
 		{"unknown", true},
 	}
 	for _, tt := range tests {

@@ -26,6 +26,8 @@ func NewContextStrategy(name string) (ContextStrategy, error) {
 		return &AnchorStrategy{}, nil
 	case "masking":
 		return &MaskingStrategy{MaskThreshold: 0.5, MaxOutputChars: 2000}, nil
+	case "hybrid":
+		return &HybridStrategy{MaskThreshold: 0.7, MaxOutputChars: 2000}, nil
 	default:
 		return nil, fmt.Errorf("unknown context strategy: %q", name)
 	}
@@ -55,6 +57,31 @@ type MaskingStrategy struct {
 func (s *MaskingStrategy) Name() string { return "masking" }
 
 func (s *MaskingStrategy) BuildContext(
+	_ context.Context, entries []tape.TapeEntry,
+	maxTokens int,
+) ([]llm.Message, error) {
+	msgs := tape.BuildMessages(entries)
+
+	threshold := int(float64(maxTokens) * s.MaskThreshold)
+	if EstimateTokens(msgs) > threshold {
+		msgs = MaskObservations(msgs, s.MaxOutputChars)
+	}
+
+	return trimToFit(msgs, maxTokens), nil
+}
+
+// HybridStrategy combines anchor windowing with adaptive masking.
+// It first masks large tool outputs, then trims oldest messages to fit.
+// Uses a higher mask threshold (0.7) than pure MaskingStrategy (0.5)
+// so masking is less aggressive and only kicks in closer to the limit.
+type HybridStrategy struct {
+	MaskThreshold  float64 // fraction of maxTokens before masking kicks in (default: 0.7)
+	MaxOutputChars int     // max chars per tool output before truncation (default: 2000)
+}
+
+func (s *HybridStrategy) Name() string { return "hybrid" }
+
+func (s *HybridStrategy) BuildContext(
 	_ context.Context, entries []tape.TapeEntry,
 	maxTokens int,
 ) ([]llm.Message, error) {
