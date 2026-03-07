@@ -77,6 +77,7 @@ func EstimateTokens(msgs []llm.Message) int {
 		for _, tc := range m.ToolCalls {
 			total += estimateStringTokens(tc.Arguments)
 		}
+		total += len(m.Images) * 1000
 	}
 	return total
 }

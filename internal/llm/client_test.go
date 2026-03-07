@@ -1034,3 +1034,125 @@ func TestAnthropicChatStream_MalformedSSE(t *testing.T) {
 		t.Error("expected StreamError for malformed JSON data")
 	}
 }
+
+// ─── Multimodal (Image) Tests ────────────────────────────────────
+
+func TestOpenAI_BuildRequest_WithImages(t *testing.T) {
+	client := newOpenAIClient("test-key", "https://api.example.com")
+	req := ChatRequest{
+		Model: "gpt-4o",
+		Messages: []Message{{
+			Role:    RoleUser,
+			Content: "What's in this image?",
+			Images: []ImageContent{{
+				Base64:    "aGVsbG8=",
+				MediaType: "image/png",
+			}},
+		}},
+	}
+
+	wireReq := client.buildRequest(req, false)
+
+	if len(wireReq.Messages) != 1 {
+		t.Fatalf("len(Messages) = %d, want 1", len(wireReq.Messages))
+	}
+
+	msg := wireReq.Messages[0]
+	parts, ok := msg.Content.([]openaiContentPart)
+	if !ok {
+		t.Fatalf("Content type = %T, want []openaiContentPart", msg.Content)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("len(parts) = %d, want 2", len(parts))
+	}
+	if parts[0].Type != "text" || parts[0].Text != "What's in this image?" {
+		t.Errorf("parts[0] = %+v, want text part", parts[0])
+	}
+	if parts[1].Type != "image_url" || parts[1].ImageURL == nil {
+		t.Fatalf("parts[1] = %+v, want image_url part", parts[1])
+	}
+	wantURL := "data:image/png;base64,aGVsbG8="
+	if parts[1].ImageURL.URL != wantURL {
+		t.Errorf("image URL = %q, want %q", parts[1].ImageURL.URL, wantURL)
+	}
+}
+
+func TestOpenAI_BuildRequest_NoImages(t *testing.T) {
+	client := newOpenAIClient("test-key", "https://api.example.com")
+	req := ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: "Hello"}},
+	}
+
+	wireReq := client.buildRequest(req, false)
+
+	msg := wireReq.Messages[0]
+	s, ok := msg.Content.(string)
+	if !ok {
+		t.Fatalf("Content type = %T, want string", msg.Content)
+	}
+	if s != "Hello" {
+		t.Errorf("Content = %q, want %q", s, "Hello")
+	}
+}
+
+func TestAnthropic_ConvertMessages_WithImages(t *testing.T) {
+	msgs := []Message{{
+		Role:    RoleUser,
+		Content: "Describe this image",
+		Images: []ImageContent{{
+			Base64:    "aW1hZ2U=",
+			MediaType: "image/jpeg",
+		}},
+	}}
+
+	result := convertMessages(msgs)
+
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+
+	blocks, ok := result[0].Content.([]anthropicContentBlock)
+	if !ok {
+		t.Fatalf("Content type = %T, want []anthropicContentBlock", result[0].Content)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("len(blocks) = %d, want 2", len(blocks))
+	}
+	if blocks[0].Type != "text" || blocks[0].Text != "Describe this image" {
+		t.Errorf("blocks[0] = %+v, want text block", blocks[0])
+	}
+	if blocks[1].Type != "image" || blocks[1].Source == nil {
+		t.Fatalf("blocks[1] = %+v, want image block", blocks[1])
+	}
+	if blocks[1].Source.Type != "base64" {
+		t.Errorf("source type = %q, want %q", blocks[1].Source.Type, "base64")
+	}
+	if blocks[1].Source.MediaType != "image/jpeg" {
+		t.Errorf("media_type = %q, want %q", blocks[1].Source.MediaType, "image/jpeg")
+	}
+	if blocks[1].Source.Data != "aW1hZ2U=" {
+		t.Errorf("data = %q, want %q", blocks[1].Source.Data, "aW1hZ2U=")
+	}
+}
+
+func TestAnthropic_ConvertMessages_NoImages(t *testing.T) {
+	msgs := []Message{{
+		Role:    RoleUser,
+		Content: "Hello",
+	}}
+
+	result := convertMessages(msgs)
+
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+
+	s, ok := result[0].Content.(string)
+	if !ok {
+		t.Fatalf("Content type = %T, want string", result[0].Content)
+	}
+	if s != "Hello" {
+		t.Errorf("Content = %q, want %q", s, "Hello")
+	}
+}

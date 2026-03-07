@@ -1,30 +1,36 @@
 package builtin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 
 	larkchan "github.com/joechenrh/golem/internal/channel/lark"
 	"github.com/joechenrh/golem/internal/llm"
 )
 
-// LarkSendTool lets the agent send messages to Lark group chats.
+// LarkSendTool lets the agent send messages and images to Lark group chats.
 type LarkSendTool struct {
-	ch *larkchan.LarkChannel
+	ch         *larkchan.LarkChannel
+	httpClient *http.Client
 }
 
 func NewLarkSendTool(
 	ch *larkchan.LarkChannel,
+	httpClient *http.Client,
 ) *LarkSendTool {
-	return &LarkSendTool{ch: ch}
+	return &LarkSendTool{ch: ch, httpClient: httpClient}
 }
 
 func (t *LarkSendTool) Name() string        { return "lark_send" }
-func (t *LarkSendTool) Description() string { return "Send a message to a Lark group chat" }
+func (t *LarkSendTool) Description() string { return "Send a message or image to a Lark group chat" }
 func (t *LarkSendTool) FullDescription() string {
-	return "Send a text message to a Lark/Feishu group chat. " +
+	return "Send a text message and/or image to a Lark/Feishu group chat. " +
+		"At least one of 'message' or 'image' must be provided. " +
 		"Use lark_list_chats first to find the chat_id of the target group."
 }
 
@@ -32,9 +38,10 @@ var larkSendParams = json.RawMessage(`{
 	"type": "object",
 	"properties": {
 		"chat_id": {"type": "string", "description": "The chat_id of the target Lark group"},
-		"message": {"type": "string", "description": "The text message to send"}
+		"message": {"type": "string", "description": "The text message to send (optional if image is provided)"},
+		"image": {"type": "string", "description": "URL of an image to download and send (optional if message is provided)"}
 	},
-	"required": ["chat_id", "message"]
+	"required": ["chat_id"]
 }`)
 
 func (t *LarkSendTool) Parameters() json.RawMessage { return larkSendParams }
@@ -45,6 +52,7 @@ func (t *LarkSendTool) Execute(
 	var params struct {
 		ChatID  string `json:"chat_id"`
 		Message string `json:"message"`
+		Image   string `json:"image"`
 	}
 	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
 		return "Error: invalid arguments: " + err.Error(), nil
@@ -52,14 +60,62 @@ func (t *LarkSendTool) Execute(
 	if params.ChatID == "" {
 		return "Error: 'chat_id' is required", nil
 	}
-	if params.Message == "" {
-		return "Error: 'message' is required", nil
+	if params.Message == "" && params.Image == "" {
+		return "Error: at least one of 'message' or 'image' must be provided", nil
 	}
 
-	if err := t.ch.SendToChat(ctx, params.ChatID, params.Message); err != nil {
-		return "Error: " + err.Error(), nil
+	var results []string
+
+	// Send text card if message is provided.
+	if params.Message != "" {
+		if err := t.ch.SendToChat(ctx, params.ChatID, params.Message); err != nil {
+			return "Error sending message: " + err.Error(), nil
+		}
+		results = append(results, "text message sent")
 	}
-	return fmt.Sprintf("Message sent to chat %s successfully.", params.ChatID), nil
+
+	// Download and send image if URL is provided.
+	if params.Image != "" {
+		imgData, err := t.downloadURL(ctx, params.Image)
+		if err != nil {
+			return "Error downloading image: " + err.Error(), nil
+		}
+
+		imageKey, err := t.ch.UploadImage(ctx, bytes.NewReader(imgData))
+		if err != nil {
+			return "Error uploading image to Lark: " + err.Error(), nil
+		}
+
+		if err := t.ch.SendImageToChat(ctx, params.ChatID, imageKey); err != nil {
+			return "Error sending image: " + err.Error(), nil
+		}
+		results = append(results, "image sent")
+	}
+
+	return fmt.Sprintf("Success: %s to chat %s.", strings.Join(results, " and "), params.ChatID), nil
+}
+
+// downloadURL fetches the content at the given URL.
+func (t *LarkSendTool) downloadURL(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 // LarkListChatsTool lets the agent discover which Lark groups the bot belongs to.

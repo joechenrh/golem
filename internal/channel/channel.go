@@ -2,6 +2,12 @@ package channel
 
 import "context"
 
+// ImageData holds a downloaded image for multimodal messages.
+type ImageData struct {
+	Base64    string
+	MediaType string
+}
+
 // IncomingMessage represents a message received from a channel.
 type IncomingMessage struct {
 	ChannelID   string // e.g. "cli", "telegram:12345", "lark:chat_xyz"
@@ -9,6 +15,7 @@ type IncomingMessage struct {
 	SenderID    string
 	SenderName  string
 	Text        string
+	Images      []ImageData
 	Metadata    map[string]string
 	Done        chan struct{} // closed when processing is complete (optional)
 }

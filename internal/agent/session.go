@@ -139,7 +139,14 @@ func (s *Session) runReActLoop(
 
 		// First successful LLM call — persist the pending user message.
 		if pendingMsg != nil {
-			s.appendMessage(llm.RoleUser, pendingMsg.Text, nil, pendingMsg.SenderID)
+			var msgImages []llm.ImageContent
+			for _, img := range pendingMsg.Images {
+				msgImages = append(msgImages, llm.ImageContent{
+					Base64:    img.Base64,
+					MediaType: img.MediaType,
+				})
+			}
+			s.appendMessage(llm.RoleUser, pendingMsg.Text, nil, pendingMsg.SenderID, msgImages)
 			s.hooks.Emit(ctx, hooks.Event{
 				Type:    hooks.EventUserMessage,
 				Payload: map[string]any{"text": pendingMsg.Text, "channel_id": pendingMsg.ChannelID},
@@ -164,8 +171,8 @@ func (s *Session) runReActLoop(
 		// No tool calls. If the response looks like a plan rather than a
 		// final answer, nudge the LLM to actually use tools.
 		if nudges < maxNudges && looksLikePlan(resp.Content) {
-			s.appendMessage(llm.RoleAssistant, resp.Content, nil, "")
-			s.appendMessage(llm.RoleUser, nudgeMessage(resp.Content), nil, "")
+			s.appendMessage(llm.RoleAssistant, resp.Content, nil, "", nil)
+			s.appendMessage(llm.RoleUser, nudgeMessage(resp.Content), nil, "", nil)
 			nudges++
 			s.logger.Debug("nudging LLM to use tools",
 				zap.Int("nudge", nudges), zap.Int("iter", iter))
@@ -300,10 +307,17 @@ func (s *Session) executeLLMCall(
 		if pendingMsg.SenderID != "" {
 			content = "[sender:" + pendingMsg.SenderID + "] " + content
 		}
-		messages = append(messages, llm.Message{
+		userMsg := llm.Message{
 			Role:    llm.RoleUser,
 			Content: content,
-		})
+		}
+		for _, img := range pendingMsg.Images {
+			userMsg.Images = append(userMsg.Images, llm.ImageContent{
+				Base64:    img.Base64,
+				MediaType: img.MediaType,
+			})
+		}
+		messages = append(messages, userMsg)
 	}
 
 	systemPrompt := s.buildSystemPrompt()
@@ -364,7 +378,7 @@ func (s *Session) executeLLMCall(
 func (s *Session) processToolCalls(
 	ctx context.Context, resp *llm.ChatResponse,
 ) {
-	s.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "")
+	s.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "", nil)
 
 	// Auto-expand any tool the model calls, so the next iteration
 	// sends the full parameter schema (progressive disclosure).
@@ -405,7 +419,7 @@ func (s *Session) processToolCalls(
 			if s.toolFailures[r.name] >= maxToolFailures {
 				s.appendMessage(llm.RoleUser,
 					fmt.Sprintf("Tool %q has failed %d times this turn. Reconsider your approach — try a different tool or method.",
-						r.name, s.toolFailures[r.name]), nil, "")
+						r.name, s.toolFailures[r.name]), nil, "", nil)
 			}
 		}
 	}
@@ -433,7 +447,7 @@ func (s *Session) processAssistantResponse(
 		}
 	}
 
-	s.appendMessage(llm.RoleAssistant, content, nil, "")
+	s.appendMessage(llm.RoleAssistant, content, nil, "", nil)
 	return content
 }
 
@@ -761,9 +775,11 @@ func (s *Session) buildFlatPrompt() string {
 
 // appendMessage records a message to the tape.
 // senderID is optional and only set for user messages in group chats.
+// images stores metadata-only refs (media_type) to avoid bloating the tape.
 func (s *Session) appendMessage(
 	role llm.Role, content string,
 	toolCalls []llm.ToolCall, senderID string,
+	images []llm.ImageContent,
 ) {
 	payload := map[string]any{
 		"role":    string(role),
@@ -774,6 +790,14 @@ func (s *Session) appendMessage(
 	}
 	if senderID != "" {
 		payload["sender_id"] = senderID
+	}
+	if len(images) > 0 {
+		// Store metadata only — no base64 data in the tape.
+		refs := make([]map[string]string, len(images))
+		for i, img := range images {
+			refs[i] = map[string]string{"media_type": img.MediaType}
+		}
+		payload["images"] = refs
 	}
 
 	s.tape.Append(tape.TapeEntry{

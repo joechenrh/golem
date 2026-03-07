@@ -186,6 +186,24 @@ func TestEstimateTokens(t *testing.T) {
 	}
 }
 
+func TestEstimateTokens_WithImages(t *testing.T) {
+	msgs := []llm.Message{
+		{
+			Role:    llm.RoleUser,
+			Content: strings.Repeat("a", 400), // 100 tokens
+			Images: []llm.ImageContent{
+				{Base64: "data", MediaType: "image/png"},
+				{Base64: "data2", MediaType: "image/jpeg"},
+			},
+		},
+	}
+	got := EstimateTokens(msgs)
+	want := 100 + 2*1000 // 100 text tokens + 2 images * 1000
+	if got != want {
+		t.Errorf("EstimateTokens (with images) = %d, want %d", got, want)
+	}
+}
+
 func TestEstimateTokens_CJK(t *testing.T) {
 	// 4 CJK characters should be ~4 tokens (1 token each).
 	msgs := []llm.Message{

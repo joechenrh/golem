@@ -2,8 +2,11 @@ package lark
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -111,7 +114,11 @@ func (l *LarkChannel) onMessageReceive(
 	inCh chan<- channel.IncomingMessage,
 ) {
 	msg := event.Event.Message
-	if msg == nil || msg.MessageType == nil || *msg.MessageType != "text" {
+	if msg == nil || msg.MessageType == nil {
+		return
+	}
+	msgType := *msg.MessageType
+	if msgType != "text" && msgType != "image" {
 		return
 	}
 	if msg.Content == nil || msg.ChatId == nil {
@@ -147,9 +154,33 @@ func (l *LarkChannel) onMessageReceive(
 		}
 	}
 
-	text := extractTextContent(*msg.Content)
-	if text == "" {
-		return
+	var text string
+	var images []channel.ImageData
+
+	switch msgType {
+	case "text":
+		text = extractTextContent(*msg.Content)
+		if text == "" {
+			return
+		}
+	case "image":
+		imageKey := extractImageKey(*msg.Content)
+		if imageKey == "" {
+			l.logger.Warn("image message missing image_key", zap.String("message_id", msgID))
+			return
+		}
+		imgData, mediaType, err := l.downloadImage(context.Background(), msgID, imageKey)
+		if err != nil {
+			l.logger.Error("failed to download lark image",
+				zap.String("message_id", msgID), zap.Error(err))
+			return
+		}
+		encoded := base64.StdEncoding.EncodeToString(imgData)
+		images = append(images, channel.ImageData{
+			Base64:    encoded,
+			MediaType: mediaType,
+		})
+		text = "[User sent an image]"
 	}
 
 	// Strip @bot mentions.
@@ -160,7 +191,7 @@ func (l *LarkChannel) onMessageReceive(
 			}
 		}
 		text = strings.TrimSpace(text)
-		if text == "" {
+		if text == "" && len(images) == 0 {
 			return
 		}
 	}
@@ -176,6 +207,7 @@ func (l *LarkChannel) onMessageReceive(
 		zap.String("message_id", msgID),
 		zap.String("chat_id", *msg.ChatId),
 		zap.String("sender", senderID),
+		zap.String("type", msgType),
 		zap.String("text", truncateForLog(text, 80)))
 
 	// Reset per-cycle duplicate tracking before dispatching.
@@ -187,6 +219,7 @@ func (l *LarkChannel) onMessageReceive(
 		ChannelName: "lark",
 		SenderID:    senderID,
 		Text:        text,
+		Images:      images,
 		Done:        done,
 	}
 	<-done
@@ -572,6 +605,95 @@ type ChatInfo struct {
 	ChatID      string
 	Name        string
 	Description string
+}
+
+// extractImageKey parses the Lark image message content JSON and returns the image_key.
+// Lark image messages have the format: {"image_key":"img_xxx"}.
+func extractImageKey(content string) string {
+	var parsed struct {
+		ImageKey string `json:"image_key"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return ""
+	}
+	return parsed.ImageKey
+}
+
+// downloadImage downloads an image from a Lark message using the message resource API.
+func (l *LarkChannel) downloadImage(
+	ctx context.Context, messageID, imageKey string,
+) ([]byte, string, error) {
+	req := larkim.NewGetMessageResourceReqBuilder().
+		MessageId(messageID).
+		FileKey(imageKey).
+		Type("image").
+		Build()
+
+	resp, err := l.client.Im.V1.MessageResource.Get(ctx, req)
+	if err != nil {
+		return nil, "", fmt.Errorf("lark download image: %w", err)
+	}
+	if !resp.Success() {
+		return nil, "", fmt.Errorf("lark download image: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+
+	data, err := io.ReadAll(resp.File)
+	if err != nil {
+		return nil, "", fmt.Errorf("lark download image: read body: %w", err)
+	}
+
+	mediaType := http.DetectContentType(data)
+	return data, mediaType, nil
+}
+
+// UploadImage uploads image data to Lark and returns the image_key.
+func (l *LarkChannel) UploadImage(
+	ctx context.Context, imageData io.Reader,
+) (string, error) {
+	req := larkim.NewCreateImageReqBuilder().
+		Body(larkim.NewCreateImageReqBodyBuilder().
+			ImageType("message").
+			Image(imageData).
+			Build()).
+		Build()
+
+	resp, err := l.client.Im.V1.Image.Create(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("lark upload image: %w", err)
+	}
+	if !resp.Success() {
+		return "", fmt.Errorf("lark upload image: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	if resp.Data == nil || resp.Data.ImageKey == nil {
+		return "", fmt.Errorf("lark upload image: no image_key in response")
+	}
+	return *resp.Data.ImageKey, nil
+}
+
+// SendImageToChat sends an image message to a Lark chat.
+func (l *LarkChannel) SendImageToChat(
+	ctx context.Context, chatID, imageKey string,
+) error {
+	l.sentChats.Store(chatID, true)
+
+	content, _ := json.Marshal(map[string]string{"image_key": imageKey})
+	req := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType("chat_id").
+		Body(larkim.NewCreateMessageReqBodyBuilder().
+			ReceiveId(chatID).
+			MsgType("image").
+			Content(string(content)).
+			Build()).
+		Build()
+
+	resp, err := l.client.Im.V1.Message.Create(ctx, req)
+	if err != nil {
+		return fmt.Errorf("lark send image: %w", err)
+	}
+	if !resp.Success() {
+		return fmt.Errorf("lark send image: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	return nil
 }
 
 // extractTextContent parses the Lark message content JSON and returns the text value.

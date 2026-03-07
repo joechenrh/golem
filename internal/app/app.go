@@ -520,7 +520,7 @@ func BuildToolRegistry(
 	// Lark tools (pre-expanded for immediate full schema).
 	if larkCh != nil {
 		registry.RegisterAll(
-			builtin.NewLarkSendTool(larkCh),
+			builtin.NewLarkSendTool(larkCh, webClient),
 			builtin.NewLarkListChatsTool(larkCh),
 			builtin.NewLarkReadDocTool(larkCh),
 			builtin.NewLarkWriteDocTool(larkCh),

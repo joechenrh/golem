@@ -29,13 +29,20 @@ type anthropicMessage struct {
 }
 
 type anthropicContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`          // tool_use
-	Name      string          `json:"name,omitempty"`        // tool_use
-	Input     json.RawMessage `json:"input,omitempty"`       // tool_use (JSON object)
-	ToolUseID string          `json:"tool_use_id,omitempty"` // tool_result
-	Content   string          `json:"content,omitempty"`     // tool_result (reuses Text for simple string)
+	Type      string                `json:"type"`
+	Text      string                `json:"text,omitempty"`
+	ID        string                `json:"id,omitempty"`          // tool_use
+	Name      string                `json:"name,omitempty"`        // tool_use
+	Input     json.RawMessage       `json:"input,omitempty"`       // tool_use (JSON object)
+	ToolUseID string                `json:"tool_use_id,omitempty"` // tool_result
+	Content   string                `json:"content,omitempty"`     // tool_result (reuses Text for simple string)
+	Source    *anthropicImageSource `json:"source,omitempty"`      // image
+}
+
+type anthropicImageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
 }
 
 type anthropicTool struct {
@@ -325,10 +332,34 @@ func convertMessages(msgs []Message) []anthropicMessage {
 
 		switch m.Role {
 		case RoleUser:
-			result = append(result, anthropicMessage{
-				Role:    "user",
-				Content: m.Content,
-			})
+			if len(m.Images) > 0 {
+				var blocks []anthropicContentBlock
+				if m.Content != "" {
+					blocks = append(blocks, anthropicContentBlock{
+						Type: "text",
+						Text: m.Content,
+					})
+				}
+				for _, img := range m.Images {
+					blocks = append(blocks, anthropicContentBlock{
+						Type: "image",
+						Source: &anthropicImageSource{
+							Type:      "base64",
+							MediaType: img.MediaType,
+							Data:      img.Base64,
+						},
+					})
+				}
+				result = append(result, anthropicMessage{
+					Role:    "user",
+					Content: blocks,
+				})
+			} else {
+				result = append(result, anthropicMessage{
+					Role:    "user",
+					Content: m.Content,
+				})
+			}
 
 		case RoleAssistant:
 			if len(m.ToolCalls) > 0 {

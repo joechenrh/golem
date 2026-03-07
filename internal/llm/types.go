@@ -23,13 +23,20 @@ const (
 	RoleTool      Role = "tool"
 )
 
+// ImageContent holds a base64-encoded image for multimodal messages.
+type ImageContent struct {
+	Base64    string `json:"base64,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
+}
+
 // Message represents a conversation message.
 type Message struct {
-	Role       Role       `json:"role"`
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Name       string     `json:"name,omitempty"`
+	Role       Role           `json:"role"`
+	Content    string         `json:"content"`
+	Images     []ImageContent `json:"images,omitempty"`
+	ToolCalls  []ToolCall     `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Name       string         `json:"name,omitempty"`
 }
 
 // ToolCall represents a tool invocation from the model.

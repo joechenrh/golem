@@ -25,10 +25,20 @@ type openaiChatRequest struct {
 
 type openaiMessage struct {
 	Role       string           `json:"role"`
-	Content    string           `json:"content"`
+	Content    any              `json:"content"`
 	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 	Name       string           `json:"name,omitempty"`
+}
+
+type openaiContentPart struct {
+	Type     string          `json:"type"`
+	Text     string          `json:"text,omitempty"`
+	ImageURL *openaiImageURL `json:"image_url,omitempty"`
+}
+
+type openaiImageURL struct {
+	URL string `json:"url"`
 }
 
 type openaiToolCall struct {
@@ -267,10 +277,29 @@ func (c *openaiClient) buildRequest(
 	for _, m := range req.Messages {
 		om := openaiMessage{
 			Role:       string(m.Role),
-			Content:    m.Content,
 			ToolCallID: m.ToolCallID,
 			Name:       m.Name,
 		}
+
+		// Build multipart content when images are present.
+		if len(m.Images) > 0 && m.Role == RoleUser {
+			var parts []openaiContentPart
+			if m.Content != "" {
+				parts = append(parts, openaiContentPart{Type: "text", Text: m.Content})
+			}
+			for _, img := range m.Images {
+				parts = append(parts, openaiContentPart{
+					Type: "image_url",
+					ImageURL: &openaiImageURL{
+						URL: "data:" + img.MediaType + ";base64," + img.Base64,
+					},
+				})
+			}
+			om.Content = parts
+		} else {
+			om.Content = m.Content
+		}
+
 		for _, tc := range m.ToolCalls {
 			om.ToolCalls = append(om.ToolCalls, openaiToolCall{
 				ID:   tc.ID,
@@ -322,7 +351,9 @@ func (c *openaiClient) convertResponse(
 
 	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
-		cr.Content = choice.Message.Content
+		if s, ok := choice.Message.Content.(string); ok {
+			cr.Content = s
+		}
 		cr.FinishReason = choice.FinishReason
 		for _, tc := range choice.Message.ToolCalls {
 			cr.ToolCalls = append(cr.ToolCalls, ToolCall{

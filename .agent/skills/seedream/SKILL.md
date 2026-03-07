@@ -89,8 +89,8 @@ curl -s -X POST https://ark.cn-beijing.volces.com/api/v3/images/generations \
 2. Choose the appropriate model (default to 5.0 Lite)
 3. Call the API via `shell_exec` using `curl`
 4. Parse the JSON response and extract the image URL from `data[0].url`
-5. Return the URL to the user
-6. If sending to Lark, use the URL as a clickable link: `[View Image](<url>)`
+5. If the current channel is Lark (chat_id is available from the conversation context), use `lark_send` with `chat_id` and `image` set to the URL to send the image natively
+6. Otherwise, return the URL as a markdown image: `![Generated Image](<url>)`
 
 ## Tips for Better Prompts
 
