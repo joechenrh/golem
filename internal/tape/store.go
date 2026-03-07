@@ -116,8 +116,11 @@ func (s *FileStore) Entries() ([]TapeEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Return a copy to prevent callers from mutating the cache.
-	return slices.Clone(s.entries), nil
+	// Return a snapshot backed by the same underlying array. Callers must
+	// treat the returned slice as read-only. This avoids an O(n) copy on
+	// every ReAct iteration. Append only extends the slice, so existing
+	// indices remain stable.
+	return s.entries[:len(s.entries):len(s.entries)], nil
 }
 
 func (s *FileStore) Search(query string) ([]TapeEntry, error) {
