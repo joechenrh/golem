@@ -54,7 +54,16 @@ type Session struct {
 	TapePath   string
 }
 
-const maxToolFailures = 3
+const (
+	// max auto-nudges per user turn before accepting the response
+	maxNudges = 2
+
+	// consecutive failures of a single tool before injecting a "reconsider" hint
+	maxToolFailures = 3
+
+	// compact unused tool schemas after this many iterations
+	shrinkAfterIters = 10
+)
 
 // NewSession creates a Session with all dependencies wired in.
 func NewSession(
@@ -128,10 +137,8 @@ func (s *Session) runReActLoop(
 	s.turnUsage = llm.Usage{}
 	s.toolFailures = make(map[string]int)
 
-	const maxNudges = 2
 	nudges := 0
-
-	const shrinkAfterIters = 10
+	lastToolFailed := false // previous iteration had a tool failure
 
 	for iter := range s.config.MaxToolIter {
 		// Shrink tool schemas not used in the last few iterations to
@@ -162,7 +169,7 @@ func (s *Session) runReActLoop(
 
 		// Tool calls present — execute them and continue the loop.
 		if len(resp.ToolCalls) > 0 {
-			s.processToolCalls(ctx, resp, iter)
+			lastToolFailed = s.processToolCalls(ctx, resp, iter)
 			continue
 		}
 
@@ -174,9 +181,13 @@ func (s *Session) runReActLoop(
 			continue
 		}
 
-		// No tool calls. If the response looks like a plan rather than a
-		// final answer, nudge the LLM to actually use tools.
-		if nudges < maxNudges && looksLikePlan(resp.Content) {
+		// No tool calls — nudge the LLM to retry if:
+		// - a skill was just read (instructions to act on),
+		// - a tool just failed (schema now expanded, worth retrying), or
+		// - the response looks like a plan rather than a final answer.
+		shouldNudge := lastToolFailed || looksLikePlan(resp.Content)
+		lastToolFailed = false
+		if nudges < maxNudges && shouldNudge {
 			s.appendMessage(llm.RoleAssistant, resp.Content, nil, "", nil)
 			s.appendMessage(llm.RoleUser, nudgeMessage(resp.Content), nil, "", nil)
 			nudges++
@@ -381,9 +392,10 @@ func (s *Session) executeLLMCall(
 
 // processToolCalls records the assistant message, expands tool schemas, and
 // executes each tool call in parallel, recording results to the tape in order.
+// Returns true if any tool call failed.
 func (s *Session) processToolCalls(
 	ctx context.Context, resp *llm.ChatResponse, iter int,
-) {
+) bool {
 	s.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "", nil)
 
 	// Auto-expand any tool the model calls, so the next iteration
@@ -395,32 +407,33 @@ func (s *Session) processToolCalls(
 		s.tools.ExpandHints(resp.Content)
 	}
 
-	// Execute tool calls in parallel and collect results in order.
+	// Execute tool calls in parallel and collect results keyed by index.
 	type toolResultEntry struct {
 		id     string
 		name   string
 		result string
 	}
-	results := make([]toolResultEntry, len(resp.ToolCalls))
-	var mu sync.Mutex
+	var results sync.Map
 	g, gctx := errgroup.WithContext(ctx)
 	for i, tc := range resp.ToolCalls {
 		g.Go(func() error {
 			res := s.executeTool(gctx, tc)
-			mu.Lock()
-			results[i] = toolResultEntry{id: tc.ID, name: tc.Name, result: res}
-			mu.Unlock()
+			results.Store(i, toolResultEntry{id: tc.ID, name: tc.Name, result: res})
 			return nil
 		})
 	}
 	g.Wait()
 
-	// Append results in the original order so the tape is deterministic.
-	// Track per-tool failure counts for self-correction.
-	for _, r := range results {
+	// Append results and track failures.
+	// For skill results, expand any tools mentioned in the skill body so
+	// the LLM has full parameter schemas when acting on the instructions.
+	hadFailure := false
+	results.Range(func(_, v any) bool {
+		r := v.(toolResultEntry)
 		s.appendToolResult(r.id, r.name, r.result)
 
 		if strings.HasPrefix(r.result, "Error:") {
+			hadFailure = true
 			s.toolFailures[r.name]++
 			if s.toolFailures[r.name] >= maxToolFailures {
 				s.appendMessage(llm.RoleUser,
@@ -428,7 +441,9 @@ func (s *Session) processToolCalls(
 						r.name, s.toolFailures[r.name]), nil, "", nil)
 			}
 		}
-	}
+		return true
+	})
+	return hadFailure
 }
 
 // processAssistantResponse handles the final answer: runs any embedded comma

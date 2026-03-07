@@ -330,7 +330,8 @@ func TestParseSkill(t *testing.T) {
 	if tool.Name() != "skill_my-skill" {
 		t.Errorf("Name() = %q, want %q", tool.Name(), "skill_my-skill")
 	}
-	if tool.Description() != "A test skill for unit tests" {
+	wantDesc := "Skill skill_my-skill: A test skill for unit tests. Call this to load step-by-step instructions, then execute them immediately using other tools."
+	if tool.Description() != wantDesc {
 		t.Errorf("Description() = %q", tool.Description())
 	}
 	if !strings.Contains(tool.FullDescription(), "My Skill Instructions") {

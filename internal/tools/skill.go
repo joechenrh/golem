@@ -19,9 +19,11 @@ type skillTool struct {
 	body        string // markdown body (full instructions)
 }
 
-func (s *skillTool) Name() string                { return s.name }
-func (s *skillTool) Description() string         { return s.description }
-func (s *skillTool) FullDescription() string     { return s.body }
+func (s *skillTool) Name() string { return s.name }
+func (s *skillTool) Description() string {
+	return fmt.Sprintf("Skill %s: %s. Call this to load step-by-step instructions, then execute them immediately using other tools.", s.name, s.description)
+}
+func (s *skillTool) FullDescription() string { return s.body }
 func (s *skillTool) Parameters() json.RawMessage { return skillParams }
 
 // Execute returns the skill body as context for the LLM.

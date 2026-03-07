@@ -338,11 +338,14 @@ func (l *LarkChannel) SendStream(
 		select {
 		case tok, ok := <-tokenCh:
 			if !ok {
-				// Stream done. Final update without cursor.
+				// Stream done. Final update: upload any images
+				// and build a card with interleaved md + img elements.
+				finalText := sb.String()
+				cardJSON := l.buildCardWithImages(ctx, finalText)
 				if messageID != "" {
-					l.patchCard(ctx, messageID, sb.String())
+					l.patchCardRaw(ctx, messageID, cardJSON)
 				} else if sb.Len() > 0 {
-					l.sendCard(ctx, channelID, sb.String())
+					l.sendCardRaw(ctx, channelID, cardJSON)
 				}
 				l.logger.Debug("stream complete",
 					zap.String("chat_id", channelID),
@@ -377,12 +380,16 @@ func (l *LarkChannel) SendStream(
 
 // SendToChat sends a message to a specific chat_id. Exported for use by tools.
 // It records the chat_id so that a subsequent Send to the same chat is skipped.
+// If the text contains markdown image references, they are uploaded and rendered
+// as native Lark image elements.
 func (l *LarkChannel) SendToChat(
 	ctx context.Context, chatID, text string,
 ) error {
 	l.sentChats.Store(chatID, true)
 
-	return l.sendCard(ctx, chatID, text)
+	cardJSON := l.buildCardWithImages(ctx, text)
+	l.sendCardRaw(ctx, chatID, cardJSON)
+	return nil
 }
 
 // sendCard sends a message as an interactive card with a markdown element.
@@ -449,6 +456,148 @@ func (l *LarkChannel) patchCard(
 		MessageId(messageID).
 		Body(larkim.NewPatchMessageReqBodyBuilder().
 			Content(string(content)).
+			Build()).
+		Build()
+
+	resp, err := l.client.Im.V1.Message.Patch(ctx, req)
+	if err != nil {
+		l.logger.Debug("lark patch card error", zap.Error(err))
+		return
+	}
+	if !resp.Success() {
+		l.logger.Debug("lark patch card failed", zap.Int("code", resp.Code), zap.String("msg", resp.Msg))
+	}
+}
+
+// markdownImageRe matches markdown image references: ![alt](url)
+var markdownImageRe = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
+
+// buildCardWithImages builds a card JSON that handles markdown images.
+// It extracts ![alt](url) references, downloads and uploads each image
+// to Lark, and returns a card with interleaved markdown + img elements.
+// If no images are found or all uploads fail, falls back to a plain card.
+func (l *LarkChannel) buildCardWithImages(ctx context.Context, text string) []byte {
+	matches := markdownImageRe.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return buildCard(text)
+	}
+
+	// Upload images in parallel, collecting image_keys indexed by match position.
+	imageKeys := make([]string, len(matches))
+	var wg sync.WaitGroup
+	for i, m := range matches {
+		urlStart, urlEnd := m[2], m[3]
+		imgURL := text[urlStart:urlEnd]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			key, err := l.downloadAndUpload(ctx, imgURL)
+			if err != nil {
+				l.logger.Debug("image upload failed", zap.String("url", imgURL), zap.Error(err))
+				return
+			}
+			imageKeys[i] = key
+		}()
+	}
+	wg.Wait()
+
+	// Build interleaved elements: markdown text segments + img elements.
+	var elements []map[string]any
+	prev := 0
+	for i, m := range matches {
+		matchStart, matchEnd := m[0], m[1]
+
+		// Add markdown segment before this image.
+		if prev < matchStart {
+			segment := strings.TrimSpace(text[prev:matchStart])
+			if segment != "" {
+				elements = append(elements, map[string]any{
+					"tag": "markdown", "content": sanitizeLarkMarkdown(segment),
+				})
+			}
+		}
+
+		if imageKeys[i] != "" {
+			elements = append(elements, map[string]any{
+				"tag":      "img",
+				"img_key":  imageKeys[i],
+				"alt":      map[string]string{"tag": "plain_text", "content": "image"},
+				"mode":     "fit_horizontal",
+				"compact_width": false,
+			})
+		}
+		prev = matchEnd
+	}
+
+	// Add trailing text after the last image.
+	if prev < len(text) {
+		segment := strings.TrimSpace(text[prev:])
+		if segment != "" {
+			elements = append(elements, map[string]any{
+				"tag": "markdown", "content": sanitizeLarkMarkdown(segment),
+			})
+		}
+	}
+
+	if len(elements) == 0 {
+		return buildCard(text)
+	}
+
+	card := map[string]any{"elements": elements}
+	content, _ := json.Marshal(card)
+	return content
+}
+
+// downloadAndUpload fetches an image URL and uploads it to Lark, returning the image_key.
+func (l *LarkChannel) downloadAndUpload(ctx context.Context, imgURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", imgURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return l.UploadImage(ctx, resp.Body)
+}
+
+// sendCardRaw sends a pre-built card JSON payload.
+func (l *LarkChannel) sendCardRaw(ctx context.Context, chatID string, cardJSON []byte) {
+	l.logger.Info("sending lark card",
+		zap.String("chat_id", chatID),
+		zap.Int("card_len", len(cardJSON)))
+
+	req := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType("chat_id").
+		Body(
+			larkim.NewCreateMessageReqBodyBuilder().
+				ReceiveId(chatID).
+				MsgType("interactive").
+				Content(string(cardJSON)).
+				Build(),
+		).
+		Build()
+
+	resp, err := l.client.Im.V1.Message.Create(ctx, req)
+	if err != nil {
+		l.logger.Debug("lark send card error", zap.Error(err))
+		return
+	}
+	if !resp.Success() {
+		l.logger.Debug("lark send card failed", zap.Int("code", resp.Code), zap.String("msg", resp.Msg))
+	}
+}
+
+// patchCardRaw updates an existing card message with pre-built card JSON.
+func (l *LarkChannel) patchCardRaw(ctx context.Context, messageID string, cardJSON []byte) {
+	req := larkim.NewPatchMessageReqBuilder().
+		MessageId(messageID).
+		Body(larkim.NewPatchMessageReqBodyBuilder().
+			Content(string(cardJSON)).
 			Build()).
 		Build()
 
