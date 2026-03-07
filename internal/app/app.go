@@ -566,8 +566,11 @@ func BuildToolRegistry(
 	}
 
 	// Cache read-only tool results to avoid redundant calls.
+	// Mutating tools invalidate the cache so reads never return stale data.
 	cache := middleware.NewCacheMiddleware(60*time.Second, []string{
 		"read_file", "list_directory", "search_files", "web_search", "web_fetch",
+	}, []string{
+		"write_file", "edit_file", "shell_exec",
 	})
 	registry.Use(cache.Middleware())
 

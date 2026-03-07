@@ -16,30 +16,48 @@ type cacheEntry struct {
 
 // CacheMiddleware caches results of read-only tools to avoid redundant
 // calls within a conversation turn. Only tools in the cacheable set are cached.
+// Tools in the invalidators set automatically clear the cache when executed,
+// so that mutations (e.g. write_file) don't leave stale read results.
 type CacheMiddleware struct {
-	mu        sync.Mutex
-	entries   map[string]cacheEntry
-	ttl       time.Duration
-	cacheable map[string]bool
+	mu           sync.Mutex
+	entries      map[string]cacheEntry
+	ttl          time.Duration
+	cacheable    map[string]bool
+	invalidators map[string]bool
 }
 
 // NewCacheMiddleware creates a caching middleware.
 // cacheable is the set of tool names whose results can be cached.
-func NewCacheMiddleware(ttl time.Duration, cacheable []string) *CacheMiddleware {
-	m := make(map[string]bool, len(cacheable))
+// invalidators is the set of tool names that clear the cache when executed.
+func NewCacheMiddleware(ttl time.Duration, cacheable, invalidators []string) *CacheMiddleware {
+	cm := make(map[string]bool, len(cacheable))
 	for _, name := range cacheable {
-		m[name] = true
+		cm[name] = true
+	}
+	im := make(map[string]bool, len(invalidators))
+	for _, name := range invalidators {
+		im[name] = true
 	}
 	return &CacheMiddleware{
-		entries:   make(map[string]cacheEntry),
-		ttl:       ttl,
-		cacheable: m,
+		entries:      make(map[string]cacheEntry),
+		ttl:          ttl,
+		cacheable:    cm,
+		invalidators: im,
 	}
 }
 
 // Middleware returns a Registry Middleware function.
 func (c *CacheMiddleware) Middleware() Middleware {
 	return func(ctx context.Context, toolName string, args string, next func(context.Context, string) (string, error)) (string, error) {
+		// Mutating tools invalidate the entire cache before executing.
+		if c.invalidators[toolName] {
+			result, err := next(ctx, args)
+			if err == nil {
+				c.Invalidate()
+			}
+			return result, err
+		}
+
 		if !c.cacheable[toolName] {
 			return next(ctx, args)
 		}

@@ -52,7 +52,7 @@ func TestCacheMiddleware_HitAndMiss(t *testing.T) {
 		return "result:" + args, nil
 	}
 
-	cm := NewCacheMiddleware(time.Minute, []string{"read_file"})
+	cm := NewCacheMiddleware(time.Minute, []string{"read_file"}, nil)
 	mw := cm.Middleware()
 
 	// First call — cache miss.
@@ -84,7 +84,7 @@ func TestCacheMiddleware_NonCacheableTool(t *testing.T) {
 		return "ok", nil
 	}
 
-	cm := NewCacheMiddleware(time.Minute, []string{"read_file"})
+	cm := NewCacheMiddleware(time.Minute, []string{"read_file"}, nil)
 	mw := cm.Middleware()
 
 	// shell_exec is not cacheable — should always call through.
@@ -95,6 +95,38 @@ func TestCacheMiddleware_NonCacheableTool(t *testing.T) {
 	}
 }
 
+func TestCacheMiddleware_InvalidatorTool(t *testing.T) {
+	calls := 0
+	next := func(_ context.Context, args string) (string, error) {
+		calls++
+		return "v" + string(rune('0'+calls)), nil
+	}
+
+	cm := NewCacheMiddleware(time.Minute, []string{"read_file"}, []string{"write_file"})
+	mw := cm.Middleware()
+
+	// Populate cache.
+	mw(context.Background(), "read_file", `{"path":"a.txt"}`, next)
+	if calls != 1 {
+		t.Fatalf("calls = %d", calls)
+	}
+
+	// write_file should invalidate the cache.
+	mw(context.Background(), "write_file", `{"path":"a.txt","content":"new"}`, next)
+	if calls != 2 {
+		t.Fatalf("calls after write = %d, want 2", calls)
+	}
+
+	// read_file should miss the cache now.
+	got, _ := mw(context.Background(), "read_file", `{"path":"a.txt"}`, next)
+	if calls != 3 {
+		t.Errorf("calls after invalidated read = %d, want 3", calls)
+	}
+	if got != "v3" {
+		t.Errorf("got %q, want %q", got, "v3")
+	}
+}
+
 func TestCacheMiddleware_Invalidate(t *testing.T) {
 	calls := 0
 	next := func(_ context.Context, args string) (string, error) {
@@ -102,7 +134,7 @@ func TestCacheMiddleware_Invalidate(t *testing.T) {
 		return "v" + string(rune('0'+calls)), nil
 	}
 
-	cm := NewCacheMiddleware(time.Minute, []string{"read_file"})
+	cm := NewCacheMiddleware(time.Minute, []string{"read_file"}, nil)
 	mw := cm.Middleware()
 
 	mw(context.Background(), "read_file", `{"path":"a.txt"}`, next)
