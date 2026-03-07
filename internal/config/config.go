@@ -143,6 +143,10 @@ type Config struct {
 	// Logging
 	LogLevel string // "debug", "info", "warn", "error"
 
+	// Tool access control
+	ToolAllow map[string]bool // if non-empty, only these tools may execute
+	ToolDeny  map[string]bool // these tools are always blocked (takes precedence)
+
 	// Persona (three-layer identity system)
 	Persona *Persona
 }
@@ -215,6 +219,10 @@ func Load(
 		MnemosAutoEmbedModel: a.str("MNEMO_AUTO_EMBED_MODEL", ""),
 		MnemosAutoEmbedDims:  a.integer("MNEMO_AUTO_EMBED_DIMS", 1024),
 	}
+
+	// Tool access control.
+	cfg.ToolAllow = parseToolSet(a.str("GOLEM_TOOL_ALLOW", ""))
+	cfg.ToolDeny = parseToolSet(a.str("GOLEM_TOOL_DENY", ""))
 
 	// Collect API keys and base URLs from shell env + global config.
 	cfg.APIKeys = make(map[string]string)
@@ -496,6 +504,26 @@ func loadPersona(agentName string) *Persona {
 	}
 
 	return p
+}
+
+// parseToolSet parses a comma-separated list of tool names into a set.
+// Returns nil for empty input.
+func parseToolSet(s string) map[string]bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	set := make(map[string]bool)
+	for _, name := range strings.Split(s, ",") {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			set[name] = true
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
 }
 
 func expandHome(path string) string {

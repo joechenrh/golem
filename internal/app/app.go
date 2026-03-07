@@ -564,6 +564,11 @@ func BuildToolRegistry(
 		logger.Info("loaded external tool", zap.String("name", et.Name()))
 	}
 
+	// Per-tool access control: allow/deny lists from config.
+	if len(cfg.ToolAllow) > 0 || len(cfg.ToolDeny) > 0 {
+		registry.Use(middleware.ACL(cfg.ToolAllow, cfg.ToolDeny))
+	}
+
 	// Cache read-only tool results to avoid redundant calls.
 	// Mutating tools invalidate the cache so reads never return stale data.
 	cache := middleware.NewCacheMiddleware(cacheTTL, []string{
