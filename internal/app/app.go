@@ -542,9 +542,16 @@ func BuildToolRegistry(
 		registry.Register(builtin.NewPersonaSelfTool(cfg.Persona))
 	}
 
-	// Discover skills.
-	if err := registry.DiscoverSkills(cfg.SkillsDir); err != nil {
-		logger.Debug("skills discovery", zap.Error(err))
+	// Discover skills: global scope first, then agent scope (overrides on collision).
+	globalSkillsDir := filepath.Join(config.GolemHome(), "skills")
+	if err := registry.DiscoverSkills(globalSkillsDir); err != nil {
+		logger.Debug("global skills discovery", zap.Error(err))
+	}
+	if cfg.AgentName != "" {
+		agentSkillsDir := filepath.Join(config.GolemHome(), "agents", cfg.AgentName, "skills")
+		if err := registry.DiscoverSkills(agentSkillsDir); err != nil {
+			logger.Debug("agent skills discovery", zap.Error(err))
+		}
 	}
 
 	// Load external plugin tools from ~/.golem/plugins/.

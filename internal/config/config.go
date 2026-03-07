@@ -112,8 +112,6 @@ type Config struct {
 	// Storage
 	TapeDir      string // directory for tape JSONL files (default: ~/.golem/tapes)
 	WorkspaceDir string // agent workspace root (default: CWD for CLI, ~/.golem/agents/<name>/workspace for background)
-	SkillsDir    string // skills discovery directory (default: .agent/skills)
-
 	// Channels
 	TelegramToken   string
 	TelegramACL     []int64
@@ -185,7 +183,6 @@ func Load(
 
 		// Global tier: LLM, skills, web.
 		Model:            g.str("GOLEM_MODEL", "openai:gpt-4o"),
-		SkillsDir:        g.str("GOLEM_SKILLS_DIR", ".agent/skills"),
 		LLMRateLimit:     g.integer("GOLEM_LLM_RATE_LIMIT", 10),
 		MetricsPort:      g.str("GOLEM_METRICS_PORT", ""),
 		WebSearchBackend: g.str("GOLEM_WEB_SEARCH_BACKEND", "bing"),
@@ -411,7 +408,6 @@ func applyFlagOverrides(
 		"model":            &cfg.Model,
 		"tape-dir":         &cfg.TapeDir,
 		"workspace-dir":    &cfg.WorkspaceDir,
-		"skills-dir":       &cfg.SkillsDir,
 		"log-level":        &cfg.LogLevel,
 		"context-strategy": &cfg.ContextStrategy,
 		"executor":         &cfg.Executor,
