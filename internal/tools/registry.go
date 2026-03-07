@@ -54,6 +54,11 @@ func (r *Registry) Use(mw middleware.Middleware) {
 	r.middlewares = append(r.middlewares, mw)
 }
 
+// Count returns the number of registered tools.
+func (r *Registry) Count() int {
+	return len(r.tools)
+}
+
 // Get returns a tool by name, or nil if not found.
 func (r *Registry) Get(name string) Tool {
 	return r.tools[name]

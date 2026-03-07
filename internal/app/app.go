@@ -217,6 +217,13 @@ func (inst *AgentInstance) processMessage(
 		}
 	}
 
+	// Handle slash commands for remote channels (e.g. /help, /new, /status).
+	if msg.ChannelName != "cli" && strings.HasPrefix(msg.Text, "/") {
+		if inst.handleSlashCommand(sessCtx, ch, msg) {
+			return false
+		}
+	}
+
 	if ch.SupportsStreaming() {
 		tokenCh := make(chan string, streamTokenBufSize)
 
@@ -251,6 +258,50 @@ func (inst *AgentInstance) processMessage(
 		}
 	}
 	return false
+}
+
+// handleSlashCommand processes slash commands from remote channels.
+// Returns true if the command was handled.
+func (inst *AgentInstance) handleSlashCommand(
+	ctx context.Context, ch channel.Channel, msg channel.IncomingMessage,
+) bool {
+	cmd := strings.TrimSpace(strings.TrimPrefix(msg.Text, "/"))
+	parts := strings.SplitN(cmd, " ", 2)
+
+	var response string
+	switch parts[0] {
+	case "help":
+		response = "**Available commands:**\n" +
+			"- `/help` — Show this help message\n" +
+			"- `/new` — Start a fresh conversation\n" +
+			"- `/status` — Show session info\n\n" +
+			"Send any other message to chat with the bot."
+	case "new":
+		if inst.Sessions != nil {
+			inst.Sessions.Reset(msg.ChannelID)
+		}
+		response = "Session reset. Starting a fresh conversation."
+	case "status":
+		if inst.Sessions == nil {
+			response = "No session manager configured."
+		} else if sess := inst.Sessions.Get(msg.ChannelID); sess == nil {
+			response = "No active session for this chat."
+		} else {
+			response = sess.StatusInfo()
+		}
+	default:
+		return false
+	}
+
+	// Send response via SendToChat (bypasses sentChats dedup) if available.
+	if sc, ok := ch.(interface {
+		SendToChat(context.Context, string, string) error
+	}); ok {
+		sc.SendToChat(ctx, msg.ChannelID, response)
+	} else {
+		ch.Send(ctx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response})
+	}
+	return true
 }
 
 // sendErrorFeedback sends a user-facing error message. For channels that

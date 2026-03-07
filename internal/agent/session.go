@@ -653,6 +653,20 @@ func truncateForLog(s string, maxLen int) string {
 	return s
 }
 
+// StatusInfo returns a human-readable status summary for this session.
+func (s *Session) StatusInfo() string {
+	model := s.config.Model
+	totalTokens := s.sessionUsage.TotalTokens
+	promptTokens := s.sessionUsage.PromptTokens
+	completionTokens := s.sessionUsage.CompletionTokens
+	toolCount := s.tools.Count()
+
+	return fmt.Sprintf(
+		"**Model:** %s\n**Tools:** %d\n**Tokens used:** %d (prompt: %d, completion: %d)",
+		model, toolCount, totalTokens, promptTokens, completionTokens,
+	)
+}
+
 // Summarize generates a summary of the current conversation and appends it
 // to the tape as a KindSummary entry. This is called before tape rotation or
 // session teardown so that restored sessions carry forward context.

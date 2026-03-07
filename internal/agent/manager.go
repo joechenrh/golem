@@ -224,6 +224,27 @@ func (sm *SessionManager) LoadExisting(tapeDir string) error {
 	return nil
 }
 
+// Reset evicts the session for the given channelID, allowing a fresh one
+// to be created on the next message. If no session exists, this is a no-op.
+func (sm *SessionManager) Reset(channelID string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if s, ok := sm.sessions[channelID]; ok {
+		if s.cancel != nil {
+			s.cancel()
+		}
+		delete(sm.sessions, channelID)
+		sm.logger.Info("session reset", zap.String("channel_id", channelID))
+	}
+}
+
+// Get returns the Session for the given channelID, or nil if none exists.
+func (sm *SessionManager) Get(channelID string) *Session {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	return sm.sessions[channelID]
+}
+
 // evictOldestLocked removes the session with the oldest lastAccess time.
 // Must be called with sm.mu held.
 func (sm *SessionManager) evictOldestLocked() {
