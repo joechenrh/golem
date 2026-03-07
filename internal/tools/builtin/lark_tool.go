@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	larkchan "github.com/joechenrh/golem/internal/channel/lark"
-	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/tools"
 )
 
 // LarkSendTool lets the agent send messages and images to Lark group chats.
@@ -54,8 +54,8 @@ func (t *LarkSendTool) Execute(
 		Message string `json:"message"`
 		Image   string `json:"image"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.ChatID == "" {
 		return "Error: 'chat_id' is required", nil

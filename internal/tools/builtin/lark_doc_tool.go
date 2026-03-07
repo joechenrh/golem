@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	larkchan "github.com/joechenrh/golem/internal/channel/lark"
-	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/tools"
 )
 
 // LarkReadDocTool lets the agent read Feishu document content.
@@ -56,8 +56,8 @@ func (t *LarkReadDocTool) Execute(
 	var params struct {
 		DocumentID string `json:"document_id"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.DocumentID == "" {
 		return "Error: 'document_id' is required", nil
@@ -151,8 +151,8 @@ func (t *LarkWriteDocTool) Execute(
 		DocumentID string `json:"document_id"`
 		Content    string `json:"content"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.DocumentID == "" {
 		return "Error: 'document_id' is required", nil

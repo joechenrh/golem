@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/net/html"
 
-	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/tools"
 )
 
 const (
@@ -80,8 +80,8 @@ func (t *WebSearchTool) Execute(
 		Query string `json:"query"`
 		Count int    `json:"count"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.Query == "" {
 		return "Error: 'query' is required", nil
@@ -337,8 +337,8 @@ func (t *WebFetchTool) Execute(
 		URL       string `json:"url"`
 		MaxLength int    `json:"max_length"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.URL == "" {
 		return "Error: 'url' is required", nil

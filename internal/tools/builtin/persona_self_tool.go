@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/joechenrh/golem/internal/config"
-	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/tools"
 )
 
 // Line limits per persona file.
@@ -121,8 +121,8 @@ func (t *PersonaSelfTool) Execute(_ context.Context, args string) (string, error
 		File    string `json:"file"`
 		Content string `json:"content"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 
 	spec, err := t.resolveFile(params.File)

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/joechenrh/golem/internal/llm"
 	"github.com/joechenrh/golem/internal/memory"
+	"github.com/joechenrh/golem/internal/tools"
 )
 
 // ---------------------------------------------------------------------------
@@ -56,8 +56,8 @@ func (t *MemoryStoreTool) Execute(
 		Key     string   `json:"key"`
 		Source  string   `json:"source"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.Content == "" {
 		return "Error: 'content' is required", nil
@@ -116,8 +116,8 @@ func (t *MemoryRecallTool) Execute(
 		Query string `json:"query"`
 		Limit int    `json:"limit"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.Query == "" {
 		return "Error: 'query' is required", nil

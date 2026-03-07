@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/joechenrh/golem/internal/executor"
-	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/tools"
 )
 
 var shellParams = json.RawMessage(`{
@@ -45,8 +45,8 @@ func (t *ShellTool) Execute(
 		Command string `json:"command"`
 		Timeout int    `json:"timeout"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.Command == "" {
 		return "Error: 'command' is required", nil

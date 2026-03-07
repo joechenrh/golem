@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/joechenrh/golem/internal/fs"
-	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/tools"
 )
 
 const (
@@ -76,8 +76,8 @@ func (t *ReadFileTool) Execute(
 		Offset int    `json:"offset"`
 		Limit  int    `json:"limit"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.Path == "" {
 		return "Error: 'path' is required", nil
@@ -149,8 +149,8 @@ func (t *WriteFileTool) Execute(
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.Path == "" {
 		return "Error: 'path' is required", nil
@@ -200,8 +200,8 @@ func (t *EditFileTool) Execute(
 		OldText string `json:"old_text"`
 		NewText string `json:"new_text"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.Path == "" || params.OldText == "" {
 		return "Error: 'path' and 'old_text' are required", nil
@@ -264,8 +264,8 @@ func (t *ListDirectoryTool) Execute(
 	var params struct {
 		Path string `json:"path"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.Path == "" {
 		params.Path = "."
@@ -354,8 +354,8 @@ func (t *SearchFilesTool) Execute(
 		Pattern  string `json:"pattern"`
 		FileGlob string `json:"file_glob"`
 	}
-	if err := json.Unmarshal([]byte(llm.NormalizeArgs(args)), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.Path == "" || params.Pattern == "" {
 		return "Error: 'path' and 'pattern' are required", nil
