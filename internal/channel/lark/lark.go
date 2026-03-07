@@ -344,6 +344,9 @@ func (l *LarkChannel) SendStream(
 				} else if sb.Len() > 0 {
 					l.sendCard(ctx, channelID, sb.String())
 				}
+				l.logger.Debug("stream complete",
+					zap.String("chat_id", channelID),
+					zap.Int("chars", sb.Len()))
 				return nil
 			}
 			sb.WriteString(tok)

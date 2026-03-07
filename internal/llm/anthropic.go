@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // Wire-format structs for Anthropic Messages API.
@@ -105,6 +107,7 @@ type anthropicClient struct {
 	baseURL    string
 	http       *http.Client
 	streamHTTP *http.Client
+	logger     *zap.Logger
 }
 
 func newAnthropicClient(apiKey, baseURL string) *anthropicClient {
@@ -113,8 +116,11 @@ func newAnthropicClient(apiKey, baseURL string) *anthropicClient {
 		baseURL:    baseURL,
 		http:       &http.Client{Timeout: 120 * time.Second},
 		streamHTTP: &http.Client{Timeout: 0},
+		logger:     zap.NewNop(),
 	}
 }
+
+func (c *anthropicClient) setLogger(l *zap.Logger) { c.logger = l }
 
 func (c *anthropicClient) Provider() Provider {
 	return ProviderAnthropic
@@ -130,7 +136,9 @@ func (c *anthropicClient) Chat(
 		return nil, fmt.Errorf("anthropic: marshal request: %w", err)
 	}
 
-	resp, err := doWithRetry(ctx, defaultRetryConfig(), func() (*http.Response, error) {
+	retryCfg := defaultRetryConfig()
+	retryCfg.logger = c.logger
+	resp, err := doWithRetry(ctx, retryCfg, func() (*http.Response, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/messages", bytes.NewReader(body))
 		if err != nil {
 			return nil, err

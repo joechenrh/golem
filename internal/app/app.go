@@ -154,6 +154,8 @@ func (inst *AgentInstance) processMessages(
 		if !ok {
 			q = make(chan channel.IncomingMessage, 16)
 			chatQueues[msg.ChannelID] = q
+			inst.Logger.Debug("per-chat worker spawned",
+				zap.String("chat_id", msg.ChannelID))
 			chatGroup.Go(func() error {
 				for m := range q {
 					if inst.processMessage(ctx, m) {
@@ -173,6 +175,11 @@ func (inst *AgentInstance) processMessages(
 func (inst *AgentInstance) processMessage(
 	ctx context.Context, msg channel.IncomingMessage,
 ) bool {
+	inst.Logger.Debug("incoming message",
+		zap.String("channel", msg.ChannelName),
+		zap.String("chat_id", msg.ChannelID),
+		zap.Int("text_len", len(msg.Text)))
+
 	if msg.Done != nil {
 		defer close(msg.Done)
 	}
@@ -256,7 +263,7 @@ func (inst *AgentInstance) logOrPrintError(
 func BuildAgent(
 	name string, cfg *config.Config, logger *zap.Logger,
 ) (*AgentInstance, error) {
-	llmClient, err := BuildLLMClient(cfg)
+	llmClient, err := BuildLLMClient(cfg, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +447,7 @@ func buildScheduleStore(name string, logger *zap.Logger) *scheduler.Store {
 
 // BuildLLMClient creates an LLM client from the config, auto-registering
 // unknown providers as OpenAI-compatible.
-func BuildLLMClient(cfg *config.Config) (llm.Client, error) {
+func BuildLLMClient(cfg *config.Config, logger *zap.Logger) (llm.Client, error) {
 	provider, _ := llm.ParseModelProvider(cfg.Model)
 	apiKey := cfg.APIKeys[string(provider)]
 	if apiKey == "" {
@@ -462,11 +469,14 @@ func BuildLLMClient(cfg *config.Config) (llm.Client, error) {
 	if baseURL := cfg.BaseURLs[string(provider)]; baseURL != "" {
 		opts = append(opts, llm.WithBaseURL(baseURL))
 	}
+	if logger != nil {
+		opts = append(opts, llm.WithLogger(logger))
+	}
 	client, err := llm.NewClient(provider, apiKey, opts...)
 	if err != nil {
 		return nil, err
 	}
-	return llm.NewRateLimitedClient(client, cfg.LLMRateLimit), nil
+	return llm.NewRateLimitedClient(client, cfg.LLMRateLimit, logger), nil
 }
 
 // BuildToolRegistry creates and populates a tool registry with all built-in

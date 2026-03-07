@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // Wire-format structs for OpenAI Chat Completions API.
@@ -112,6 +114,7 @@ type openaiClient struct {
 	baseURL    string
 	http       *http.Client
 	streamHTTP *http.Client
+	logger     *zap.Logger
 }
 
 // NewOpenAICompatibleClient creates an OpenAI-compatible client.
@@ -127,8 +130,11 @@ func newOpenAIClient(apiKey, baseURL string) *openaiClient {
 		baseURL:    baseURL,
 		http:       &http.Client{Timeout: 120 * time.Second},
 		streamHTTP: &http.Client{Timeout: 0}, // no timeout; use context cancellation
+		logger:     zap.NewNop(),
 	}
 }
+
+func (c *openaiClient) setLogger(l *zap.Logger) { c.logger = l }
 
 func (c *openaiClient) Provider() Provider {
 	return ProviderOpenAI
@@ -144,7 +150,9 @@ func (c *openaiClient) Chat(
 		return nil, fmt.Errorf("openai: marshal request: %w", err)
 	}
 
-	resp, err := doWithRetry(ctx, defaultRetryConfig(), func() (*http.Response, error) {
+	retryCfg := defaultRetryConfig()
+	retryCfg.logger = c.logger
+	resp, err := doWithRetry(ctx, retryCfg, func() (*http.Response, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewReader(body))
 		if err != nil {
 			return nil, err

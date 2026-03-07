@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -20,6 +22,7 @@ const (
 type retryConfig struct {
 	maxAttempts int           // default 3 (1 initial + 2 retries)
 	baseBackoff time.Duration // default 1s, tests use 1ms
+	logger      *zap.Logger   // nil means no logging
 }
 
 func defaultRetryConfig() retryConfig {
@@ -110,6 +113,18 @@ func backoff(
 	// Apply jitter: multiply by random factor in [0.5, 1.5).
 	jitter := 0.5 + rand.Float64() // [0.5, 1.5) via math/rand/v2
 	wait = time.Duration(float64(wait) * jitter)
+
+	if cfg.logger != nil {
+		fields := []zap.Field{
+			zap.Int("attempt", attempt+1),
+			zap.Int("max", cfg.maxAttempts),
+			zap.Duration("backoff", wait),
+		}
+		if resp != nil {
+			fields = append(fields, zap.Int("status", resp.StatusCode))
+		}
+		cfg.logger.Warn("retrying LLM request", fields...)
+	}
 
 	select {
 	case <-ctx.Done():

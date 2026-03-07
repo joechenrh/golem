@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
+	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
 
@@ -82,7 +84,18 @@ func NewClient(
 	if o.baseURL != "" {
 		baseURL = o.baseURL
 	}
-	return p.factory(apiKey, baseURL), nil
+	client := p.factory(apiKey, baseURL)
+	if o.logger != nil {
+		if ls, ok := client.(loggerSetter); ok {
+			ls.setLogger(o.logger)
+		}
+	}
+	return client, nil
+}
+
+// loggerSetter is implemented by clients that accept a logger.
+type loggerSetter interface {
+	setLogger(*zap.Logger)
 }
 
 // ParseModelProvider splits a model string like "openai:gpt-4o" into (provider, model).
@@ -100,6 +113,7 @@ type ClientOption func(*clientOptions)
 
 type clientOptions struct {
 	baseURL string
+	logger  *zap.Logger
 }
 
 // WithBaseURL overrides the default API base URL.
@@ -109,23 +123,32 @@ func WithBaseURL(url string) ClientOption {
 	}
 }
 
+// WithLogger sets the logger for the client.
+func WithLogger(l *zap.Logger) ClientOption {
+	return func(o *clientOptions) {
+		o.logger = l
+	}
+}
+
 // RateLimitedClient wraps a Client with a token-bucket rate limiter to prevent
 // bursts of API requests from exhausting provider rate limits.
 type RateLimitedClient struct {
 	inner   Client
 	limiter *rate.Limiter
+	logger  *zap.Logger
 }
 
 // NewRateLimitedClient creates a Client that rate-limits LLM calls to rps
 // requests per second with a burst size equal to rps. If rps <= 0, no
 // limiting is applied.
-func NewRateLimitedClient(inner Client, rps int) Client {
+func NewRateLimitedClient(inner Client, rps int, logger *zap.Logger) Client {
 	if rps <= 0 {
 		return inner
 	}
 	return &RateLimitedClient{
 		inner:   inner,
 		limiter: rate.NewLimiter(rate.Limit(rps), rps),
+		logger:  logger,
 	}
 }
 
@@ -134,8 +157,14 @@ func (r *RateLimitedClient) Provider() Provider { return r.inner.Provider() }
 func (r *RateLimitedClient) Chat(
 	ctx context.Context, req ChatRequest,
 ) (*ChatResponse, error) {
+	start := time.Now()
 	if err := r.limiter.Wait(ctx); err != nil {
 		return nil, err
+	}
+	if r.logger != nil {
+		if waited := time.Since(start); waited > 100*time.Millisecond {
+			r.logger.Debug("rate limiter wait", zap.Duration("waited", waited))
+		}
 	}
 	return r.inner.Chat(ctx, req)
 }
@@ -143,8 +172,14 @@ func (r *RateLimitedClient) Chat(
 func (r *RateLimitedClient) ChatStream(
 	ctx context.Context, req ChatRequest,
 ) (<-chan StreamEvent, error) {
+	start := time.Now()
 	if err := r.limiter.Wait(ctx); err != nil {
 		return nil, err
+	}
+	if r.logger != nil {
+		if waited := time.Since(start); waited > 100*time.Millisecond {
+			r.logger.Debug("rate limiter wait", zap.Duration("waited", waited))
+		}
 	}
 	return r.inner.ChatStream(ctx, req)
 }

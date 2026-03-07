@@ -69,6 +69,7 @@ func (sm *SessionManager) GetOrCreate(
 
 	if s, ok := sm.sessions[channelID]; ok {
 		s.lastAccess = time.Now()
+		sm.logger.Debug("session cache hit", zap.String("channel_id", channelID))
 		return s, nil
 	}
 
@@ -190,15 +191,18 @@ func (sm *SessionManager) LoadExisting(tapeDir string) error {
 		latest[chatID] = p
 	}
 
+	var restored, skipped int
 	for chatID, tapePath := range latest {
 		// Check that the tape has content worth resuming.
 		info, err := os.Stat(tapePath)
 		if err != nil || info.Size() == 0 {
+			skipped++
 			continue
 		}
 
 		sess, err := sm.createSessionFromTape(tapePath)
 		if err != nil {
+			skipped++
 			sm.logger.Warn("skipping session restore",
 				zap.String("chat_id", chatID), zap.Error(err))
 			continue
@@ -210,9 +214,12 @@ func (sm *SessionManager) LoadExisting(tapeDir string) error {
 		sess.lastAccess = info.ModTime()
 
 		sm.sessions[chatID] = sess
+		restored++
 		sm.logger.Info("restored session",
 			zap.String("chat_id", chatID), zap.String("tape", tapePath))
 	}
+	sm.logger.Info("session restore complete",
+		zap.Int("restored", restored), zap.Int("skipped", skipped))
 	return nil
 }
 

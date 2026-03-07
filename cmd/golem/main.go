@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -159,6 +160,7 @@ func parseFlags() map[string]string {
 
 // initLogger creates a zap.Logger that writes to a file in logDir.
 // This keeps log output from mixing with the interactive REPL.
+// It also creates a golem-latest.log symlink and cleans up old logs.
 func initLogger(level, logDir string) (*zap.Logger, error) {
 	var zapLevel zapcore.Level
 	switch level {
@@ -175,13 +177,77 @@ func initLogger(level, logDir string) (*zap.Logger, error) {
 	logFile := filepath.Join(logDir, fmt.Sprintf("golem-%s.log", time.Now().Format("20060102-150405")))
 
 	cfg := zap.Config{
-		Level:            zap.NewAtomicLevelAt(zapLevel),
-		Encoding:         "console",
-		EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
+		Level:    zap.NewAtomicLevelAt(zapLevel),
+		Encoding: "console",
+		EncoderConfig: zapcore.EncoderConfig{
+			TimeKey:          "T",
+			LevelKey:         "L",
+			NameKey:          "N",
+			CallerKey:        "C",
+			MessageKey:       "M",
+			StacktraceKey:    "S",
+			LineEnding:       zapcore.DefaultLineEnding,
+			EncodeLevel:      bracketLevelEncoder,
+			EncodeTime:       bracketTimeEncoder,
+			EncodeName:       bracketNameEncoder,
+			EncodeCaller:     bracketCallerEncoder,
+			ConsoleSeparator: " ",
+		},
 		OutputPaths:      []string{logFile},
 		ErrorOutputPaths: []string{logFile},
 	}
-	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
-	return cfg.Build()
+	logger, err := cfg.Build()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create/update golem-latest.log symlink.
+	symlink := filepath.Join(logDir, "golem-latest.log")
+	os.Remove(symlink)
+	os.Symlink(filepath.Base(logFile), symlink)
+
+	// Clean up log files older than 7 days.
+	cleanOldLogs(logDir, 7*24*time.Hour)
+
+	return logger.Named("golem"), nil
+}
+
+func cleanOldLogs(dir string, maxAge time.Duration) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-maxAge)
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "golem-latest.log" {
+			continue
+		}
+		if !strings.HasPrefix(e.Name(), "golem-") || !strings.HasSuffix(e.Name(), ".log") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+func bracketTimeEncoder(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString("[" + t.Format("2006-01-02 15:04:05.000") + "]")
+}
+
+func bracketLevelEncoder(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString("[" + l.CapitalString() + "]")
+}
+
+func bracketNameEncoder(name string, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString("[" + name + "]")
+}
+
+func bracketCallerEncoder(caller zapcore.EntryCaller, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString(fmt.Sprintf("[%s:%d]", filepath.Base(caller.File), caller.Line))
 }

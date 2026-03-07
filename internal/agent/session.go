@@ -546,10 +546,17 @@ func (s *Session) executeTool(
 		return "Tool execution blocked: " + err.Error()
 	}
 
+	start := time.Now()
 	result, err := s.tools.Execute(ctx, tc.Name, tc.Arguments)
+	duration := time.Since(start)
 	if err != nil {
 		result = "Error: " + err.Error()
 	}
+
+	s.logger.Debug("tool executed",
+		zap.String("tool", tc.Name),
+		zap.Duration("duration", duration),
+		zap.Bool("error", err != nil))
 
 	s.hooks.Emit(ctx, hooks.Event{
 		Type: hooks.EventAfterToolExec,
@@ -841,6 +848,7 @@ func truncateForLog(s string, maxLen int) string {
 // to the tape as a KindSummary entry. This is called before tape rotation or
 // session teardown so that restored sessions carry forward context.
 func (s *Session) Summarize(ctx context.Context) error {
+	s.logger.Debug("summarization starting")
 	entries, err := s.tape.Entries()
 	if err != nil {
 		return fmt.Errorf("summarize: reading tape: %w", err)
@@ -873,6 +881,9 @@ func (s *Session) Summarize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("summarize: LLM call: %w", err)
 	}
+
+	s.logger.Debug("summarization complete",
+		zap.Int("summary_len", len(resp.Content)))
 
 	return s.tape.Append(tape.TapeEntry{
 		Kind: tape.KindSummary,
