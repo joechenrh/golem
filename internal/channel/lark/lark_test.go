@@ -285,7 +285,7 @@ func TestSeenMsgsEviction_CapEnforced(t *testing.T) {
 	}
 }
 
-func TestSendToChatRecordsChatID(t *testing.T) {
+func TestSendDedup(t *testing.T) {
 	lc := &LarkChannel{logger: zap.NewNop()}
 	lc.sentChats.Store("chat_456", true)
 

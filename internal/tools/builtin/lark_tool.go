@@ -68,7 +68,7 @@ func (t *LarkSendTool) Execute(
 
 	// Send text card if message is provided.
 	if params.Message != "" {
-		if err := t.ch.SendToChat(ctx, params.ChatID, params.Message); err != nil {
+		if err := t.ch.SendDirect(ctx, params.ChatID, params.Message); err != nil {
 			return "Error sending message: " + err.Error(), nil
 		}
 		results = append(results, "text message sent")

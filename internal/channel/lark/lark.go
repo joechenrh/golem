@@ -443,11 +443,11 @@ func (l *LarkChannel) SendStream(
 	}
 }
 
-// SendToChat sends a message to a specific chat_id. Exported for use by tools.
+// SendDirect sends a message unconditionally to a specific chat_id.
 // It records the chat_id so that a subsequent Send to the same chat is skipped.
 // If the text contains markdown image references, they are uploaded and rendered
 // as native Lark image elements.
-func (l *LarkChannel) SendToChat(
+func (l *LarkChannel) SendDirect(
 	ctx context.Context, chatID, text string,
 ) error {
 	l.sentChats.Store(chatID, true)
@@ -1014,9 +1014,8 @@ func (l *LarkChannel) UploadImage(
 	return *resp.Data.ImageKey, nil
 }
 
-// SendError sends a user-facing error card to the given chat.
-// It bypasses sentChats dedup so errors are always delivered.
-func (l *LarkChannel) SendError(ctx context.Context, chatID, text string) {
+// SendError sends a user-facing error card with a red header.
+func (l *LarkChannel) SendError(ctx context.Context, chatID, text string) error {
 	card := map[string]any{
 		"header": map[string]any{
 			"template": "red",
@@ -1031,6 +1030,7 @@ func (l *LarkChannel) SendError(ctx context.Context, chatID, text string) {
 	}
 	content, _ := json.Marshal(card)
 	l.sendCardRaw(ctx, chatID, content)
+	return nil
 }
 
 // SendImageToChat sends an image message to a Lark chat.

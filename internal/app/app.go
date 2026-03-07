@@ -293,43 +293,17 @@ func (inst *AgentInstance) handleSlashCommand(
 		return false
 	}
 
-	// Send response via SendToChat (bypasses sentChats dedup) if available.
-	if sc, ok := ch.(interface {
-		SendToChat(context.Context, string, string) error
-	}); ok {
-		sc.SendToChat(ctx, msg.ChannelID, response)
-	} else {
-		ch.Send(ctx, channel.OutgoingMessage{ChannelID: msg.ChannelID, Text: response})
-	}
+	ch.SendDirect(ctx, msg.ChannelID, response)
 	return true
 }
 
-// sendErrorFeedback sends a user-facing error message. For channels that
-// support SendError (e.g. Lark), a styled error card is sent. For CLI,
-// PrintError is used. The real error is always logged server-side.
+// sendErrorFeedback sends a user-facing error message via the channel's
+// SendError method and logs the real error server-side.
 func (inst *AgentInstance) sendErrorFeedback(
 	ctx context.Context, ch channel.Channel, channelID string, err error,
 ) {
 	inst.Logger.Error("message processing error", zap.Error(err))
-	if se, ok := ch.(interface {
-		SendError(context.Context, string, string)
-	}); ok {
-		se.SendError(ctx, channelID, "Something went wrong. Please try again later.")
-	} else if p, ok := ch.(interface{ PrintError(string) }); ok {
-		p.PrintError("Error: " + err.Error())
-	}
-}
-
-// logOrPrintError uses PrintError for colored output when the channel supports
-// it, otherwise logs the error.
-func (inst *AgentInstance) logOrPrintError(
-	ch channel.Channel, text string,
-) {
-	if p, ok := ch.(interface{ PrintError(string) }); ok {
-		p.PrintError(text)
-	} else {
-		inst.Logger.Error(text)
-	}
+	ch.SendError(ctx, channelID, "Something went wrong. Please try again later.")
 }
 
 // BuildAgent creates a fully wired AgentInstance from config.
@@ -425,7 +399,7 @@ func BuildAgent(
 				if sessions != nil {
 					sessions.Reset(chatID)
 				}
-				larkCh.SendToChat(context.Background(), chatID, "Session reset. Starting a fresh conversation.")
+				larkCh.SendDirect(context.Background(), chatID, "Session reset. Starting a fresh conversation.")
 			case "feedback":
 				val, _ := action["value"].(string)
 				if sessions != nil {

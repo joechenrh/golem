@@ -130,6 +130,24 @@ func (c *CLIChannel) Send(
 	return nil
 }
 
+// SendDirect prints a message unconditionally (CLI has no dedup).
+func (c *CLIChannel) SendDirect(
+	_ context.Context, _ string, text string,
+) error {
+	fmt.Fprintf(c.writer, "\r\033[K%s\n", text)
+	c.thinkingCleared = true
+	return nil
+}
+
+// SendError prints an error message in red.
+func (c *CLIChannel) SendError(
+	_ context.Context, _ string, text string,
+) error {
+	fmt.Fprintf(c.writer, "\r\033[K%s%s%s\n", colorRed, text, colorReset)
+	c.thinkingCleared = true
+	return nil
+}
+
 // SendTyping is a no-op for CLI.
 func (c *CLIChannel) SendTyping(
 	_ context.Context, _ string,

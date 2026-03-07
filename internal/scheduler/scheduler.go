@@ -157,22 +157,9 @@ func (s *Scheduler) fire(ctx context.Context, sched Schedule) {
 	if !ok {
 		s.logger.Error("schedule target channel not found",
 			zap.String("channel_name", sched.ChannelName), zap.String("id", sched.ID))
-	} else if err := s.sendToChannel(ctx, ch, sched.ChannelID, text); err != nil {
+	} else if err := ch.SendDirect(ctx, sched.ChannelID, text); err != nil {
 		s.logger.Error("failed to deliver scheduled message", zap.Error(err))
 	}
 
 	s.store.UpdateLastFired(sched.ID, time.Now())
-}
-
-// sendToChannel delivers text to a channel, preferring SendToChat (which
-// bypasses per-message deduplication) when available, falling back to Send.
-func (s *Scheduler) sendToChannel(
-	ctx context.Context, ch channel.Channel, channelID, text string,
-) error {
-	if sc, ok := ch.(interface {
-		SendToChat(context.Context, string, string) error
-	}); ok {
-		return sc.SendToChat(ctx, channelID, text)
-	}
-	return ch.Send(ctx, channel.OutgoingMessage{ChannelID: channelID, Text: text})
 }

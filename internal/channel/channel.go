@@ -31,7 +31,21 @@ type OutgoingMessage struct {
 type Channel interface {
 	Name() string
 	Start(ctx context.Context, inCh chan<- IncomingMessage) error
+
+	// Send delivers a response to the current message. Implementations may
+	// deduplicate: e.g. Lark skips if the chat was already replied to in
+	// this processing cycle.
 	Send(ctx context.Context, msg OutgoingMessage) error
+
+	// SendDirect delivers a message unconditionally — no deduplication.
+	// Used by tools, slash commands, scheduler, and card action handlers.
+	SendDirect(ctx context.Context, channelID, text string) error
+
+	// SendError delivers a user-facing error message. Implementations
+	// should style it distinctly (e.g. red card header in Lark, red text
+	// in CLI).
+	SendError(ctx context.Context, channelID, text string) error
+
 	SendTyping(ctx context.Context, channelID string) error
 	SupportsStreaming() bool
 	SendStream(ctx context.Context, channelID string, tokenCh <-chan string) error
