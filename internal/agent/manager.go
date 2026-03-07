@@ -237,30 +237,40 @@ func (sm *SessionManager) evictOldestLocked() {
 }
 
 // EvictIdle removes sessions that haven't been accessed within maxAge.
+// Sessions are removed from the map under the lock, then summarized
+// outside the lock so that LLM calls don't block other sessions.
 func (sm *SessionManager) EvictIdle(maxAge time.Duration) int {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	type evictee struct {
+		id   string
+		sess *Session
+	}
 
+	sm.mu.Lock()
 	cutoff := time.Now().Add(-maxAge)
-	evicted := 0
+	var toEvict []evictee
 	for id, s := range sm.sessions {
 		if s.lastAccess.Before(cutoff) {
-			// Summarize before eviction so restored sessions carry context.
-			if s.ctx != nil {
-				if err := s.Summarize(s.ctx); err != nil {
-					sm.logger.Warn("failed to summarize before eviction",
-						zap.String("channel_id", id), zap.Error(err))
-				}
-			}
-			if s.cancel != nil {
-				s.cancel()
-			}
+			toEvict = append(toEvict, evictee{id: id, sess: s})
 			delete(sm.sessions, id)
-			evicted++
-			sm.logger.Info("evicted idle session", zap.String("channel_id", id))
 		}
 	}
-	return evicted
+	sm.mu.Unlock()
+
+	// Summarize and cancel outside the lock — Summarize makes an LLM
+	// call that can take seconds.
+	for _, e := range toEvict {
+		if e.sess.ctx != nil {
+			if err := e.sess.Summarize(e.sess.ctx); err != nil {
+				sm.logger.Warn("failed to summarize before eviction",
+					zap.String("channel_id", e.id), zap.Error(err))
+			}
+		}
+		if e.sess.cancel != nil {
+			e.sess.cancel()
+		}
+		sm.logger.Info("evicted idle session", zap.String("channel_id", e.id))
+	}
+	return len(toEvict)
 }
 
 // StartEvictionLoop runs periodic idle session eviction in a background goroutine.
