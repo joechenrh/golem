@@ -38,6 +38,15 @@ import (
 // ErrAgentQuit is returned by Run when the user requests quit via the CLI.
 var ErrAgentQuit = errors.New("agent quit")
 
+const (
+	// incomingMsgBufSize is the capacity of the incoming message channel.
+	incomingMsgBufSize = 100
+	// streamTokenBufSize is the capacity of the streaming token channel.
+	streamTokenBufSize = 100
+	// cacheTTL is how long read-only tool results are cached.
+	cacheTTL = 60 * time.Second
+)
+
 // AgentInstance bundles a running agent with its channels and metadata.
 type AgentInstance struct {
 	Name       string
@@ -69,7 +78,7 @@ type AgentInstance struct {
 // gcancel is called when any channel exits (e.g. CLI EOF) or when the user
 // types :quit, ensuring all remaining channels stop promptly.
 func (inst *AgentInstance) Run(ctx context.Context) error {
-	inCh := make(chan channel.IncomingMessage, 100)
+	inCh := make(chan channel.IncomingMessage, incomingMsgBufSize)
 	gctx, gcancel := context.WithCancel(ctx)
 	defer gcancel()
 
@@ -209,7 +218,7 @@ func (inst *AgentInstance) processMessage(
 	}
 
 	if ch.SupportsStreaming() {
-		tokenCh := make(chan string, 100)
+		tokenCh := make(chan string, streamTokenBufSize)
 
 		streamDone := make(chan struct{})
 		go func() {
@@ -557,7 +566,7 @@ func BuildToolRegistry(
 
 	// Cache read-only tool results to avoid redundant calls.
 	// Mutating tools invalidate the cache so reads never return stale data.
-	cache := middleware.NewCacheMiddleware(60*time.Second, []string{
+	cache := middleware.NewCacheMiddleware(cacheTTL, []string{
 		"read_file", "list_directory", "search_files", "web_search", "web_fetch",
 	}, []string{
 		"write_file", "edit_file", "shell_exec",

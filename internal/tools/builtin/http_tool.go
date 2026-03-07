@@ -12,6 +12,8 @@ import (
 	"github.com/joechenrh/golem/internal/llm"
 )
 
+const defaultMaxHTTPResponseLen = 50_000
+
 // blockedHeaders are request headers that the LLM is not allowed to set
 // to prevent credential exfiltration and request smuggling.
 var blockedHeaders = map[string]bool{
@@ -82,7 +84,7 @@ func (t *HTTPRequestTool) Execute(
 	}
 	params.Method = strings.ToUpper(params.Method)
 	if params.MaxLength <= 0 {
-		params.MaxLength = 50000
+		params.MaxLength = defaultMaxHTTPResponseLen
 	}
 
 	// Validate method.

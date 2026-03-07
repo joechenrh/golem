@@ -15,8 +15,12 @@ import (
 	"github.com/joechenrh/golem/internal/llm"
 )
 
-// defaultUserAgent is the User-Agent header used for web requests to avoid bot blocking.
-const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+const (
+	// defaultUserAgent is the User-Agent header used for web requests to avoid bot blocking.
+	defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	// defaultMaxFetchLen is the default max content length for web_fetch.
+	defaultMaxFetchLen = 5000
+)
 
 // searchResult holds a single web search result.
 type searchResult struct {
@@ -340,7 +344,7 @@ func (t *WebFetchTool) Execute(
 		return "Error: 'url' is required", nil
 	}
 	if params.MaxLength <= 0 {
-		params.MaxLength = 5000
+		params.MaxLength = defaultMaxFetchLen
 	}
 
 	// Validate URL scheme.
