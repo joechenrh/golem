@@ -722,9 +722,7 @@ func (s *Session) buildPersonaPrompt() string {
 
 	// --- Environment ---
 	b.WriteString("\n# Environment\n\n")
-	if wd, err := os.Getwd(); err == nil {
-		fmt.Fprintf(&b, "Working directory: %s\n", wd)
-	}
+	fmt.Fprintf(&b, "Working directory: %s\n", s.config.WorkspaceDir)
 	fmt.Fprintf(&b, "Current time: %s\n", time.Now().Format(time.RFC3339))
 
 	return b.String()
@@ -736,9 +734,7 @@ func (s *Session) buildFlatPrompt() string {
 
 	b.WriteString("You are golem, a helpful coding assistant.\n\n")
 
-	if wd, err := os.Getwd(); err == nil {
-		fmt.Fprintf(&b, "Working directory: %s\n", wd)
-	}
+	fmt.Fprintf(&b, "Working directory: %s\n", s.config.WorkspaceDir)
 	fmt.Fprintf(&b, "Current time: %s\n\n", time.Now().Format(time.RFC3339))
 
 	b.WriteString("When you need to perform actions, use the available tools immediately. ")

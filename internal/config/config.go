@@ -64,8 +64,9 @@ type Config struct {
 	Executor string // "local", "noop" (default: "local")
 
 	// Storage
-	TapeDir   string // directory for tape JSONL files (default: ~/.golem/tapes)
-	SkillsDir string // skills discovery directory (default: .agent/skills)
+	TapeDir      string // directory for tape JSONL files (default: ~/.golem/tapes)
+	WorkspaceDir string // agent workspace root (default: CWD for CLI, ~/.golem/agents/<name>/workspace for background)
+	SkillsDir    string // skills discovery directory (default: .agent/skills)
 
 	// Channels
 	TelegramToken   string
@@ -151,6 +152,7 @@ func Load(
 		ContextStrategy: a.str("GOLEM_CONTEXT_STRATEGY", "masking"),
 		Executor:        a.str("GOLEM_EXECUTOR", "local"),
 		TapeDir:         expandHome(a.str("GOLEM_TAPE_DIR", "~/.golem/tapes")),
+		WorkspaceDir:    expandHome(a.str("GOLEM_WORKSPACE_DIR", "")),
 		LogLevel:        a.str("GOLEM_LOG_LEVEL", "info"),
 		MaxSessions:     a.integer("GOLEM_MAX_SESSIONS", 100),
 		SessionIdleTime: a.duration("GOLEM_SESSION_IDLE_TIME", 24*time.Hour),
@@ -177,6 +179,15 @@ func Load(
 	collectProviderKeys(cfg, globalVars)
 
 	applyFlagOverrides(cfg, flagOverrides)
+
+	// Default workspace directory: CWD for CLI agents, per-agent dir for background agents.
+	if cfg.WorkspaceDir == "" {
+		if agentName == "" || agentName == "default" {
+			cfg.WorkspaceDir, _ = os.Getwd()
+		} else {
+			cfg.WorkspaceDir = filepath.Join(GolemHome(), "agents", agentName, "workspace")
+		}
+	}
 
 	// Load persona files (three-layer identity system).
 	cfg.Persona = loadPersona(agentName)
@@ -353,6 +364,7 @@ func applyFlagOverrides(
 	overrides := map[string]*string{
 		"model":            &cfg.Model,
 		"tape-dir":         &cfg.TapeDir,
+		"workspace-dir":    &cfg.WorkspaceDir,
 		"skills-dir":       &cfg.SkillsDir,
 		"log-level":        &cfg.LogLevel,
 		"context-strategy": &cfg.ContextStrategy,
@@ -363,9 +375,12 @@ func applyFlagOverrides(
 			*ptr = v
 		}
 	}
-	// tape-dir needs home expansion.
+	// tape-dir and workspace-dir need home expansion.
 	if v, ok := flags["tape-dir"]; ok && v != "" {
 		cfg.TapeDir = expandHome(v)
+	}
+	if v, ok := flags["workspace-dir"]; ok && v != "" {
+		cfg.WorkspaceDir = expandHome(v)
 	}
 }
 

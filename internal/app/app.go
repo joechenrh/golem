@@ -272,7 +272,10 @@ func BuildAgent(
 	}
 
 	// 3. Initialize executor and filesystem.
-	workDir, _ := os.Getwd()
+	workDir := cfg.WorkspaceDir
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating workspace dir: %w", err)
+	}
 
 	var exec executor.Executor
 	switch cfg.Executor {

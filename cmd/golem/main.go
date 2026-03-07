@@ -126,6 +126,7 @@ func main() {
 func parseFlags() map[string]string {
 	model := flag.String("model", "", "LLM model (e.g. \"openai:gpt-4o\") (env: GOLEM_MODEL)")
 	tapeDir := flag.String("tape-dir", "", "Directory for tape files (env: GOLEM_TAPE_DIR)")
+	workspaceDir := flag.String("workspace-dir", "", "Agent workspace directory (env: GOLEM_WORKSPACE_DIR)")
 	skillsDir := flag.String("skills-dir", "", "Skills discovery directory (env: GOLEM_SKILLS_DIR)")
 	logLevel := flag.String("log-level", "", "Log level: debug, info, warn, error (env: GOLEM_LOG_LEVEL)")
 	showVersion := flag.Bool("version", false, "Show version")
@@ -143,6 +144,9 @@ func parseFlags() map[string]string {
 	}
 	if *tapeDir != "" {
 		overrides["tape-dir"] = *tapeDir
+	}
+	if *workspaceDir != "" {
+		overrides["workspace-dir"] = *workspaceDir
 	}
 	if *skillsDir != "" {
 		overrides["skills-dir"] = *skillsDir
