@@ -98,9 +98,13 @@ func (sm *SessionManager) createSession(
 
 	// Sanitize channelID for use in filename (replace colons, slashes).
 	safeID := sanitizeForFilename(channelID)
-	tapePath := filepath.Join(cfg.TapeDir,
-		fmt.Sprintf("session-%s-%s-%s.jsonl",
-			sm.factory.AgentName, safeID, time.Now().Format("20060102-150405")))
+	agentDir, err := tape.AgentDir(cfg.TapeDir, sm.factory.AgentName)
+	if err != nil {
+		return nil, err
+	}
+	tapePath := filepath.Join(agentDir,
+		fmt.Sprintf("session-%s-%s.jsonl",
+			safeID, time.Now().Format("20060102-150405")))
 
 	tapeStore, err := tape.NewFileStore(tapePath)
 	if err != nil {
@@ -167,8 +171,9 @@ func (sm *SessionManager) LoadExisting(tapeDir string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	prefix := fmt.Sprintf("session-%s-", sm.factory.AgentName)
-	tapePaths, err := tape.Discover(tapeDir, prefix)
+	agentDir := filepath.Join(tapeDir, sm.factory.AgentName)
+	prefix := "session-"
+	tapePaths, err := tape.Discover(agentDir, prefix)
 	if err != nil {
 		return fmt.Errorf("discovering tapes: %w", err)
 	}

@@ -1,11 +1,21 @@
 package tape
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 )
+
+// AgentDir returns the per-agent tape directory under tapeDir, creating it if needed.
+func AgentDir(tapeDir, agentName string) (string, error) {
+	dir := filepath.Join(tapeDir, agentName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("creating agent tape dir: %w", err)
+	}
+	return dir, nil
+}
 
 // Discover returns existing tape file paths in dir that match the given prefix.
 // Results are sorted by name (which includes timestamps, so naturally chronological).
@@ -33,8 +43,8 @@ func Discover(dir, prefix string) ([]string, error) {
 }
 
 // ParseChatID extracts the chat ID from a tape filename.
-// Expected format: session-<agentName>-<chatID>-<timestamp>.jsonl
-// prefix should be "session-<agentName>-".
+// Expected format: session-<chatID>-<timestamp>.jsonl
+// prefix should be "session-".
 func ParseChatID(filename, prefix string) string {
 	// Strip prefix.
 	rest := strings.TrimPrefix(filename, prefix)

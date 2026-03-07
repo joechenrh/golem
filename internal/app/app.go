@@ -88,6 +88,7 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 			cfg:         inst.Config,
 			logger:      inst.Logger,
 			toolFactory: inst.toolFactory,
+			agentName:   inst.Name,
 		}
 		inst.Sched = scheduler.New(inst.SchedStore, inst.Channels, factory, inst.Logger)
 		go inst.Sched.Run(gctx)
@@ -262,10 +263,11 @@ func BuildAgent(
 	}
 
 	// 2. Initialize tape store.
-	if err := os.MkdirAll(cfg.TapeDir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating tape dir: %w", err)
+	agentTapeDir, err := tape.AgentDir(cfg.TapeDir, name)
+	if err != nil {
+		return nil, err
 	}
-	tapePath := filepath.Join(cfg.TapeDir, fmt.Sprintf("session-%s-%s.jsonl", name, time.Now().Format("20060102-150405")))
+	tapePath := filepath.Join(agentTapeDir, fmt.Sprintf("session-%s.jsonl", time.Now().Format("20060102-150405")))
 	tapeStore, err := tape.NewFileStore(tapePath)
 	if err != nil {
 		return nil, fmt.Errorf("tape store: %w", err)
@@ -303,7 +305,7 @@ func BuildAgent(
 	metricsHook := hooks.NewMetricsHook()
 	hookBus.Register(metricsHook)
 
-	auditPath := filepath.Join(cfg.TapeDir, fmt.Sprintf("audit-%s-%s.jsonl", name, time.Now().Format("20060102-150405")))
+	auditPath := filepath.Join(agentTapeDir, fmt.Sprintf("audit-%s.jsonl", time.Now().Format("20060102-150405")))
 	auditHook, err := hooks.NewAuditHook(auditPath)
 	if err != nil {
 		logger.Warn("failed to create audit hook", zap.Error(err))
@@ -360,7 +362,7 @@ func BuildAgent(
 	var subAgentSeq atomic.Int64
 	runner := func(ctx context.Context, prompt string) (string, error) {
 		seq := subAgentSeq.Add(1)
-		subTapePath := filepath.Join(cfg.TapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
+		subTapePath := filepath.Join(agentTapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
 		subTape, err := tape.NewFileStore(subTapePath)
 		if err != nil {
 			return "", fmt.Errorf("sub-agent tape: %w", err)
@@ -640,12 +642,17 @@ type appSessionFactory struct {
 	cfg         *config.Config
 	logger      *zap.Logger
 	toolFactory func() *tools.Registry
+	agentName   string
 }
 
 func (f *appSessionFactory) HandleScheduledPrompt(
 	ctx context.Context, tapePath string, msg channel.IncomingMessage,
 ) (string, error) {
-	fullTapePath := filepath.Join(f.cfg.TapeDir, tapePath)
+	agentDir, err := tape.AgentDir(f.cfg.TapeDir, f.agentName)
+	if err != nil {
+		return "", err
+	}
+	fullTapePath := filepath.Join(agentDir, tapePath)
 	tapeStore, err := tape.NewFileStore(fullTapePath)
 	if err != nil {
 		return "", fmt.Errorf("scheduler tape: %w", err)
