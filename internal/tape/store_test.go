@@ -453,3 +453,52 @@ func TestSessionRestore_LoadFromDisk(t *testing.T) {
 		t.Fatalf("len(entries) after append = %d, want 3", len(entries))
 	}
 }
+
+func TestFileStore_RotationPersistsRetainedEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tape.jsonl")
+	s, err := NewFileStore(path)
+	if err != nil {
+		t.Fatalf("NewFileStore() error: %v", err)
+	}
+
+	// Add an anchor and a message after it.
+	s.Append(TapeEntry{Kind: KindAnchor, Payload: MarshalPayload(map[string]any{"label": "ctx"})})
+	s.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "keep-me"})})
+
+	// Force rotation by setting diskBytes above threshold.
+	s.mu.Lock()
+	s.diskBytes = MaxTapeFileSize
+	s.mu.Unlock()
+	// The next Append triggers rotation.
+	s.Append(TapeEntry{Kind: KindMessage, Payload: MarshalPayload(map[string]any{"content": "after-rotation"})})
+
+	// Close the store (simulates a crash right after rotation).
+	s.Close()
+
+	// Reopen — the retained entries (anchor + "keep-me") plus the new
+	// entry should all be present on disk.
+	s2, err := NewFileStore(path)
+	if err != nil {
+		t.Fatalf("reopen error: %v", err)
+	}
+	defer s2.Close()
+
+	entries, _ := s2.Entries()
+	if len(entries) != 3 {
+		t.Fatalf("len(entries) = %d, want 3 (anchor + keep-me + after-rotation)", len(entries))
+	}
+
+	// Verify the retained content.
+	p := entries[0].PayloadMap()
+	if p["label"] != "ctx" {
+		t.Errorf("entries[0] label = %v, want ctx", p["label"])
+	}
+	p = entries[1].PayloadMap()
+	if p["content"] != "keep-me" {
+		t.Errorf("entries[1] content = %v, want keep-me", p["content"])
+	}
+	p = entries[2].PayloadMap()
+	if p["content"] != "after-rotation" {
+		t.Errorf("entries[2] content = %v, want after-rotation", p["content"])
+	}
+}

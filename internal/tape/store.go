@@ -237,6 +237,8 @@ func (s *FileStore) loadFromDisk() ([]TapeEntry, error) {
 }
 
 // rotateLocked renames the current tape to a .bak file and starts fresh.
+// Retained entries (from the last anchor onward) are written to the new
+// file so they survive a crash after rotation.
 // Must be called with s.mu held.
 func (s *FileStore) rotateLocked() {
 	// Close the current file handle.
@@ -253,9 +255,19 @@ func (s *FileStore) rotateLocked() {
 		f, _ = os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	}
 	s.file = f
-	s.diskBytes = 0
+
 	// Keep only the last anchor and entries after it in memory.
 	s.entries = s.entriesFromLastAnchor()
+
+	// Persist retained entries to the new file so they survive a crash.
+	s.diskBytes = 0
+	for _, e := range s.entries {
+		if data, err := json.Marshal(e); err == nil {
+			line := append(data, '\n')
+			s.file.Write(line)
+			s.diskBytes += int64(len(line))
+		}
+	}
 }
 
 // entriesFromLastAnchor returns entries from the last anchor onward,
