@@ -457,12 +457,12 @@ func (l *LarkChannel) SendToChat(
 	return nil
 }
 
-// sendCard sends a message as an interactive card with a markdown element.
+// sendCard sends a message as a structured interactive card.
 func (l *LarkChannel) sendCard(
 	ctx context.Context, chatID, text string,
 ) error {
-	_, err := l.sendCardReturnID(ctx, chatID, text)
-	return err
+	l.sendCardRaw(ctx, chatID, buildStructuredCard(text))
+	return nil
 }
 
 // actionButtons is the shared action row appended to response cards.
@@ -579,7 +579,7 @@ var markdownImageRe = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
 func (l *LarkChannel) buildCardWithImages(ctx context.Context, text string) []byte {
 	matches := markdownImageRe.FindAllStringSubmatchIndex(text, -1)
 	if len(matches) == 0 {
-		return buildCard(text)
+		return buildStructuredCard(text)
 	}
 
 	// Upload images in parallel, collecting image_keys indexed by match position.
