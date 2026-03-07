@@ -30,7 +30,11 @@ func (t *SpawnAgentTool) FullDescription() string {
 	return "Spawn an independent sub-agent to handle a delegated task. " +
 		"The sub-agent has its own conversation context and access to standard tools " +
 		"(shell, file I/O, web) but cannot spawn further agents. " +
-		"Use this for self-contained subtasks that benefit from a clean context."
+		"Use this for self-contained subtasks that benefit from a clean context.\n\n" +
+		"You can call this tool multiple times in a single response to run several " +
+		"sub-agents in parallel. Each sub-agent works independently with its own context. " +
+		"Use this to decompose complex tasks: spawn workers for each subtask, then " +
+		"synthesize their results into a final answer."
 }
 
 var spawnAgentParams = json.RawMessage(`{
