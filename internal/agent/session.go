@@ -2,8 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -63,6 +61,12 @@ const (
 
 	// compact unused tool schemas after this many iterations
 	shrinkAfterIters = 10
+
+	// max chars for log truncation
+	maxLogTruncateLen = 500
+
+	// max messages to include in summarization
+	maxSummaryMessages = 50
 )
 
 // NewSession creates a Session with all dependencies wired in.
@@ -182,7 +186,6 @@ func (s *Session) runReActLoop(
 		}
 
 		// No tool calls — nudge the LLM to retry if:
-		// - a skill was just read (instructions to act on),
 		// - a tool just failed (schema now expanded, worth retrying), or
 		// - the response looks like a plan rather than a final answer.
 		shouldNudge := lastToolFailed || looksLikePlan(resp.Content)
@@ -202,101 +205,6 @@ func (s *Session) runReActLoop(
 	}
 
 	return "Tool calling limit reached. Please try a simpler request.", nil
-}
-
-// planCheckPrefixLen is the number of characters at the start of a response
-// to check for intent phrases. Plans open with intent; greetings or
-// answers that happen to contain intent words deeper in the text should
-// not trigger a nudge.
-const planCheckPrefixLen = 200
-
-// looksLikePlan returns true if the opening of the content appears to
-// describe intended actions rather than providing a final answer.
-func looksLikePlan(content string) bool {
-	prefix := content
-	if len(prefix) > planCheckPrefixLen {
-		prefix = prefix[:planCheckPrefixLen]
-	}
-
-	lower := strings.ToLower(prefix)
-	for _, phrase := range []string{
-		"i'll ", "i will ", "let me ", "i'm going to ",
-		"i'll\n", "i will\n", "let me\n",
-		"first, i'll", "first, let me",
-		"i can help", "i can do",
-	} {
-		if strings.Contains(lower, phrase) {
-			return true
-		}
-	}
-	// Chinese intent phrases must appear at a sentence boundary:
-	// start of text, or after a newline / period / comma / exclamation.
-	for _, phrase := range []string{
-		"我来", "让我", "我会", "我将",
-		"首先", "接下来我",
-	} {
-		if startsWithPhrase(prefix, phrase) {
-			return true
-		}
-	}
-	return false
-}
-
-// startsWithPhrase checks if phrase appears at the start of text or
-// immediately after a sentence boundary (newline or CJK punctuation).
-func startsWithPhrase(text, phrase string) bool {
-	idx := strings.Index(text, phrase)
-	if idx < 0 {
-		return false
-	}
-	if idx == 0 {
-		return true
-	}
-	// Check the rune immediately before the match.
-	for i := idx - 1; i >= 0; i-- {
-		r := rune(text[i])
-		// Skip whitespace.
-		if r == ' ' || r == '\t' {
-			continue
-		}
-		// Sentence boundaries.
-		switch r {
-		case '\n', '.', ',', '!', '?',
-			'\u3002', // fullwidth period
-			'\uff0c', // fullwidth comma
-			'\uff01', // fullwidth exclamation
-			'\uff1f': // fullwidth question mark
-			return true
-		}
-		// Part of a larger word/phrase — not a boundary.
-		return false
-	}
-	return true
-}
-
-// nudgeMessage returns a nudge prompt in the same language as the content.
-func nudgeMessage(content string) string {
-	if isMostlyCJK(content) {
-		return "不要只描述你打算做什么——现在就使用可用的工具来执行。"
-	}
-	return "Don't just describe what you'll do — use the available tools now to proceed."
-}
-
-// isMostlyCJK returns true if CJK characters make up the majority of
-// non-whitespace, non-punctuation runes in the text.
-func isMostlyCJK(s string) bool {
-	var cjk, other int
-	for _, r := range s {
-		if r <= ' ' {
-			continue
-		}
-		if ctxmgr.IsCJK(r) {
-			cjk++
-		} else {
-			other++
-		}
-	}
-	return cjk > other
 }
 
 // executeLLMCall builds context, calls the LLM (streaming or not), and emits hooks.
@@ -446,7 +354,7 @@ func (s *Session) processToolCalls(
 	return hadFailure
 }
 
-// processAssistantResponse handles the final answer: runs any embedded comma
+// processAssistantResponse handles the final answer: runs any embedded colon-
 // commands, records the response to the tape, and returns the content.
 func (s *Session) processAssistantResponse(
 	ctx context.Context, resp *llm.ChatResponse,
@@ -578,123 +486,11 @@ func (s *Session) executeTool(
 		Payload: map[string]any{
 			"tool_name": tc.Name,
 			"tool_id":   tc.ID,
-			"result":    truncateForLog(result, 500),
+			"result":    truncateForLog(result, maxLogTruncateLen),
 		},
 	})
 
 	return result
-}
-
-// handleCommand dispatches an internal or shell colon-command.
-func (s *Session) handleCommand(
-	ctx context.Context, route router.RouteResult,
-) (string, error) {
-	switch route.Kind {
-	case router.CommandInternal:
-		return s.handleInternalCommand(ctx, route.Command, route.Args)
-	case router.CommandShell:
-		// Shell commands are executed via the shell_exec tool.
-		args, _ := json.Marshal(map[string]string{"command": route.Command})
-		result, err := s.tools.Execute(ctx, "shell_exec", string(args))
-		if err != nil {
-			return "Error: " + err.Error(), nil
-		}
-		return result, nil
-	}
-	return "", nil
-}
-
-// handleInternalCommand processes built-in colon-commands.
-func (s *Session) handleInternalCommand(
-	_ context.Context, cmd, args string,
-) (string, error) {
-	switch cmd {
-	case "help":
-		return s.helpText(), nil
-
-	case "quit":
-		return "", ErrQuit
-
-	case "tape.info":
-		info := s.tape.Info()
-		return fmt.Sprintf("Tape: %s\nEntries: %d | Anchors: %d | Since last anchor: %d",
-			info.FilePath, info.TotalEntries, info.AnchorCount, info.EntriesSinceAnchor), nil
-
-	case "tape.search":
-		if args == "" {
-			return "Usage: :tape.search <query>", nil
-		}
-		results, err := s.tape.Search(args)
-		if err != nil {
-			return "Error: " + err.Error(), nil
-		}
-		if len(results) == 0 {
-			return "No matches found.", nil
-		}
-		var b strings.Builder
-		fmt.Fprintf(&b, "Found %d matches:\n", len(results))
-		for _, e := range results {
-			fmt.Fprintf(&b, "  [%s] %s: %s\n", e.Kind, e.Timestamp.Format(time.RFC3339), truncateForLog(string(e.Payload), 100))
-		}
-		return b.String(), nil
-
-	case "tools":
-		return s.tools.List(), nil
-
-	case "skills":
-		list := s.tools.List()
-		// Extract just the skills section.
-		if idx := strings.Index(list, "Skills"); idx >= 0 {
-			return list[idx:], nil
-		}
-		return "No skills registered.", nil
-
-	case "model":
-		if args == "" {
-			return fmt.Sprintf("Current model: %s (provider: %s)", s.config.Model, s.llm.Provider()), nil
-		}
-		// Model switching would require creating a new client — for now just report.
-		return fmt.Sprintf("Model switching is not yet supported. Current: %s", s.config.Model), nil
-
-	case "usage":
-		return fmt.Sprintf("Session tokens: prompt=%d completion=%d total=%d\nLast turn:      prompt=%d completion=%d total=%d",
-			s.sessionUsage.PromptTokens, s.sessionUsage.CompletionTokens, s.sessionUsage.TotalTokens,
-			s.turnUsage.PromptTokens, s.turnUsage.CompletionTokens, s.turnUsage.TotalTokens), nil
-
-	case "metrics":
-		if s.MetricsSummary != nil {
-			return s.MetricsSummary(), nil
-		}
-		return "Metrics not available.", nil
-
-	case "reset":
-		label := args
-		if label == "" {
-			label = "manual"
-		}
-		if err := s.tape.AddAnchor(label); err != nil {
-			return "Error: " + err.Error(), nil
-		}
-		return fmt.Sprintf("Anchor added: %s", label), nil
-
-	default:
-		return fmt.Sprintf("Unknown command: %s. Type :help for available commands.", cmd), nil
-	}
-}
-
-func (s *Session) helpText() string {
-	return `Available commands:
-  :help              Show this help message
-  :quit              Exit golem
-  :usage             Show token usage statistics
-  :metrics           Show operational metrics
-  :tape.info         Show tape statistics
-  :tape.search <q>   Search tape history
-  :tools             List registered tools
-  :skills            List discovered skills
-  :model [name]      Show or change current model
-  :reset [label]     Add a tape anchor (context boundary)
-  :<command>         Execute a shell command (e.g., :ls -la)`
 }
 
 // buildSystemPrompt constructs the system prompt for LLM calls.
@@ -849,9 +645,7 @@ func (s *Session) appendToolResult(
 	})
 }
 
-// ErrQuit signals that the user wants to quit.
-var ErrQuit = errors.New("quit")
-
+// truncateForLog truncates a string to maxLen and appends "..." if truncated.
 func truncateForLog(s string, maxLen int) string {
 	if len(s) > maxLen {
 		return s[:maxLen] + "..."
@@ -873,9 +667,9 @@ func (s *Session) Summarize(ctx context.Context) error {
 		return nil // not enough conversation to summarize
 	}
 
-	// Limit to the last 50 messages to keep the summarization call small.
-	if len(msgs) > 50 {
-		msgs = msgs[len(msgs)-50:]
+	// Limit to the last N messages to keep the summarization call small.
+	if len(msgs) > maxSummaryMessages {
+		msgs = msgs[len(msgs)-maxSummaryMessages:]
 	}
 
 	summaryPrompt := "Summarize the key points, decisions, and outcomes from this conversation in 3-5 concise bullet points. " +
