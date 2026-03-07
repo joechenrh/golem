@@ -279,7 +279,7 @@ func isMostlyCJK(s string) bool {
 		if r <= ' ' {
 			continue
 		}
-		if r >= 0x2E80 && r <= 0x9FFF || r >= 0xF900 && r <= 0xFAFF {
+		if ctxmgr.IsCJK(r) {
 			cjk++
 		} else {
 			other++

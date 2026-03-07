@@ -115,7 +115,7 @@ func estimateStringTokens(s string) int {
 	ascii := 0
 	cjk := 0
 	for _, r := range s {
-		if isCJK(r) {
+		if IsCJK(r) {
 			cjk++
 		} else {
 			ascii++
@@ -124,8 +124,8 @@ func estimateStringTokens(s string) int {
 	return (ascii+3)/4 + cjk
 }
 
-// isCJK returns true for CJK Unified Ideographs and common CJK ranges.
-func isCJK(r rune) bool {
+// IsCJK returns true for CJK Unified Ideographs and common CJK ranges.
+func IsCJK(r rune) bool {
 	return (r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
 		(r >= 0x3400 && r <= 0x4DBF) || // CJK Extension A
 		(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
