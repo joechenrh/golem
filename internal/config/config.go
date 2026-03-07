@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -21,17 +22,63 @@ var validLogLevels = map[string]bool{
 //	Layer 2 (Operations): Agents
 //	Layer 3 (Knowledge): Memory
 type Persona struct {
+	mu sync.RWMutex
+
 	Soul   string // SOUL.md — core identity and personality
 	User   string // USER.md — who the agent serves (global, shared)
 	Agents string // AGENTS.md — behavioral rules
 	Memory string // MEMORY.md — curated persistent knowledge
 
-	MemoryPath string // absolute path to MEMORY.md (for the tool to write)
+	SoulPath   string // absolute path to SOUL.md
+	AgentsPath string // absolute path to AGENTS.md
+	MemoryPath string // absolute path to MEMORY.md
 }
 
 // HasPersona reports whether persona files are configured (SOUL.md exists).
 func (p *Persona) HasPersona() bool {
-	return p != nil && p.Soul != ""
+	return p != nil && p.GetSoul() != ""
+}
+
+// GetSoul returns the Soul content (thread-safe).
+func (p *Persona) GetSoul() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.Soul
+}
+
+// SetSoul updates the Soul content (thread-safe).
+func (p *Persona) SetSoul(s string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Soul = s
+}
+
+// GetAgents returns the Agents content (thread-safe).
+func (p *Persona) GetAgents() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.Agents
+}
+
+// SetAgents updates the Agents content (thread-safe).
+func (p *Persona) SetAgents(s string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Agents = s
+}
+
+// GetMemory returns the Memory content (thread-safe).
+func (p *Persona) GetMemory() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.Memory
+}
+
+// SetMemory updates the Memory content (thread-safe).
+func (p *Persona) SetMemory(s string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Memory = s
 }
 
 // GolemHome returns the root golem configuration directory (~/.golem).
@@ -435,12 +482,14 @@ func loadPersona(agentName string) *Persona {
 	agentDir := filepath.Join(GolemHome(), "agents", agentName)
 
 	// Layer 1: SOUL.md (agent-specific).
-	if data, err := os.ReadFile(filepath.Join(agentDir, "SOUL.md")); err == nil {
+	p.SoulPath = filepath.Join(agentDir, "SOUL.md")
+	if data, err := os.ReadFile(p.SoulPath); err == nil {
 		p.Soul = strings.TrimSpace(string(data))
 	}
 
 	// Layer 2: AGENTS.md.
-	if data, err := os.ReadFile(filepath.Join(agentDir, "AGENTS.md")); err == nil {
+	p.AgentsPath = filepath.Join(agentDir, "AGENTS.md")
+	if data, err := os.ReadFile(p.AgentsPath); err == nil {
 		p.Agents = strings.TrimSpace(string(data))
 	}
 

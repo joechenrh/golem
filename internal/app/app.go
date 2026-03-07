@@ -544,9 +544,9 @@ func BuildToolRegistry(
 		)
 	}
 
-	// Persona memory tool (only when persona is configured).
-	if cfg.Persona.HasPersona() && cfg.Persona.MemoryPath != "" {
-		registry.Register(builtin.NewPersonaMemoryTool(cfg.Persona.MemoryPath))
+	// Persona self-edit tool (only when persona is configured).
+	if cfg.Persona.HasPersona() {
+		registry.Register(builtin.NewPersonaSelfTool(cfg.Persona))
 	}
 
 	// Discover skills.

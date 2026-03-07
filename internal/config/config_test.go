@@ -427,6 +427,12 @@ func TestLoadPersona(t *testing.T) {
 	if p.Memory != "User prefers short answers." {
 		t.Errorf("Memory = %q", p.Memory)
 	}
+	if p.SoulPath != filepath.Join(agentDir, "SOUL.md") {
+		t.Errorf("SoulPath = %q", p.SoulPath)
+	}
+	if p.AgentsPath != filepath.Join(agentDir, "AGENTS.md") {
+		t.Errorf("AgentsPath = %q", p.AgentsPath)
+	}
 	if p.MemoryPath != filepath.Join(agentDir, "MEMORY.md") {
 		t.Errorf("MemoryPath = %q", p.MemoryPath)
 	}

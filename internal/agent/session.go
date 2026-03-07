@@ -675,9 +675,13 @@ func (s *Session) buildPersonaPrompt() string {
 	p := s.config.Persona
 	var b strings.Builder
 
+	soul := p.GetSoul()
+	agents := p.GetAgents()
+	memory := p.GetMemory()
+
 	// --- Layer 1: Identity ---
 	b.WriteString("# Identity\n\n")
-	b.WriteString(p.Soul)
+	b.WriteString(soul)
 	b.WriteByte('\n')
 	if p.User != "" {
 		b.WriteString("\n## User Profile\n\n")
@@ -687,8 +691,8 @@ func (s *Session) buildPersonaPrompt() string {
 
 	// --- Layer 2: Operations ---
 	b.WriteString("\n# Operations\n\n")
-	if p.Agents != "" {
-		b.WriteString(p.Agents)
+	if agents != "" {
+		b.WriteString(agents)
 		b.WriteByte('\n')
 	}
 	b.WriteString("\n## Tool Use\n\n")
@@ -699,19 +703,23 @@ func (s *Session) buildPersonaPrompt() string {
 
 	// --- Layer 3: Knowledge ---
 	b.WriteString("\n# Knowledge\n\n")
-	b.WriteString("## Memory System\n\n")
-	b.WriteString("You have two memory mechanisms:\n\n")
-	b.WriteString("- **MEMORY.md** (local): Your curated, distilled notes. Record only what truly ")
-	b.WriteString("matters — validated preferences, hard-won lessons, stable patterns. ")
-	b.WriteString("Keep it concise (under 200 lines). Use the persona_memory tool to read/write.\n\n")
+	b.WriteString("## Persona Files\n\n")
+	b.WriteString("You can read and modify your own persona files using the persona_self tool:\n\n")
+	b.WriteString("- **SOUL.md** (≤100 lines): Your core identity and personality. ")
+	b.WriteString("Modify only when the user explicitly requests an identity change (very rare).\n")
+	b.WriteString("- **AGENTS.md** (≤150 lines): Your behavioral rules. ")
+	b.WriteString("Update when behavioral rules need evolving based on experience (somewhat rare).\n")
+	b.WriteString("- **MEMORY.md** (≤200 lines): Your curated, distilled knowledge. ")
+	b.WriteString("Update regularly for learned preferences, hard-won lessons, stable patterns.\n\n")
+	b.WriteString("SOUL.md and AGENTS.md are backed up to .bak before overwriting.\n\n")
 	b.WriteString("- **mnemos** (shared): Cross-agent long-term memory store. Use it for facts, ")
 	b.WriteString("research results, contextual details, and raw material that any agent can retrieve. ")
 	b.WriteString("Use memory_store / memory_recall tools.\n\n")
 	b.WriteString("Principle: mnemos is the warehouse; MEMORY.md is the distilled memo.\n")
 
-	if p.Memory != "" {
+	if memory != "" {
 		b.WriteString("\n## Current Memory\n\n")
-		b.WriteString(p.Memory)
+		b.WriteString(memory)
 		b.WriteByte('\n')
 	}
 

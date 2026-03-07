@@ -597,9 +597,21 @@ func TestBuildSystemPromptPersona(t *testing.T) {
 		t.Errorf("prompt missing built-in tool-use instructions")
 	}
 
-	// Layer 3: Knowledge.
+	// Layer 3: Knowledge — Persona Files section.
+	if !strings.Contains(prompt, "Persona Files") {
+		t.Errorf("prompt missing 'Persona Files' section")
+	}
+	if !strings.Contains(prompt, "persona_self") {
+		t.Errorf("prompt missing persona_self tool reference")
+	}
 	if !strings.Contains(prompt, "MEMORY.md") {
-		t.Errorf("prompt missing memory system description")
+		t.Errorf("prompt missing MEMORY.md description")
+	}
+	if !strings.Contains(prompt, "SOUL.md") {
+		t.Errorf("prompt missing SOUL.md description")
+	}
+	if !strings.Contains(prompt, "AGENTS.md") {
+		t.Errorf("prompt missing AGENTS.md description")
 	}
 	if !strings.Contains(prompt, "User prefers short answers.") {
 		t.Errorf("prompt missing MEMORY.md content")
