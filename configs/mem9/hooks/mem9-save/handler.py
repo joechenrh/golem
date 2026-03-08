@@ -45,7 +45,27 @@ def main():
         print(json.dumps({"content": ""}))
         return
 
+    event_type = event.get("event", "")
     data = event.get("data", {})
+
+    if event_type == "context_dropped":
+        dropped_text = data.get("dropped_text", "")
+        if not dropped_text:
+            print(json.dumps({"content": ""}))
+            return
+        try:
+            body = {
+                "content": dropped_text,
+                "tags": ["dropped-context"],
+                "source": "golem",
+            }
+            _request("POST", "/memories", body=body)
+            print(json.dumps({"content": "Dropped context saved to mem9."}))
+        except Exception as exc:
+            print(json.dumps({"content": f"Failed to save dropped context: {exc}"}))
+        return
+
+    # after_reset event
     summary = data.get("summary", "")
     if not summary:
         print(json.dumps({"content": ""}))

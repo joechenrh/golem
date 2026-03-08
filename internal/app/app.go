@@ -339,6 +339,13 @@ func BuildAgent(
 		return nil, fmt.Errorf("context strategy: %w", err)
 	}
 
+	// Wire LLM client into HybridStrategy for summarization.
+	_, modelName := llm.ParseModelProvider(cfg.Model)
+	if hs, ok := ctxStrategy.(*ctxmgr.HybridStrategy); ok {
+		hs.LLM = llmClient
+		hs.Model = modelName
+	}
+
 	hookBus, metricsHook := buildHookBus(logger, agentTapeDir)
 	channels, printer, larkCh := buildChannels(name, cfg, logger)
 	schedStore := buildScheduleStore(name, logger)
@@ -425,6 +432,21 @@ func BuildAgent(
 	defaultSess.MetricsSummary = metricsHook.Summary
 	defaultSess.SetSkillReload(skillDirs, cfg.SkillReloadInterval)
 	defaultSess.SetExtHooks(extHookRunner)
+
+	// Wire OnDrop callback for HybridStrategy to save dropped context via hooks.
+	if hs, ok := ctxStrategy.(*ctxmgr.HybridStrategy); ok && extHookRunner != nil {
+		agentNameForHook := name
+		hs.OnDrop = func(ctx context.Context, dropped []llm.Message) {
+			var sb strings.Builder
+			for _, m := range dropped {
+				fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, m.Content)
+			}
+			extHookRunner.Run(ctx, "context_dropped", agentNameForHook, map[string]any{
+				"dropped_text":  sb.String(),
+				"dropped_count": len(dropped),
+			})
+		}
+	}
 
 	// Wire card action handler for Lark (reset session, feedback buttons).
 	// Must be set before SessionManager is created since the handler uses it.

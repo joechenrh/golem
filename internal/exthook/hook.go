@@ -16,17 +16,19 @@ import (
 type EventType string
 
 const (
-	EventBeforeLLMCall EventType = "before_llm_call"
-	EventAfterLLMCall  EventType = "after_llm_call"
-	EventAfterReset    EventType = "after_reset"
-	EventUserMessage   EventType = "user_message"
+	EventBeforeLLMCall  EventType = "before_llm_call"
+	EventAfterLLMCall   EventType = "after_llm_call"
+	EventAfterReset     EventType = "after_reset"
+	EventUserMessage    EventType = "user_message"
+	EventContextDropped EventType = "context_dropped"
 )
 
 var validEvents = map[EventType]bool{
-	EventBeforeLLMCall: true,
-	EventAfterLLMCall:  true,
-	EventAfterReset:    true,
-	EventUserMessage:   true,
+	EventBeforeLLMCall:  true,
+	EventAfterLLMCall:   true,
+	EventAfterReset:     true,
+	EventUserMessage:    true,
+	EventContextDropped: true,
 }
 
 // IsBlocking returns true for events that can inject content (before_* events).
