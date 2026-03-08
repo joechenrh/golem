@@ -46,7 +46,7 @@ fi
 
 EXISTING_SPACE_ID=""
 if [ -f "$CONFIG_FILE" ]; then
-    EXISTING_SPACE_ID=$(grep -oP '(?<=^MEM9_SPACE_ID=).*' "$CONFIG_FILE" 2>/dev/null || true)
+    EXISTING_SPACE_ID=$(grep '^MEM9_SPACE_ID=' "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- || true)
 fi
 
 if [ -n "$EXISTING_SPACE_ID" ]; then
@@ -85,9 +85,15 @@ cp "$SCRIPT_DIR/mem9_handler.py" "$GOLEM_HOME/plugins/mem9_handler.py"
 chmod +x "$GOLEM_HOME/plugins/mem9_handler.py"
 echo "Installed handler: $GOLEM_HOME/plugins/mem9_handler.py"
 
+MEM9_API_URL="${MEM9_API_URL:-https://api.mem9.ai}"
 for f in "$SCRIPT_DIR"/plugins/*.tool.json; do
     BASENAME="$(basename "$f")"
-    sed "s|__GOLEM_HOME__|$GOLEM_HOME|g" "$f" > "$GOLEM_HOME/plugins/$BASENAME"
+    python3 -c "
+import json, sys
+m = json.load(open(sys.argv[1]))
+m['env'] = {'MEM9_API_URL': sys.argv[2], 'MEM9_SPACE_ID': sys.argv[3]}
+json.dump(m, open(sys.argv[4], 'w'), indent=2)
+" "$f" "$MEM9_API_URL" "$SPACE_ID" "$GOLEM_HOME/plugins/$BASENAME"
     echo "Installed tool manifest: $BASENAME"
 done
 

@@ -12,5 +12,5 @@
     "required": ["content"]
   },
   "command": "python3",
-  "args": ["__GOLEM_HOME__/plugins/mem9_handler.py", "--mode=tool", "--tool=memory_store"]
+  "args": ["$GOLEM_HOME/plugins/mem9_handler.py", "--mode=tool", "--tool=memory_store"]
 }

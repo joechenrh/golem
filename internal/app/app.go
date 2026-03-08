@@ -701,8 +701,15 @@ func BuildToolRegistry(
 		}
 	}
 
+	// Export GOLEM_HOME so external tool manifests can reference $GOLEM_HOME
+	// in their command/args and have it resolved at load time.
+	golemHome := config.GolemHome()
+	if os.Getenv("GOLEM_HOME") == "" {
+		os.Setenv("GOLEM_HOME", golemHome)
+	}
+
 	// Load external plugin tools from ~/.golem/plugins/.
-	pluginDir := filepath.Join(config.GolemHome(), "plugins")
+	pluginDir := filepath.Join(golemHome, "plugins")
 	extTools, err := tools.LoadExternalTools(pluginDir, logger)
 	if err != nil {
 		logger.Warn("external tool loading failed", zap.Error(err))
