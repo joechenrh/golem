@@ -660,13 +660,16 @@ func BuildToolRegistry(
 		builtin.NewSearchFilesTool(filesystem),
 	)
 
-	// Web tools.
+	// Web tools (hidden by default; unhidden when user query mentions web/http/fetch).
 	webClient := &http.Client{Timeout: 30 * time.Second}
 	registry.RegisterAll(
 		builtin.NewWebSearchTool(webClient, cfg.WebSearchBackend),
 		builtin.NewWebFetchTool(webClient),
 		builtin.NewHTTPRequestTool(webClient),
 	)
+	registry.Hide("web_search")
+	registry.Hide("web_fetch")
+	registry.Hide("http_request")
 
 	// Lark tools (pre-expanded for immediate full schema).
 	if larkCh != nil {

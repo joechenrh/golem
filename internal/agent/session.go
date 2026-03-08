@@ -195,6 +195,11 @@ func (s *Session) runReActLoop(
 	s.turnUsage = llm.Usage{}
 	s.toolFailures = make(map[string]int)
 
+	// Unhide tools relevant to the user's query before the first LLM call.
+	if pendingMsg != nil {
+		s.tools.UnhideHints(pendingMsg.Text)
+	}
+
 	nudges := 0
 	emptyRetries := 0
 	lastToolFailed := false // previous iteration had a tool failure
