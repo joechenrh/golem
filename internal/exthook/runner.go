@@ -23,19 +23,11 @@ func NewRunner(hooks []*HookDef, logger *zap.Logger) *Runner {
 	return &Runner{hooks: hooks, logger: logger}
 }
 
-// beforeLLMCallPayload is the JSON sent to hooks subscribed to before_llm_call.
-type beforeLLMCallPayload struct {
-	Event       EventType `json:"event"`
-	AgentName   string    `json:"agent_name"`
-	UserMessage string    `json:"user_message"`
-	Iteration   int       `json:"iteration"`
-}
-
-// afterResetPayload is the JSON sent to hooks subscribed to after_reset.
-type afterResetPayload struct {
-	Event     EventType `json:"event"`
-	AgentName string    `json:"agent_name"`
-	Summary   string    `json:"summary"`
+// hookPayload is the unified JSON envelope sent to all external hooks.
+type hookPayload struct {
+	Event     EventType      `json:"event"`
+	AgentName string         `json:"agent_name"`
+	Data      map[string]any `json:"data"`
 }
 
 // hookResult is the expected JSON output from a hook.
@@ -43,93 +35,66 @@ type hookResult struct {
 	Content string `json:"content"`
 }
 
-// BeforeLLMCall executes all hooks subscribed to before_llm_call.
-// Returns concatenated injected content (empty string if no hooks or no content).
-func (r *Runner) BeforeLLMCall(ctx context.Context, agentName, userMessage string, iteration int) (string, error) {
-	payload := beforeLLMCallPayload{
-		Event:       EventBeforeLLMCall,
-		AgentName:   agentName,
-		UserMessage: userMessage,
-		Iteration:   iteration,
-	}
+// Run executes all hooks subscribed to the given event.
+// For blocking events (before_*), it returns concatenated injected content.
+// For non-blocking events, it returns ("", nil) — errors are logged, not returned.
+func (r *Runner) Run(ctx context.Context, event string, agentName string, data map[string]any) (string, error) {
+	et := EventType(event)
+	payload := hookPayload{Event: et, AgentName: agentName, Data: data}
 
-	data, err := json.Marshal(payload)
+	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("marshal before_llm_call payload: %w", err)
+		if et.IsBlocking() {
+			return "", fmt.Errorf("marshal %s payload: %w", event, err)
+		}
+		r.logger.Warn("marshal external hook payload failed",
+			zap.String("event", event), zap.Error(err))
+		return "", nil
 	}
 
 	var parts []string
 	for _, h := range r.hooks {
-		if !h.subscribedTo(EventBeforeLLMCall) {
+		if !h.subscribedTo(et) {
 			continue
 		}
 
 		r.logger.Debug("running external hook",
-			zap.String("hook", h.Name), zap.String("event", string(EventBeforeLLMCall)))
+			zap.String("hook", h.Name), zap.String("event", event))
 		start := time.Now()
-		out, err := r.executeHook(ctx, h, data)
+		out, err := r.executeHook(ctx, h, encoded)
 		elapsed := time.Since(start)
 		if err != nil {
 			r.logger.Warn("external hook failed",
 				zap.String("hook", h.Name),
+				zap.String("event", event),
 				zap.Duration("elapsed", elapsed),
 				zap.Error(err))
 			continue
 		}
 
-		var result hookResult
-		if err := json.Unmarshal(out, &result); err != nil {
-			// Non-JSON output or empty — skip.
-			r.logger.Debug("external hook returned non-JSON output",
-				zap.String("hook", h.Name), zap.String("output", string(out)))
-			continue
-		}
-
-		if result.Content != "" {
-			r.logger.Debug("external hook injected context",
+		if et.IsBlocking() {
+			var result hookResult
+			if err := json.Unmarshal(out, &result); err != nil {
+				r.logger.Debug("external hook returned non-JSON output",
+					zap.String("hook", h.Name), zap.String("output", string(out)))
+				continue
+			}
+			if result.Content != "" {
+				r.logger.Debug("external hook injected context",
+					zap.String("hook", h.Name),
+					zap.Int("content_len", len(result.Content)),
+					zap.Duration("elapsed", elapsed))
+				parts = append(parts, result.Content)
+			}
+		} else {
+			r.logger.Debug("external hook completed",
 				zap.String("hook", h.Name),
-				zap.Int("content_len", len(result.Content)),
+				zap.String("event", event),
 				zap.Duration("elapsed", elapsed))
-			parts = append(parts, result.Content)
 		}
 	}
 
 	return strings.Join(parts, "\n"), nil
-}
-
-// AfterReset executes all hooks subscribed to after_reset.
-// Fire-and-forget: errors are logged, not returned.
-func (r *Runner) AfterReset(ctx context.Context, summary, agentName string) {
-	payload := afterResetPayload{
-		Event:     EventAfterReset,
-		AgentName: agentName,
-		Summary:   summary,
-	}
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		r.logger.Warn("marshal after_reset payload failed", zap.Error(err))
-		return
-	}
-
-	for _, h := range r.hooks {
-		if !h.subscribedTo(EventAfterReset) {
-			continue
-		}
-		r.logger.Debug("running external hook",
-			zap.String("hook", h.Name), zap.String("event", string(EventAfterReset)))
-		start := time.Now()
-		if _, err := r.executeHook(ctx, h, data); err != nil {
-			r.logger.Warn("external hook after_reset failed",
-				zap.String("hook", h.Name),
-				zap.Duration("elapsed", time.Since(start)),
-				zap.Error(err))
-		} else {
-			r.logger.Debug("external hook after_reset completed",
-				zap.String("hook", h.Name),
-				zap.Duration("elapsed", time.Since(start)))
-		}
-	}
 }
 
 // executeHook runs a single hook command with the given stdin data.

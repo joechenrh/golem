@@ -91,19 +91,21 @@ for f in "$SCRIPT_DIR"/plugins/*.tool.json; do
     echo "Installed tool manifest: $BASENAME"
 done
 
-# --- Step 3: Install context hook ---
+# --- Step 3: Install hooks (mem9-recall + mem9-save) ---
 
-if [ -n "$AGENT" ]; then
-    HOOK_DIR="$GOLEM_HOME/agents/$AGENT/hooks/mem9-context"
-else
-    HOOK_DIR="$GOLEM_HOME/hooks/mem9-context"
-fi
+for HOOK_NAME in mem9-recall mem9-save; do
+    if [ -n "$AGENT" ]; then
+        HOOK_DIR="$GOLEM_HOME/agents/$AGENT/hooks/$HOOK_NAME"
+    else
+        HOOK_DIR="$GOLEM_HOME/hooks/$HOOK_NAME"
+    fi
 
-mkdir -p "$HOOK_DIR"
-cp "$SCRIPT_DIR/hooks/mem9-context/HOOK.md" "$HOOK_DIR/"
-cp "$SCRIPT_DIR/hooks/mem9-context/handler.py" "$HOOK_DIR/"
-chmod +x "$HOOK_DIR/handler.py"
-echo "Installed hook: $HOOK_DIR"
+    mkdir -p "$HOOK_DIR"
+    cp "$SCRIPT_DIR/hooks/$HOOK_NAME/HOOK.md" "$HOOK_DIR/"
+    cp "$SCRIPT_DIR/hooks/$HOOK_NAME/handler.py" "$HOOK_DIR/"
+    chmod +x "$HOOK_DIR/handler.py"
+    echo "Installed hook: $HOOK_DIR"
+done
 
 # --- Step 4: Verify ---
 

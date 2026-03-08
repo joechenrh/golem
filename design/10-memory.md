@@ -80,14 +80,14 @@ Returns `"Memory updated (id: <id>)"` on success.
 
 Returns `"Memory deleted (id: <id>)"` on success.
 
-## 4. Context Hook
+## 4. Context Hooks
 
-The `mem9-context` hook handles two lifecycle events:
+Memory integration uses two focused hooks (split from the former `mem9-context`):
 
-- **before_llm_call**: Searches mem9 for memories relevant to the current user message and injects them as context.
-- **after_reset**: Stores the session summary in mem9 with `session-summary` tag for future recall.
+- **`mem9-recall`** (`before_llm_call`): Searches mem9 for memories relevant to the current user message and injects them as context.
+- **`mem9-save`** (`after_reset`): Stores the session summary in mem9 with `session-summary` tag for future recall.
 
-The hook is optional — memory tools work independently without it.
+Both hooks are optional — memory tools work independently without them.
 
 ## 5. Persona Memory Tool
 

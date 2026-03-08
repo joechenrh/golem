@@ -263,7 +263,9 @@ func (sm *SessionManager) Reset(channelID string) {
 				zap.String("channel_id", channelID), zap.Error(err))
 		}
 		if s.extHooks != nil && summary != "" {
-			s.extHooks.AfterReset(context.Background(), summary, sm.factory.AgentName)
+			s.extHooks.Run(context.Background(), "after_reset", sm.factory.AgentName, map[string]any{
+				"summary": summary,
+			})
 		}
 	}
 	if s.cancel != nil {

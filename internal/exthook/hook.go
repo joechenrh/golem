@@ -17,12 +17,21 @@ type EventType string
 
 const (
 	EventBeforeLLMCall EventType = "before_llm_call"
+	EventAfterLLMCall  EventType = "after_llm_call"
 	EventAfterReset    EventType = "after_reset"
+	EventUserMessage   EventType = "user_message"
 )
 
 var validEvents = map[EventType]bool{
 	EventBeforeLLMCall: true,
+	EventAfterLLMCall:  true,
 	EventAfterReset:    true,
+	EventUserMessage:   true,
+}
+
+// IsBlocking returns true for events that can inject content (before_* events).
+func (e EventType) IsBlocking() bool {
+	return strings.HasPrefix(string(e), "before_")
 }
 
 // HookDef represents a parsed HOOK.md definition.

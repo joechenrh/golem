@@ -35,7 +35,10 @@ func TestRunnerBeforeLLMCall(t *testing.T) {
 			Timeout: 5 * time.Second,
 		}}, logger)
 
-		result, err := runner.BeforeLLMCall(context.Background(), "agent", "hello", 0)
+		result, err := runner.Run(context.Background(), "before_llm_call", "agent", map[string]any{
+			"user_message": "hello",
+			"iteration":    0,
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -56,7 +59,10 @@ func TestRunnerBeforeLLMCall(t *testing.T) {
 			Timeout: 5 * time.Second,
 		}}, logger)
 
-		result, err := runner.BeforeLLMCall(context.Background(), "agent", "hello", 0)
+		result, err := runner.Run(context.Background(), "before_llm_call", "agent", map[string]any{
+			"user_message": "hello",
+			"iteration":    0,
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -76,7 +82,10 @@ func TestRunnerBeforeLLMCall(t *testing.T) {
 			{Name: "h2", Events: []EventType{EventBeforeLLMCall}, Command: cmd2, Dir: dir2, Timeout: 5 * time.Second},
 		}, logger)
 
-		result, err := runner.BeforeLLMCall(context.Background(), "agent", "hello", 0)
+		result, err := runner.Run(context.Background(), "before_llm_call", "agent", map[string]any{
+			"user_message": "hello",
+			"iteration":    0,
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -97,7 +106,10 @@ func TestRunnerBeforeLLMCall(t *testing.T) {
 			Timeout: 100 * time.Millisecond,
 		}}, logger)
 
-		result, err := runner.BeforeLLMCall(context.Background(), "agent", "hello", 0)
+		result, err := runner.Run(context.Background(), "before_llm_call", "agent", map[string]any{
+			"user_message": "hello",
+			"iteration":    0,
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -119,7 +131,10 @@ func TestRunnerBeforeLLMCall(t *testing.T) {
 			Timeout: 5 * time.Second,
 		}}, logger)
 
-		result, err := runner.BeforeLLMCall(context.Background(), "agent", "hello", 0)
+		result, err := runner.Run(context.Background(), "before_llm_call", "agent", map[string]any{
+			"user_message": "hello",
+			"iteration":    0,
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -132,7 +147,7 @@ func TestRunnerBeforeLLMCall(t *testing.T) {
 func TestRunnerAfterReset(t *testing.T) {
 	logger := zap.NewNop()
 
-	t.Run("receives summary", func(t *testing.T) {
+	t.Run("receives summary in unified envelope", func(t *testing.T) {
 		dir := t.TempDir()
 		outFile := filepath.Join(dir, "received.txt")
 		// Write stdin to a file so we can verify it.
@@ -146,17 +161,102 @@ func TestRunnerAfterReset(t *testing.T) {
 			Timeout: 5 * time.Second,
 		}}, logger)
 
-		runner.AfterReset(context.Background(), "test summary", "atlas")
+		runner.Run(context.Background(), "after_reset", "atlas", map[string]any{
+			"summary": "test summary",
+		})
 
 		data, err := os.ReadFile(outFile)
 		if err != nil {
 			t.Fatalf("reading output: %v", err)
 		}
-		if !strings.Contains(string(data), "test summary") {
-			t.Errorf("hook did not receive summary: %s", string(data))
+		got := string(data)
+		if !strings.Contains(got, `"test summary"`) {
+			t.Errorf("hook did not receive summary: %s", got)
 		}
-		if !strings.Contains(string(data), "after_reset") {
-			t.Errorf("hook did not receive event type: %s", string(data))
+		if !strings.Contains(got, `"after_reset"`) {
+			t.Errorf("hook did not receive event type: %s", got)
+		}
+		if !strings.Contains(got, `"atlas"`) {
+			t.Errorf("hook did not receive agent name: %s", got)
+		}
+		// Verify unified envelope: data should be nested under "data" key.
+		if !strings.Contains(got, `"data":{`) || !strings.Contains(got, `"data": {`) {
+			// Check for either compact or pretty JSON.
+			if !strings.Contains(got, `"data"`) {
+				t.Errorf("hook did not receive unified envelope with data key: %s", got)
+			}
+		}
+	})
+}
+
+func TestRunnerAfterLLMCall(t *testing.T) {
+	logger := zap.NewNop()
+
+	t.Run("fire and forget returns empty", func(t *testing.T) {
+		dir := t.TempDir()
+		cmd := writeHookScript(t, dir, `echo '{"content":"should be ignored"}'`)
+
+		runner := NewRunner([]*HookDef{{
+			Name:    "analytics",
+			Events:  []EventType{EventAfterLLMCall},
+			Command: cmd,
+			Dir:     dir,
+			Timeout: 5 * time.Second,
+		}}, logger)
+
+		result, err := runner.Run(context.Background(), "after_llm_call", "agent", map[string]any{
+			"finish_reason":     "stop",
+			"tool_call_count":   0,
+			"prompt_tokens":     100,
+			"completion_tokens": 50,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "" {
+			t.Errorf("result = %q, want empty (non-blocking event)", result)
+		}
+	})
+}
+
+func TestRunnerUserMessage(t *testing.T) {
+	logger := zap.NewNop()
+
+	t.Run("fire and forget returns empty", func(t *testing.T) {
+		dir := t.TempDir()
+		outFile := filepath.Join(dir, "received.txt")
+		cmd := writeHookScript(t, dir, `cat > `+outFile)
+
+		runner := NewRunner([]*HookDef{{
+			Name:    "audit",
+			Events:  []EventType{EventUserMessage},
+			Command: cmd,
+			Dir:     dir,
+			Timeout: 5 * time.Second,
+		}}, logger)
+
+		result, err := runner.Run(context.Background(), "user_message", "agent", map[string]any{
+			"text":       "hello world",
+			"channel_id": "lark:oc_123",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "" {
+			t.Errorf("result = %q, want empty (non-blocking event)", result)
+		}
+
+		// Verify the hook received the payload.
+		data, err := os.ReadFile(outFile)
+		if err != nil {
+			t.Fatalf("reading output: %v", err)
+		}
+		got := string(data)
+		if !strings.Contains(got, "hello world") {
+			t.Errorf("hook did not receive text: %s", got)
+		}
+		if !strings.Contains(got, "user_message") {
+			t.Errorf("hook did not receive event type: %s", got)
 		}
 	})
 }

@@ -80,8 +80,7 @@ const (
 // ExtHookRunner is satisfied by exthook.Runner.
 // Defined here as an interface to avoid a circular import.
 type ExtHookRunner interface {
-	BeforeLLMCall(ctx context.Context, agentName, userMessage string, iteration int) (string, error)
-	AfterReset(ctx context.Context, summary, agentName string)
+	Run(ctx context.Context, event string, agentName string, data map[string]any) (string, error)
 }
 
 // SetSkillReload configures periodic skill reload from the given directories.
@@ -216,6 +215,13 @@ func (s *Session) runReActLoop(
 				Type:    hooks.EventUserMessage,
 				Payload: map[string]any{"text": pendingMsg.Text, "channel_id": pendingMsg.ChannelID},
 			})
+			if s.extHooks != nil {
+				// TODO: consider making fire-and-forget hooks async (goroutine) to avoid blocking the agent loop.
+				s.extHooks.Run(ctx, "user_message", s.config.AgentName, map[string]any{
+					"text":       pendingMsg.Text,
+					"channel_id": pendingMsg.ChannelID,
+				})
+			}
 			pendingMsg = nil
 		}
 
@@ -307,7 +313,10 @@ func (s *Session) executeLLMCall(
 			}
 		}
 
-		injected, err := s.extHooks.BeforeLLMCall(ctx, s.config.AgentName, userText, iter)
+		injected, err := s.extHooks.Run(ctx, "before_llm_call", s.config.AgentName, map[string]any{
+			"user_message": userText,
+			"iteration":    iter,
+		})
 		if err != nil {
 			s.logger.Warn("external hook before_llm_call failed", zap.Error(err))
 		} else if injected != "" {
@@ -367,6 +376,15 @@ func (s *Session) executeLLMCall(
 			"turn_total_tokens": s.turnUsage.TotalTokens,
 		},
 	})
+	if s.extHooks != nil {
+		// TODO: consider making fire-and-forget hooks async (goroutine) to avoid blocking the agent loop.
+		s.extHooks.Run(ctx, "after_llm_call", s.config.AgentName, map[string]any{
+			"finish_reason":     resp.FinishReason,
+			"tool_call_count":   len(resp.ToolCalls),
+			"prompt_tokens":     resp.Usage.PromptTokens,
+			"completion_tokens": resp.Usage.CompletionTokens,
+		})
+	}
 
 	return resp, nil
 }

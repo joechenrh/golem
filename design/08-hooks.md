@@ -98,7 +98,60 @@ Writes a structured JSONL audit trail by appending one JSON object per line to a
 
 The `ts` field is `time.Now().UTC()` formatted as RFC 3339, `event` is the event type string, and `payload` is the event payload map (omitted when nil or empty). Writes are serialized with a `sync.Mutex`. The hook exposes a `Close()` method to flush and close the underlying file handle. It records every event type unconditionally, making the audit file a complete timeline of agent activity.
 
-## 9. Current Gaps
+## 9. External Hooks
+
+Source: `internal/exthook/`
+
+External hooks are user-defined shell commands that run at lifecycle points, exchanging data via a JSON protocol on stdin/stdout. They are separate from the internal hook bus (`internal/hooks/`) and designed for extensibility without Go code changes.
+
+### 9.1 Event Types
+
+| Event | Blocking? | Use case |
+|-------|-----------|----------|
+| `before_llm_call` | Yes (injects content) | Context injection (e.g. memory recall) |
+| `after_llm_call` | No | Token/cost monitoring, analytics |
+| `after_reset` | No | Save summaries to external stores |
+| `user_message` | No | Audit, external routing |
+
+Blocking is determined by `strings.HasPrefix(event, "before_")` — the same convention as the internal hook bus.
+
+### 9.2 Protocol
+
+All events use a unified JSON envelope on stdin:
+
+```json
+{"event": "before_llm_call", "agent_name": "atlas", "data": {"user_message": "hello", "iteration": 0}}
+```
+
+Hook response on stdout (only meaningful for blocking events):
+
+```json
+{"content": "injected context text"}
+```
+
+Non-blocking events ignore the response content.
+
+### 9.3 Runner API
+
+`Runner.Run(ctx, event, agentName, data)` is the single entry point. It iterates hooks subscribed to the event, executes each with the JSON payload on stdin, and for blocking events, concatenates `content` fields from all hook responses.
+
+### 9.4 Hook Definition (HOOK.md)
+
+Each hook lives in a directory with a `HOOK.md` frontmatter file:
+
+```yaml
+---
+name: my-hook
+description: What this hook does
+events: [before_llm_call, after_reset]
+command: ./handler.py
+timeout: 15s
+---
+```
+
+Hook discovery scans `~/.golem/hooks/` (global) and `~/.golem/agents/<name>/hooks/` (per-agent).
+
+## 10. Current Gaps
 
 * **No hook removal / deregistration.** Once registered, a hook stays for the lifetime of the bus. There is no `Unregister` or priority/ordering API.
 * **No per-event filtering at registration time.** Every hook receives every event and must filter internally. A subscription map (`EventType -> []Hook`) would reduce dispatch overhead.

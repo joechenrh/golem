@@ -23,10 +23,12 @@ for f in configs/mem9/plugins/*.tool.json; do
     sed "s|__GOLEM_HOME__|$GOLEM_HOME|g" "$f" > "$GOLEM_HOME/plugins/$(basename "$f")"
 done
 
-# 4. Install context hook (optional)
-mkdir -p "$GOLEM_HOME/hooks/mem9-context"
-cp configs/mem9/hooks/mem9-context/* "$GOLEM_HOME/hooks/mem9-context/"
-chmod +x "$GOLEM_HOME/hooks/mem9-context/handler.py"
+# 4. Install hooks (optional)
+for hook in mem9-recall mem9-save; do
+    mkdir -p "$GOLEM_HOME/hooks/$hook"
+    cp configs/mem9/hooks/$hook/* "$GOLEM_HOME/hooks/$hook/"
+    chmod +x "$GOLEM_HOME/hooks/$hook/handler.py"
+done
 
 # 5. Restart golem
 ```
@@ -37,7 +39,8 @@ chmod +x "$GOLEM_HOME/hooks/mem9-context/handler.py"
 |-----------|-------|---------|
 | **Handler** | `mem9_handler.py` | Python3 script with JSON-RPC tool server + hook handler |
 | **Tools** | `plugins/*.tool.json` | 5 tool manifests (store, search, get, update, delete) |
-| **Hook** | `hooks/mem9-context/` | Injects relevant memories before LLM calls |
+| **Hook** | `hooks/mem9-recall/` | Injects relevant memories before LLM calls |
+| **Hook** | `hooks/mem9-save/` | Saves session summaries to mem9 on reset |
 | **Skill** | `skills/mem9/SKILL.md` | Interactive setup guide (invoke with `,skills` → `skill_mem9`) |
 
 ## Environment Variables

@@ -204,9 +204,10 @@ def run_hook():
         return
 
     event_type = event.get("event", "")
+    data = event.get("data", {})
 
     if event_type == "before_llm_call":
-        user_msg = event.get("user_message", "")
+        user_msg = data.get("user_message", "")
         if not user_msg:
             print(json.dumps({"content": ""}))
             return
@@ -227,7 +228,7 @@ def run_hook():
             print(json.dumps({"content": ""}))
 
     elif event_type == "after_reset":
-        summary = event.get("summary", "")
+        summary = data.get("summary", "")
         if not summary:
             print(json.dumps({"content": ""}))
             return
