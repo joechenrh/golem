@@ -597,10 +597,7 @@ func TestBuildSystemPromptPersona(t *testing.T) {
 		t.Errorf("prompt missing built-in tool-use instructions")
 	}
 
-	// Layer 3: Knowledge — Persona Files section.
-	if !strings.Contains(prompt, "Persona Files") {
-		t.Errorf("prompt missing 'Persona Files' section")
-	}
+	// Layer 3: Knowledge — persona files reference.
 	if !strings.Contains(prompt, "persona_self") {
 		t.Errorf("prompt missing persona_self tool reference")
 	}

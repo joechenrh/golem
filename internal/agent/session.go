@@ -84,6 +84,12 @@ const (
 	maxSummaryMessages = 80
 )
 
+// toolUseInstruction is the shared tool-use guidance included in all system prompts.
+const toolUseInstruction = "When you need to perform actions, use the available tools immediately. " +
+	"You may briefly explain your reasoning alongside tool calls, but always " +
+	"include the tool calls in the same response — never respond with only a " +
+	"plan or description of what you intend to do.\n"
+
 // ExtHookRunner is satisfied by exthook.Runner.
 // Defined here as an interface to avoid a circular import.
 type ExtHookRunner interface {
@@ -685,25 +691,13 @@ func (s *Session) buildPersonaPrompt() string {
 		b.WriteByte('\n')
 	}
 	b.WriteString("\n## Tool Use\n\n")
-	b.WriteString("When you need to perform actions, use the available tools immediately. ")
-	b.WriteString("You may briefly explain your reasoning alongside tool calls, but always ")
-	b.WriteString("include the tool calls in the same response — never respond with only a ")
-	b.WriteString("plan or description of what you intend to do.\n")
+	b.WriteString(toolUseInstruction)
 
 	// --- Layer 3: Knowledge ---
 	b.WriteString("\n# Knowledge\n\n")
-	b.WriteString("## Persona Files\n\n")
-	b.WriteString("You can read and modify your own persona files using the persona_self tool:\n\n")
-	b.WriteString("- **SOUL.md** (≤100 lines): Your fundamental identity — name, role, mission. ")
-	b.WriteString("Modify only when the user explicitly redefines who you are (very rare).\n")
-	b.WriteString("- **AGENTS.md** (≤150 lines): Your behavioral rules and constraints. ")
-	b.WriteString("Update when behavioral rules need evolving based on experience (somewhat rare).\n")
-	b.WriteString("- **MEMORY.md** (≤200 lines): Your curated knowledge AND user preferences. ")
-	b.WriteString("Update regularly for communication style, tone preferences, learned patterns, stable facts.\n\n")
-	b.WriteString("SOUL.md and AGENTS.md are backed up to .bak before overwriting.\n\n")
-	b.WriteString("- **Shared memory** (optional): If memory tools (memory_store, memory_search) are available, ")
-	b.WriteString("use them for facts, research results, and raw material that any agent can retrieve.\n\n")
-	b.WriteString("Principle: Shared memory is the warehouse; MEMORY.md is the distilled memo.\n")
+	b.WriteString("Use the persona_self tool to read/update your persona files: ")
+	b.WriteString("SOUL.md (identity), AGENTS.md (rules), MEMORY.md (knowledge & preferences). ")
+	b.WriteString("Update MEMORY.md regularly for learned patterns and user preferences.\n")
 
 	if memory != "" {
 		b.WriteString("\n## Current Memory\n\n")
@@ -728,10 +722,8 @@ func (s *Session) buildFlatPrompt() string {
 	fmt.Fprintf(&b, "Working directory: %s\n", s.config.WorkspaceDir)
 	fmt.Fprintf(&b, "Current time: %s\n\n", time.Now().Format(time.RFC3339))
 
-	b.WriteString("When you need to perform actions, use the available tools immediately. ")
-	b.WriteString("You may briefly explain your reasoning alongside tool calls, but always ")
-	b.WriteString("include the tool calls in the same response — never respond with only a ")
-	b.WriteString("plan or description of what you intend to do.\n\n")
+	b.WriteString(toolUseInstruction)
+	b.WriteByte('\n')
 
 	switch {
 	case s.config.SystemPrompt != "":
