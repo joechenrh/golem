@@ -28,6 +28,8 @@ type SessionFactory struct {
 	AgentName       string
 	MetricsHook     *hooks.MetricsHook // shared across all sessions for this agent
 	AuditDir        string             // directory for audit log files (empty to skip)
+	SkillDirs       []string           // directories for periodic skill reload
+	ExtHookRunner   ExtHookRunner      // external hooks runner (nil if none)
 }
 
 // SessionManager maintains isolated Session instances keyed by channel ID
@@ -145,6 +147,8 @@ func (sm *SessionManager) createSession(
 	sess.cancel = cancel
 	sess.lastAccess = time.Now()
 	sess.TapePath = tapePath
+	sess.SetSkillReload(sm.factory.SkillDirs, sm.factory.Config.SkillReloadInterval)
+	sess.SetExtHooks(sm.factory.ExtHookRunner)
 
 	return sess, nil
 }
@@ -176,6 +180,8 @@ func (sm *SessionManager) createSessionFromTape(
 
 	sess := NewSession(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger)
 	sess.TapePath = tapePath
+	sess.SetSkillReload(sm.factory.SkillDirs, sm.factory.Config.SkillReloadInterval)
+	sess.SetExtHooks(sm.factory.ExtHookRunner)
 
 	return sess, nil
 }
@@ -251,9 +257,13 @@ func (sm *SessionManager) Reset(channelID string) {
 
 	// Summarize outside the lock (makes an LLM call).
 	if s.ctx != nil {
-		if err := s.Summarize(s.ctx); err != nil {
+		summary, err := s.Summarize(s.ctx)
+		if err != nil {
 			sm.logger.Warn("failed to summarize before reset",
 				zap.String("channel_id", channelID), zap.Error(err))
+		}
+		if s.extHooks != nil && summary != "" {
+			s.extHooks.AfterReset(context.Background(), summary, sm.factory.AgentName)
 		}
 	}
 	if s.cancel != nil {
@@ -313,7 +323,7 @@ func (sm *SessionManager) EvictIdle(maxAge time.Duration) int {
 	// call that can take seconds.
 	for _, e := range toEvict {
 		if e.sess.ctx != nil {
-			if err := e.sess.Summarize(e.sess.ctx); err != nil {
+			if _, err := e.sess.Summarize(e.sess.ctx); err != nil {
 				sm.logger.Warn("failed to summarize before eviction",
 					zap.String("channel_id", e.id), zap.Error(err))
 			}

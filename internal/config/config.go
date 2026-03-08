@@ -113,11 +113,11 @@ type Config struct {
 	TapeDir      string // directory for tape JSONL files (default: ~/.golem/tapes)
 	WorkspaceDir string // agent workspace root (default: CWD for CLI, ~/.golem/agents/<name>/workspace for background)
 	// Channels
-	TelegramToken   string
-	TelegramACL     []int64
-	LarkAppID       string
-	LarkAppSecret   string
-	LarkVerifyToken string
+	TelegramToken    string
+	TelegramACL      []int64
+	LarkAppID        string
+	LarkAppSecret    string
+	LarkVerifyToken  string
 	LarkCallbackPort string // HTTP port for Lark card action callbacks (e.g. "9876", empty = disabled)
 
 	// Memory (mnemos direct mode — TiDB Cloud Serverless)
@@ -131,6 +131,9 @@ type Config struct {
 	// Sessions
 	MaxSessions     int           // max concurrent per-chat sessions (default: 100)
 	SessionIdleTime time.Duration // evict sessions idle longer than this (default: 24h)
+
+	// Skills
+	SkillReloadInterval time.Duration // re-discover skills from disk at this interval (default: 5m, 0=disabled)
 
 	// Rate limiting
 	LLMRateLimit int // max LLM API requests per second (default: 10, 0=unlimited)
@@ -193,23 +196,24 @@ func Load(
 		WebSearchBackend: g.str("GOLEM_WEB_SEARCH_BACKEND", "bing"),
 
 		// Agent tier: behavior, storage, logging.
-		MaxToolIter:     a.integer("GOLEM_MAX_TOOL_ITER", 15),
-		MaxOutputTokens: a.integer("GOLEM_MAX_OUTPUT_TOKENS", 4096),
-		Temperature:     a.optFloat64("GOLEM_TEMPERATURE"),
-		ShellTimeout:    a.duration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
-		ContextStrategy: a.str("GOLEM_CONTEXT_STRATEGY", "masking"),
-		Executor:        a.str("GOLEM_EXECUTOR", "local"),
-		TapeDir:         expandHome(a.str("GOLEM_TAPE_DIR", "~/.golem/tapes")),
-		WorkspaceDir:    expandHome(a.str("GOLEM_WORKSPACE_DIR", "")),
-		LogLevel:        a.str("GOLEM_LOG_LEVEL", "info"),
-		MaxSessions:     a.integer("GOLEM_MAX_SESSIONS", 100),
-		SessionIdleTime: a.duration("GOLEM_SESSION_IDLE_TIME", 24*time.Hour),
+		MaxToolIter:         a.integer("GOLEM_MAX_TOOL_ITER", 15),
+		MaxOutputTokens:     a.integer("GOLEM_MAX_OUTPUT_TOKENS", 4096),
+		Temperature:         a.optFloat64("GOLEM_TEMPERATURE"),
+		ShellTimeout:        a.duration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
+		ContextStrategy:     a.str("GOLEM_CONTEXT_STRATEGY", "masking"),
+		Executor:            a.str("GOLEM_EXECUTOR", "local"),
+		TapeDir:             expandHome(a.str("GOLEM_TAPE_DIR", "~/.golem/tapes")),
+		WorkspaceDir:        expandHome(a.str("GOLEM_WORKSPACE_DIR", "")),
+		LogLevel:            a.str("GOLEM_LOG_LEVEL", "info"),
+		MaxSessions:         a.integer("GOLEM_MAX_SESSIONS", 100),
+		SessionIdleTime:     a.duration("GOLEM_SESSION_IDLE_TIME", 24*time.Hour),
+		SkillReloadInterval: a.duration("GOLEM_SKILL_RELOAD_INTERVAL", 5*time.Minute),
 
 		// Agent tier: channels.
-		TelegramToken:   a.str("TELEGRAM_BOT_TOKEN", ""),
-		TelegramACL:     a.int64List("TELEGRAM_ALLOW_FROM"),
-		LarkAppID:       a.str("LARK_APP_ID", ""),
-		LarkAppSecret:   a.str("LARK_APP_SECRET", ""),
+		TelegramToken:    a.str("TELEGRAM_BOT_TOKEN", ""),
+		TelegramACL:      a.int64List("TELEGRAM_ALLOW_FROM"),
+		LarkAppID:        a.str("LARK_APP_ID", ""),
+		LarkAppSecret:    a.str("LARK_APP_SECRET", ""),
 		LarkVerifyToken:  a.str("LARK_VERIFY_TOKEN", ""),
 		LarkCallbackPort: a.str("LARK_CALLBACK_PORT", ""),
 

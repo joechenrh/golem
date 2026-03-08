@@ -202,6 +202,28 @@ func (r *Registry) DiscoverSkills(dir string) error {
 	return nil
 }
 
+// ReloadSkills re-discovers skills from the given directories and registers
+// any new or changed skills. Returns the count of added/updated skills.
+// Deleted skills are NOT removed to avoid breaking mid-conversation references.
+func (r *Registry) ReloadSkills(dirs []string) int {
+	updated := 0
+	for _, dir := range dirs {
+		skills, err := discoverSkills(dir)
+		if err != nil {
+			continue
+		}
+		for _, s := range skills {
+			existing := r.tools[s.Name()]
+			if existing != nil && existing.FullDescription() == s.FullDescription() {
+				continue // unchanged
+			}
+			r.Register(s)
+			updated++
+		}
+	}
+	return updated
+}
+
 // List returns a formatted string listing all registered tools.
 func (r *Registry) List() string {
 	if len(r.order) == 0 {

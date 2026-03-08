@@ -44,6 +44,14 @@ type Session struct {
 	// Set by the wiring layer when a MetricsHook is registered.
 	MetricsSummary func() string
 
+	// Skill reload: periodically re-discover skills from disk.
+	skillDirs           []string
+	lastSkillReload     time.Time
+	skillReloadInterval time.Duration
+
+	// External hooks runner (nil if no hooks configured).
+	extHooks ExtHookRunner
+
 	// Lifecycle fields (managed by SessionManager for remote chats;
 	// unused for the default CLI session).
 	ctx        context.Context
@@ -68,6 +76,38 @@ const (
 	// max messages to include in summarization
 	maxSummaryMessages = 50
 )
+
+// ExtHookRunner is satisfied by exthook.Runner.
+// Defined here as an interface to avoid a circular import.
+type ExtHookRunner interface {
+	BeforeLLMCall(ctx context.Context, agentName, userMessage string, iteration int) (string, error)
+	AfterReset(ctx context.Context, summary, agentName string)
+}
+
+// SetSkillReload configures periodic skill reload from the given directories.
+func (s *Session) SetSkillReload(dirs []string, interval time.Duration) {
+	s.skillDirs = dirs
+	s.skillReloadInterval = interval
+}
+
+// SetExtHooks sets the external hook runner for this session.
+func (s *Session) SetExtHooks(runner ExtHookRunner) {
+	s.extHooks = runner
+}
+
+// maybeReloadSkills re-discovers skills from disk if enough time has elapsed.
+func (s *Session) maybeReloadSkills() {
+	if s.skillReloadInterval <= 0 || len(s.skillDirs) == 0 {
+		return
+	}
+	if time.Since(s.lastSkillReload) < s.skillReloadInterval {
+		return
+	}
+	s.lastSkillReload = time.Now()
+	if n := s.tools.ReloadSkills(s.skillDirs); n > 0 {
+		s.logger.Info("reloaded skills from disk", zap.Int("updated", n))
+	}
+}
 
 // NewSession creates a Session with all dependencies wired in.
 func NewSession(
@@ -140,6 +180,8 @@ func (s *Session) runReActLoop(
 	tokenCh chan<- string,
 	pendingMsg *channel.IncomingMessage,
 ) (string, error) {
+	s.maybeReloadSkills()
+
 	_, modelName := llm.ParseModelProvider(s.config.Model)
 	maxTokens := ctxmgr.ModelContextWindow(modelName)
 
@@ -249,6 +291,31 @@ func (s *Session) executeLLMCall(
 			})
 		}
 		messages = append(messages, userMsg)
+	}
+
+	// Run external hooks for context injection.
+	if s.extHooks != nil {
+		var userText string
+		if pendingMsg != nil {
+			userText = pendingMsg.Text
+		} else {
+			for i := len(messages) - 1; i >= 0; i-- {
+				if messages[i].Role == llm.RoleUser {
+					userText = messages[i].Content
+					break
+				}
+			}
+		}
+
+		injected, err := s.extHooks.BeforeLLMCall(ctx, s.config.AgentName, userText, iter)
+		if err != nil {
+			s.logger.Warn("external hook before_llm_call failed", zap.Error(err))
+		} else if injected != "" {
+			messages = append(messages, llm.Message{
+				Role:    llm.RoleUser,
+				Content: "[External context]\n" + injected,
+			})
+		}
 	}
 
 	systemPrompt := s.buildSystemPrompt()
@@ -687,15 +754,16 @@ func (s *Session) StatusInfo() string {
 // Summarize generates a summary of the current conversation and appends it
 // to the tape as a KindSummary entry. This is called before tape rotation or
 // session teardown so that restored sessions carry forward context.
-func (s *Session) Summarize(ctx context.Context) error {
+// Returns the summary text and any error.
+func (s *Session) Summarize(ctx context.Context) (string, error) {
 	s.logger.Debug("summarization starting")
 	entries, err := s.tape.Entries()
 	if err != nil {
-		return fmt.Errorf("summarize: reading tape: %w", err)
+		return "", fmt.Errorf("summarize: reading tape: %w", err)
 	}
 	msgs := tape.BuildMessages(entries)
 	if len(msgs) < 2 {
-		return nil // not enough conversation to summarize
+		return "", nil // not enough conversation to summarize
 	}
 
 	// Limit to the last N messages to keep the summarization call small.
@@ -719,16 +787,17 @@ func (s *Session) Summarize(ctx context.Context) error {
 		MaxTokens: 1024,
 	})
 	if err != nil {
-		return fmt.Errorf("summarize: LLM call: %w", err)
+		return "", fmt.Errorf("summarize: LLM call: %w", err)
 	}
 
 	s.logger.Debug("summarization complete",
 		zap.Int("summary_len", len(resp.Content)))
 
-	return s.tape.Append(tape.TapeEntry{
+	err = s.tape.Append(tape.TapeEntry{
 		Kind: tape.KindSummary,
 		Payload: tape.MarshalPayload(map[string]string{
 			"summary": resp.Content,
 		}),
 	})
+	return resp.Content, err
 }
