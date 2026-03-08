@@ -623,10 +623,9 @@ func (s *Session) buildPersonaPrompt() string {
 	b.WriteString("- **MEMORY.md** (≤200 lines): Your curated, distilled knowledge. ")
 	b.WriteString("Update regularly for learned preferences, hard-won lessons, stable patterns.\n\n")
 	b.WriteString("SOUL.md and AGENTS.md are backed up to .bak before overwriting.\n\n")
-	b.WriteString("- **mnemos** (shared): Cross-agent long-term memory store. Use it for facts, ")
-	b.WriteString("research results, contextual details, and raw material that any agent can retrieve. ")
-	b.WriteString("Use memory_store / memory_recall tools.\n\n")
-	b.WriteString("Principle: mnemos is the warehouse; MEMORY.md is the distilled memo.\n")
+	b.WriteString("- **Shared memory** (optional): If memory tools (memory_store, memory_search) are available, ")
+	b.WriteString("use them for facts, research results, and raw material that any agent can retrieve.\n\n")
+	b.WriteString("Principle: Shared memory is the warehouse; MEMORY.md is the distilled memo.\n")
 
 	if memory != "" {
 		b.WriteString("\n## Current Memory\n\n")

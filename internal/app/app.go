@@ -27,7 +27,7 @@ import (
 	"github.com/joechenrh/golem/internal/fs"
 	"github.com/joechenrh/golem/internal/hooks"
 	"github.com/joechenrh/golem/internal/llm"
-	"github.com/joechenrh/golem/internal/memory"
+
 	"github.com/joechenrh/golem/internal/middleware"
 	"github.com/joechenrh/golem/internal/redact"
 	"github.com/joechenrh/golem/internal/scheduler"
@@ -650,19 +650,6 @@ func BuildToolRegistry(
 		registry.Expand("lark_read_doc")
 		registry.Expand("lark_write_doc")
 		registry.Expand("chat_history")
-	}
-
-	// Memory tools (mnemos direct mode).
-	if cfg.MnemosDBHost != "" {
-		mnemosClient := memory.NewClient(
-			&http.Client{Timeout: 30 * time.Second},
-			cfg.MnemosDBHost, cfg.MnemosDBUser, cfg.MnemosDBPass,
-			cfg.MnemosDBName, cfg.MnemosAutoEmbedModel, cfg.MnemosAutoEmbedDims,
-		)
-		registry.RegisterAll(
-			builtin.NewMemoryStoreTool(mnemosClient),
-			builtin.NewMemoryRecallTool(mnemosClient),
-		)
 	}
 
 	// Persona self-edit tool (only when persona is configured).

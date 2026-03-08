@@ -120,14 +120,6 @@ type Config struct {
 	LarkVerifyToken  string
 	LarkCallbackPort string // HTTP port for Lark card action callbacks (e.g. "9876", empty = disabled)
 
-	// Memory (mnemos direct mode — TiDB Cloud Serverless)
-	MnemosDBHost         string // TiDB gateway host (e.g. gateway01.us-east-1.prod.aws.tidbcloud.com)
-	MnemosDBUser         string // TiDB username
-	MnemosDBPass         string // TiDB password
-	MnemosDBName         string // database name (default: "mnemos")
-	MnemosAutoEmbedModel string // auto-embed model (e.g. "tidbcloud_free/amazon/titan-embed-text-v2")
-	MnemosAutoEmbedDims  int    // auto-embed dimensions (default: 1024)
-
 	// Sessions
 	MaxSessions     int           // max concurrent per-chat sessions (default: 100)
 	SessionIdleTime time.Duration // evict sessions idle longer than this (default: 24h)
@@ -216,14 +208,6 @@ func Load(
 		LarkAppSecret:    a.str("LARK_APP_SECRET", ""),
 		LarkVerifyToken:  a.str("LARK_VERIFY_TOKEN", ""),
 		LarkCallbackPort: a.str("LARK_CALLBACK_PORT", ""),
-
-		// Agent tier: memory (mnemos direct mode).
-		MnemosDBHost:         a.str("MNEMO_DB_HOST", ""),
-		MnemosDBUser:         a.str("MNEMO_DB_USER", ""),
-		MnemosDBPass:         a.str("MNEMO_DB_PASS", ""),
-		MnemosDBName:         a.str("MNEMO_DB_NAME", "mnemos"),
-		MnemosAutoEmbedModel: a.str("MNEMO_AUTO_EMBED_MODEL", ""),
-		MnemosAutoEmbedDims:  a.integer("MNEMO_AUTO_EMBED_DIMS", 1024),
 	}
 
 	// Tool access control.
