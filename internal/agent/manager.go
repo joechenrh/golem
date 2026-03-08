@@ -106,6 +106,37 @@ func (sm *SessionManager) GetOrCreate(
 	return sess, nil
 }
 
+// newContextStrategy creates a context strategy and wires HybridStrategy
+// fields (LLM client, model, OnDrop callback) when applicable.
+func (sm *SessionManager) newContextStrategy() (ctxmgr.ContextStrategy, error) {
+	strategy, err := ctxmgr.NewContextStrategy(sm.factory.ContextStrategy)
+	if err != nil {
+		return nil, err
+	}
+	hs, ok := strategy.(*ctxmgr.HybridStrategy)
+	if !ok {
+		return strategy, nil
+	}
+	_, modelName := llm.ParseModelProvider(sm.factory.Config.Model)
+	hs.LLM = sm.factory.LLMClient
+	hs.Model = modelName
+	if sm.factory.ExtHookRunner != nil {
+		agentName := sm.factory.AgentName
+		runner := sm.factory.ExtHookRunner
+		hs.OnDrop = func(ctx context.Context, dropped []llm.Message) {
+			var sb strings.Builder
+			for _, m := range dropped {
+				fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, m.Content)
+			}
+			runner.Run(ctx, "context_dropped", agentName, map[string]any{
+				"dropped_text":  sb.String(),
+				"dropped_count": len(dropped),
+			})
+		}
+	}
+	return strategy, nil
+}
+
 // createSession builds a new Session with a fresh tape and tool registry.
 func (sm *SessionManager) createSession(
 	channelID string,
@@ -127,30 +158,9 @@ func (sm *SessionManager) createSession(
 		return nil, fmt.Errorf("creating tape: %w", err)
 	}
 
-	ctxStrategy, err := ctxmgr.NewContextStrategy(sm.factory.ContextStrategy)
+	ctxStrategy, err := sm.newContextStrategy()
 	if err != nil {
 		return nil, fmt.Errorf("context strategy: %w", err)
-	}
-
-	// Wire LLM client into HybridStrategy for summarization + OnDrop.
-	if hs, ok := ctxStrategy.(*ctxmgr.HybridStrategy); ok {
-		_, modelName := llm.ParseModelProvider(cfg.Model)
-		hs.LLM = sm.factory.LLMClient
-		hs.Model = modelName
-		if sm.factory.ExtHookRunner != nil {
-			agentName := sm.factory.AgentName
-			runner := sm.factory.ExtHookRunner
-			hs.OnDrop = func(ctx context.Context, dropped []llm.Message) {
-				var sb strings.Builder
-				for _, m := range dropped {
-					fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, m.Content)
-				}
-				runner.Run(ctx, "context_dropped", agentName, map[string]any{
-					"dropped_text":  sb.String(),
-					"dropped_count": len(dropped),
-				})
-			}
-		}
 	}
 
 	auditPath := ""
@@ -190,37 +200,14 @@ func (sm *SessionManager) createSession(
 func (sm *SessionManager) createSessionFromTape(
 	tapePath string,
 ) (*Session, error) {
-	cfg := sm.factory.Config
-
 	tapeStore, err := tape.NewFileStore(tapePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening tape: %w", err)
 	}
 
-	ctxStrategy, err := ctxmgr.NewContextStrategy(sm.factory.ContextStrategy)
+	ctxStrategy, err := sm.newContextStrategy()
 	if err != nil {
 		return nil, fmt.Errorf("context strategy: %w", err)
-	}
-
-	// Wire LLM client into HybridStrategy for summarization + OnDrop.
-	if hs, ok := ctxStrategy.(*ctxmgr.HybridStrategy); ok {
-		_, modelName := llm.ParseModelProvider(cfg.Model)
-		hs.LLM = sm.factory.LLMClient
-		hs.Model = modelName
-		if sm.factory.ExtHookRunner != nil {
-			agentName := sm.factory.AgentName
-			runner := sm.factory.ExtHookRunner
-			hs.OnDrop = func(ctx context.Context, dropped []llm.Message) {
-				var sb strings.Builder
-				for _, m := range dropped {
-					fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, m.Content)
-				}
-				runner.Run(ctx, "context_dropped", agentName, map[string]any{
-					"dropped_text":  sb.String(),
-					"dropped_count": len(dropped),
-				})
-			}
-		}
 	}
 
 	auditPath := ""
@@ -232,7 +219,7 @@ func (sm *SessionManager) createSessionFromTape(
 
 	registry := sm.factory.ToolFactory()
 
-	sess := NewSession(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger)
+	sess := NewSession(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, sm.factory.Config, sm.logger)
 	sess.TapePath = tapePath
 	sess.SetSkillReload(sm.factory.SkillDirs, sm.factory.Config.SkillReloadInterval)
 	sess.SetExtHooks(sm.factory.ExtHookRunner)
