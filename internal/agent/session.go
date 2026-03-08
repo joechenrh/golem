@@ -200,7 +200,7 @@ func (s *Session) runReActLoop(
 		// save context window space in long multi-step chains.
 		s.tools.ShrinkUnused(iter, shrinkAfterIters)
 
-		resp, err := s.executeLLMCall(ctx, modelName, maxTokens, iter, stream, tokenCh, pendingMsg)
+		resp, err := s.executeLLMCall(ctx, modelName, maxTokens, iter, stream, tokenCh, pendingMsg, emptyRetries > 0)
 		if err != nil {
 			return "", err
 		}
@@ -276,11 +276,14 @@ func (s *Session) runReActLoop(
 // If pendingMsg is non-nil, its text is appended to the context as a user
 // message without persisting to the tape, so that a failed API call
 // does not leave a dangling tape entry.
+// When skipHooks is true, external before_llm_call hooks are skipped
+// (used during empty-response retries where the context hasn't changed).
 func (s *Session) executeLLMCall(
 	ctx context.Context, modelName string,
 	maxTokens, iter int, stream bool,
 	tokenCh chan<- string,
 	pendingMsg *channel.IncomingMessage,
+	skipHooks bool,
 ) (*llm.ChatResponse, error) {
 	entries, err := s.tape.Entries()
 	if err != nil {
@@ -310,8 +313,8 @@ func (s *Session) executeLLMCall(
 		messages = append(messages, userMsg)
 	}
 
-	// Run external hooks for context injection.
-	if s.extHooks != nil {
+	// Run external hooks for context injection (skipped during retries).
+	if s.extHooks != nil && !skipHooks {
 		var userText string
 		if pendingMsg != nil {
 			userText = pendingMsg.Text
