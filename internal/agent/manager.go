@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,26 +69,37 @@ func (sm *SessionManager) GetOrCreate(
 	channelID string,
 ) (*Session, error) {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	if s, ok := sm.sessions[channelID]; ok {
 		s.lastAccess = time.Now()
+		sm.mu.Unlock()
 		sm.logger.Debug("session cache hit", zap.String("channel_id", channelID))
 		return s, nil
 	}
 
 	// Enforce max sessions cap by evicting the oldest idle session.
+	// Collect the evicted session under the lock, then summarize outside.
 	maxSessions := sm.factory.Config.MaxSessions
+	var evicted *Session
+	var evictedID string
 	if maxSessions > 0 && len(sm.sessions) >= maxSessions {
-		sm.evictOldestLocked()
+		evictedID, evicted = sm.evictOldestLocked()
 	}
 
 	sess, err := sm.createSession(channelID)
 	if err != nil {
+		sm.mu.Unlock()
 		return nil, fmt.Errorf("creating session for %q: %w", channelID, err)
 	}
 
 	sm.sessions[channelID] = sess
+	sm.mu.Unlock()
+
+	// Summarize evicted session outside the lock (LLM call can be slow).
+	if evicted != nil {
+		sm.summarizeAndHook(evictedID, evicted)
+	}
+
 	sm.logger.Info("created new session",
 		zap.String("channel_id", channelID), zap.String("tape", sess.TapePath))
 
@@ -118,6 +130,27 @@ func (sm *SessionManager) createSession(
 	ctxStrategy, err := ctxmgr.NewContextStrategy(sm.factory.ContextStrategy)
 	if err != nil {
 		return nil, fmt.Errorf("context strategy: %w", err)
+	}
+
+	// Wire LLM client into HybridStrategy for summarization + OnDrop.
+	if hs, ok := ctxStrategy.(*ctxmgr.HybridStrategy); ok {
+		_, modelName := llm.ParseModelProvider(cfg.Model)
+		hs.LLM = sm.factory.LLMClient
+		hs.Model = modelName
+		if sm.factory.ExtHookRunner != nil {
+			agentName := sm.factory.AgentName
+			runner := sm.factory.ExtHookRunner
+			hs.OnDrop = func(ctx context.Context, dropped []llm.Message) {
+				var sb strings.Builder
+				for _, m := range dropped {
+					fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, m.Content)
+				}
+				runner.Run(ctx, "context_dropped", agentName, map[string]any{
+					"dropped_text":  sb.String(),
+					"dropped_count": len(dropped),
+				})
+			}
+		}
 	}
 
 	auditPath := ""
@@ -167,6 +200,27 @@ func (sm *SessionManager) createSessionFromTape(
 	ctxStrategy, err := ctxmgr.NewContextStrategy(sm.factory.ContextStrategy)
 	if err != nil {
 		return nil, fmt.Errorf("context strategy: %w", err)
+	}
+
+	// Wire LLM client into HybridStrategy for summarization + OnDrop.
+	if hs, ok := ctxStrategy.(*ctxmgr.HybridStrategy); ok {
+		_, modelName := llm.ParseModelProvider(cfg.Model)
+		hs.LLM = sm.factory.LLMClient
+		hs.Model = modelName
+		if sm.factory.ExtHookRunner != nil {
+			agentName := sm.factory.AgentName
+			runner := sm.factory.ExtHookRunner
+			hs.OnDrop = func(ctx context.Context, dropped []llm.Message) {
+				var sb strings.Builder
+				for _, m := range dropped {
+					fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, m.Content)
+				}
+				runner.Run(ctx, "context_dropped", agentName, map[string]any{
+					"dropped_text":  sb.String(),
+					"dropped_count": len(dropped),
+				})
+			}
+		}
 	}
 
 	auditPath := ""
@@ -281,9 +335,10 @@ func (sm *SessionManager) Get(channelID string) *Session {
 	return sm.sessions[channelID]
 }
 
-// evictOldestLocked removes the session with the oldest lastAccess time.
+// evictOldestLocked removes the session with the oldest lastAccess time
+// from the map and returns it for summarization outside the lock.
 // Must be called with sm.mu held.
-func (sm *SessionManager) evictOldestLocked() {
+func (sm *SessionManager) evictOldestLocked() (string, *Session) {
 	var oldestID string
 	var oldestTime time.Time
 	for id, s := range sm.sessions {
@@ -292,12 +347,33 @@ func (sm *SessionManager) evictOldestLocked() {
 			oldestTime = s.lastAccess
 		}
 	}
-	if oldestID != "" {
-		if sm.sessions[oldestID].cancel != nil {
-			sm.sessions[oldestID].cancel()
-		}
-		delete(sm.sessions, oldestID)
-		sm.logger.Info("evicted oldest session to make room", zap.String("channel_id", oldestID))
+	if oldestID == "" {
+		return "", nil
+	}
+	sess := sm.sessions[oldestID]
+	delete(sm.sessions, oldestID)
+	sm.logger.Info("evicted oldest session to make room", zap.String("channel_id", oldestID))
+	return oldestID, sess
+}
+
+// summarizeAndHook summarizes a session and fires the after_reset hook.
+// Called outside the lock for evicted sessions.
+func (sm *SessionManager) summarizeAndHook(channelID string, sess *Session) {
+	if sess.ctx == nil {
+		return
+	}
+	summary, err := sess.Summarize(sess.ctx)
+	if err != nil {
+		sm.logger.Warn("failed to summarize evicted session",
+			zap.String("channel_id", channelID), zap.Error(err))
+	}
+	if sess.extHooks != nil && summary != "" {
+		sess.extHooks.Run(context.Background(), "after_reset", sm.factory.AgentName, map[string]any{
+			"summary": summary,
+		})
+	}
+	if sess.cancel != nil {
+		sess.cancel()
 	}
 }
 
@@ -321,13 +397,20 @@ func (sm *SessionManager) EvictIdle(maxAge time.Duration) int {
 	}
 	sm.mu.Unlock()
 
-	// Summarize and cancel outside the lock — Summarize makes an LLM
-	// call that can take seconds.
+	// Summarize, fire hooks, and cancel outside the lock — Summarize makes
+	// an LLM call that can take seconds.
 	for _, e := range toEvict {
 		if e.sess.ctx != nil {
-			if _, err := e.sess.Summarize(e.sess.ctx); err != nil {
+			summary, err := e.sess.Summarize(e.sess.ctx)
+			if err != nil {
 				sm.logger.Warn("failed to summarize before eviction",
 					zap.String("channel_id", e.id), zap.Error(err))
+			}
+			// Fire after_reset hook so mem9 saves the summary.
+			if e.sess.extHooks != nil && summary != "" {
+				e.sess.extHooks.Run(context.Background(), "after_reset", sm.factory.AgentName, map[string]any{
+					"summary": summary,
+				})
 			}
 		}
 		if e.sess.cancel != nil {
@@ -360,17 +443,54 @@ func (sm *SessionManager) StartEvictionLoop(
 	}()
 }
 
-// Shutdown cancels all in-flight session work and clears the session map.
+// Shutdown summarizes all sessions in parallel, fires after_reset hooks,
+// then cancels all session contexts and clears the map.
 func (sm *SessionManager) Shutdown() {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	type entry struct {
+		id   string
+		sess *Session
+	}
+	var all []entry
 	for id, s := range sm.sessions {
-		if s.cancel != nil {
-			s.cancel()
-		}
+		all = append(all, entry{id: id, sess: s})
 		delete(sm.sessions, id)
 	}
-	sm.logger.Info("all sessions shut down")
+	sm.mu.Unlock()
+
+	if len(all) == 0 {
+		sm.logger.Info("all sessions shut down")
+		return
+	}
+
+	// Summarize each session in parallel with a 30-second timeout.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	var wg sync.WaitGroup
+	for _, e := range all {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if e.sess.ctx != nil {
+				summary, err := e.sess.Summarize(shutdownCtx)
+				if err != nil {
+					sm.logger.Warn("failed to summarize on shutdown",
+						zap.String("channel_id", e.id), zap.Error(err))
+				}
+				if e.sess.extHooks != nil && summary != "" {
+					e.sess.extHooks.Run(shutdownCtx, "after_reset", sm.factory.AgentName, map[string]any{
+						"summary": summary,
+					})
+				}
+			}
+			if e.sess.cancel != nil {
+				e.sess.cancel()
+			}
+		}()
+	}
+	wg.Wait()
+	sm.logger.Info("all sessions shut down", zap.Int("summarized", len(all)))
 }
 
 // Len returns the number of active sessions.
