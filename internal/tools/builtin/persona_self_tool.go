@@ -39,9 +39,10 @@ func (t *PersonaSelfTool) Description() string {
 
 func (t *PersonaSelfTool) FullDescription() string {
 	return "Read or update the agent's persona files. " +
-		"MEMORY.md is curated knowledge (under 200 lines). " +
-		"SOUL.md is core identity (under 100 lines). " +
+		"MEMORY.md is curated knowledge AND user preferences — tone, style, learned patterns (under 200 lines). " +
+		"SOUL.md is fundamental identity — name, role, mission only (under 100 lines, rarely changed). " +
 		"AGENTS.md is behavioral rules (under 150 lines). " +
+		"When the user asks to remember a preference or style, always write to MEMORY.md, not SOUL.md. " +
 		"Use action \"read\" to view current contents, \"write\" to replace with new content. " +
 		"SOUL.md and AGENTS.md are backed up to .bak before overwriting."
 }
