@@ -23,6 +23,7 @@ import (
 	"github.com/joechenrh/golem/internal/config"
 	"github.com/joechenrh/golem/internal/ctxmgr"
 	"github.com/joechenrh/golem/internal/executor"
+	"github.com/joechenrh/golem/internal/exthook"
 	"github.com/joechenrh/golem/internal/fs"
 	"github.com/joechenrh/golem/internal/hooks"
 	"github.com/joechenrh/golem/internal/llm"
@@ -385,8 +386,35 @@ func BuildAgent(
 		})
 	}))
 
+	// Register create_skill tool for named agents.
+	if name != "" {
+		registry.Register(builtin.NewCreateSkillTool(name, registry))
+	}
+
+	// Build skill directories for periodic reload.
+	skillDirs := buildSkillDirs(cfg)
+
+	// Discover external hooks.
+	var extHookRunner agent.ExtHookRunner
+	if name != "" {
+		var allHooks []*exthook.HookDef
+		globalHookDir := filepath.Join(config.GolemHome(), "hooks")
+		if hks, err := exthook.Discover(globalHookDir); err == nil {
+			allHooks = append(allHooks, hks...)
+		}
+		agentHookDir := filepath.Join(config.GolemHome(), "agents", name, "hooks")
+		if hks, err := exthook.Discover(agentHookDir); err == nil {
+			allHooks = append(allHooks, hks...)
+		}
+		if len(allHooks) > 0 {
+			extHookRunner = exthook.NewRunner(allHooks, logger)
+		}
+	}
+
 	defaultSess := agent.NewSession(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
 	defaultSess.MetricsSummary = metricsHook.Summary
+	defaultSess.SetSkillReload(skillDirs, cfg.SkillReloadInterval)
+	defaultSess.SetExtHooks(extHookRunner)
 
 	// Wire card action handler for Lark (reset session, feedback buttons).
 	// Must be set before SessionManager is created since the handler uses it.
@@ -423,6 +451,8 @@ func BuildAgent(
 			AgentName:       name,
 			MetricsHook:     metricsHook,
 			AuditDir:        agentTapeDir,
+			SkillDirs:       skillDirs,
+			ExtHookRunner:   extHookRunner,
 		}, logger)
 		if err := sessions.LoadExisting(cfg.TapeDir); err != nil {
 			logger.Warn("failed to restore sessions", zap.Error(err))
@@ -444,6 +474,18 @@ func BuildAgent(
 		MetricsHook: metricsHook,
 		toolFactory: toolFactory,
 	}, nil
+}
+
+// buildSkillDirs returns the global and per-agent skill directories.
+func buildSkillDirs(cfg *config.Config) []string {
+	var dirs []string
+	globalDir := filepath.Join(config.GolemHome(), "skills")
+	dirs = append(dirs, globalDir)
+	if cfg.AgentName != "" {
+		agentDir := filepath.Join(config.GolemHome(), "agents", cfg.AgentName, "skills")
+		dirs = append(dirs, agentDir)
+	}
+	return dirs
 }
 
 // buildExecutorAndFS creates the command executor and sandboxed filesystem.
