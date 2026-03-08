@@ -146,8 +146,13 @@ description: What this hook does
 events: [before_llm_call, after_reset]
 command: ./handler.py
 timeout: 15s
+env:
+  MEM9_SPACE_ID: space-abc123
+  API_URL: https://api.example.com
 ---
 ```
+
+The optional `env` section declares environment variable overrides for the hook subprocess. When present, the hook process inherits the parent environment plus these overrides (overrides win). When absent, the hook inherits the parent environment as-is. Since hooks are per-agent, this naturally provides per-agent env vars.
 
 Hook discovery scans `~/.golem/hooks/` (global) and `~/.golem/agents/<name>/hooks/` (per-agent).
 

@@ -154,6 +154,76 @@ func TestParseHook(t *testing.T) {
 	})
 }
 
+func TestParseHookEnv(t *testing.T) {
+	t.Run("env section parsed", func(t *testing.T) {
+		dir := t.TempDir()
+		hookPath := filepath.Join(dir, "HOOK.md")
+		content := "---\nname: test\ndescription: test\nevents: [before_llm_call]\ncommand: ./run.sh\nenv:\n  MEM9_SPACE_ID: space-abc123\n  API_URL: https://api.example.com/v1\n---\nbody"
+		os.WriteFile(hookPath, []byte(content), 0o644)
+		h, err := ParseHook(hookPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(h.Env) != 2 {
+			t.Fatalf("env count = %d, want 2", len(h.Env))
+		}
+		if h.Env["MEM9_SPACE_ID"] != "space-abc123" {
+			t.Errorf("MEM9_SPACE_ID = %q, want %q", h.Env["MEM9_SPACE_ID"], "space-abc123")
+		}
+		if h.Env["API_URL"] != "https://api.example.com/v1" {
+			t.Errorf("API_URL = %q, want %q", h.Env["API_URL"], "https://api.example.com/v1")
+		}
+	})
+
+	t.Run("no env section", func(t *testing.T) {
+		dir := t.TempDir()
+		hookPath := filepath.Join(dir, "HOOK.md")
+		content := "---\nname: test\ndescription: test\nevents: [before_llm_call]\ncommand: ./run.sh\n---\nbody"
+		os.WriteFile(hookPath, []byte(content), 0o644)
+		h, err := ParseHook(hookPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if h.Env != nil {
+			t.Errorf("env = %v, want nil", h.Env)
+		}
+	})
+
+	t.Run("env with special characters in values", func(t *testing.T) {
+		dir := t.TempDir()
+		hookPath := filepath.Join(dir, "HOOK.md")
+		content := "---\nname: test\ndescription: test\nevents: [before_llm_call]\ncommand: ./run.sh\nenv:\n  DB_DSN: postgres://user:pass@host:5432/db\n  PATH_VAR: /usr/local/bin:/usr/bin\n---\nbody"
+		os.WriteFile(hookPath, []byte(content), 0o644)
+		h, err := ParseHook(hookPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if h.Env["DB_DSN"] != "postgres://user:pass@host:5432/db" {
+			t.Errorf("DB_DSN = %q", h.Env["DB_DSN"])
+		}
+		if h.Env["PATH_VAR"] != "/usr/local/bin:/usr/bin" {
+			t.Errorf("PATH_VAR = %q", h.Env["PATH_VAR"])
+		}
+	})
+
+	t.Run("env before other fields", func(t *testing.T) {
+		dir := t.TempDir()
+		hookPath := filepath.Join(dir, "HOOK.md")
+		content := "---\nname: test\ndescription: test\nevents: [before_llm_call]\nenv:\n  KEY1: val1\ncommand: ./run.sh\ntimeout: 5s\n---\nbody"
+		os.WriteFile(hookPath, []byte(content), 0o644)
+		h, err := ParseHook(hookPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if h.Env["KEY1"] != "val1" {
+			t.Errorf("KEY1 = %q, want %q", h.Env["KEY1"], "val1")
+		}
+		if h.Timeout != 5*time.Second {
+			t.Errorf("timeout = %v, want 5s", h.Timeout)
+		}
+	})
+}
+
 func TestEventTypeIsBlocking(t *testing.T) {
 	tests := []struct {
 		event EventType

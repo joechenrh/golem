@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -105,6 +106,12 @@ func (r *Runner) executeHook(ctx context.Context, h *HookDef, stdinData []byte) 
 	cmd := exec.CommandContext(ctx, h.Command)
 	cmd.Dir = h.Dir
 	cmd.Stdin = bytes.NewReader(stdinData)
+	if len(h.Env) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range h.Env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

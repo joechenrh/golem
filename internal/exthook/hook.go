@@ -39,9 +39,10 @@ type HookDef struct {
 	Name        string
 	Description string
 	Events      []EventType
-	Command     string        // absolute path to executable
-	Dir         string        // working directory (hook's parent dir)
-	Timeout     time.Duration // default 10s
+	Command     string            // absolute path to executable
+	Dir         string            // working directory (hook's parent dir)
+	Timeout     time.Duration     // default 10s
+	Env         map[string]string // optional environment variable overrides
 }
 
 // ParseHook reads a HOOK.md file and returns a HookDef.
@@ -85,6 +86,8 @@ func ParseHook(path string) (*HookDef, error) {
 		}
 	}
 
+	env := parseEnv(fm)
+
 	return &HookDef{
 		Name:        name,
 		Description: description,
@@ -92,6 +95,7 @@ func ParseHook(path string) (*HookDef, error) {
 		Command:     command,
 		Dir:         hookDir,
 		Timeout:     timeout,
+		Env:         env,
 	}, nil
 }
 
@@ -155,6 +159,47 @@ func parseFMField(fm, key string) string {
 		}
 	}
 	return ""
+}
+
+// parseEnv extracts the env map from frontmatter.
+// Supports multi-line YAML map format:
+//
+//	env:
+//	  KEY1: value1
+//	  KEY2: value2
+func parseEnv(fm string) map[string]string {
+	lines := strings.Split(fm, "\n")
+	inEnv := false
+	env := make(map[string]string)
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "env:") {
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "env:"))
+			if rest == "" {
+				inEnv = true
+			}
+			continue
+		}
+
+		if inEnv {
+			// Indented lines belong to the env map; a non-indented line ends it.
+			if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') && trimmed != "" {
+				k, v, ok := strings.Cut(trimmed, ":")
+				if ok {
+					env[strings.TrimSpace(k)] = strings.TrimSpace(v)
+				}
+			} else if trimmed != "" {
+				inEnv = false
+			}
+		}
+	}
+
+	if len(env) == 0 {
+		return nil
+	}
+	return env
 }
 
 // parseEvents extracts the events list from frontmatter.

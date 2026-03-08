@@ -49,3 +49,14 @@ done
 |----------|----------|---------|-------------|
 | `MEM9_API_URL` | No | `https://api.mem9.ai` | mem9 API base URL |
 | `MEM9_SPACE_ID` | Yes | — | Space / tenant identifier |
+
+### Per-Agent Env via HOOK.md
+
+Instead of setting `MEM9_SPACE_ID` globally in `config.env`, you can declare it per-hook in `HOOK.md`:
+
+```yaml
+env:
+  MEM9_SPACE_ID: space-abc123
+```
+
+This is useful when different agents need different spaces. Hook-level env vars override the parent environment.

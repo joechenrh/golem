@@ -189,6 +189,87 @@ func TestRunnerAfterReset(t *testing.T) {
 	})
 }
 
+func TestRunnerEnvInjection(t *testing.T) {
+	logger := zap.NewNop()
+
+	t.Run("hook receives env vars", func(t *testing.T) {
+		dir := t.TempDir()
+		cmd := writeHookScript(t, dir, `printf '{"content":"%s"}' "$TEST_VAR"`)
+
+		runner := NewRunner([]*HookDef{{
+			Name:    "env-hook",
+			Events:  []EventType{EventBeforeLLMCall},
+			Command: cmd,
+			Dir:     dir,
+			Timeout: 5 * time.Second,
+			Env:     map[string]string{"TEST_VAR": "hello_from_env"},
+		}}, logger)
+
+		result, err := runner.Run(context.Background(), "before_llm_call", "agent", map[string]any{
+			"user_message": "test",
+			"iteration":    0,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "hello_from_env" {
+			t.Errorf("result = %q, want %q", result, "hello_from_env")
+		}
+	})
+
+	t.Run("hook env overrides parent env", func(t *testing.T) {
+		dir := t.TempDir()
+		cmd := writeHookScript(t, dir, `printf '{"content":"%s"}' "$GOLEM_TEST_OVERRIDE"`)
+
+		// Set a parent env var that the hook should override.
+		t.Setenv("GOLEM_TEST_OVERRIDE", "parent_value")
+
+		runner := NewRunner([]*HookDef{{
+			Name:    "override-hook",
+			Events:  []EventType{EventBeforeLLMCall},
+			Command: cmd,
+			Dir:     dir,
+			Timeout: 5 * time.Second,
+			Env:     map[string]string{"GOLEM_TEST_OVERRIDE": "hook_value"},
+		}}, logger)
+
+		result, err := runner.Run(context.Background(), "before_llm_call", "agent", map[string]any{
+			"user_message": "test",
+			"iteration":    0,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != "hook_value" {
+			t.Errorf("result = %q, want %q", result, "hook_value")
+		}
+	})
+
+	t.Run("no env keeps parent behavior", func(t *testing.T) {
+		dir := t.TempDir()
+		cmd := writeHookScript(t, dir, `printf '{"content":"%s"}' "$HOME"`)
+
+		runner := NewRunner([]*HookDef{{
+			Name:    "no-env-hook",
+			Events:  []EventType{EventBeforeLLMCall},
+			Command: cmd,
+			Dir:     dir,
+			Timeout: 5 * time.Second,
+		}}, logger)
+
+		result, err := runner.Run(context.Background(), "before_llm_call", "agent", map[string]any{
+			"user_message": "test",
+			"iteration":    0,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result == "" {
+			t.Error("expected non-empty result from $HOME")
+		}
+	})
+}
+
 func TestRunnerAfterLLMCall(t *testing.T) {
 	logger := zap.NewNop()
 
