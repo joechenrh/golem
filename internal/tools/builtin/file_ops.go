@@ -64,7 +64,9 @@ func NewReadFileTool(filesystem fs.FS) *ReadFileTool {
 func (t *ReadFileTool) Name() string        { return "read_file" }
 func (t *ReadFileTool) Description() string { return "Read a file's contents" }
 func (t *ReadFileTool) FullDescription() string {
-	return "Read a file's contents. Supports offset/limit for reading portions of large files. Binary files are detected and skipped."
+	return "Read a file's contents with line numbers. " +
+		"Use offset (0-based line number) and limit (line count) to read portions of large files. " +
+		"Output is truncated at 50K chars. Binary files are detected and skipped."
 }
 func (t *ReadFileTool) Parameters() json.RawMessage { return readFileParams }
 
@@ -138,7 +140,9 @@ func NewWriteFileTool(filesystem fs.FS) *WriteFileTool {
 func (t *WriteFileTool) Name() string        { return "write_file" }
 func (t *WriteFileTool) Description() string { return "Write content to a file" }
 func (t *WriteFileTool) FullDescription() string {
-	return "Write content to a file, creating parent directories as needed. Overwrites existing files."
+	return "Write content to a file, creating parent directories as needed. " +
+		"WARNING: Overwrites the entire file if it already exists. " +
+		"For partial changes, prefer edit_file instead."
 }
 func (t *WriteFileTool) Parameters() json.RawMessage { return writeFileParams }
 
@@ -188,7 +192,10 @@ func NewEditFileTool(filesystem fs.FS) *EditFileTool {
 func (t *EditFileTool) Name() string        { return "edit_file" }
 func (t *EditFileTool) Description() string { return "Edit a file by replacing text" }
 func (t *EditFileTool) FullDescription() string {
-	return "Edit a file by finding and replacing an exact text match. The first occurrence of old_text is replaced with new_text."
+	return "Edit a file by finding and replacing an exact text match. " +
+		"Only the FIRST occurrence of old_text is replaced. " +
+		"Include enough surrounding context in old_text to make the match unique. " +
+		"Use read_file first to see the exact text to match."
 }
 func (t *EditFileTool) Parameters() json.RawMessage { return editFileParams }
 
@@ -254,7 +261,8 @@ func NewListDirectoryTool(
 func (t *ListDirectoryTool) Name() string        { return "list_directory" }
 func (t *ListDirectoryTool) Description() string { return "List directory contents" }
 func (t *ListDirectoryTool) FullDescription() string {
-	return "List directory contents with type indicators (file/dir) and sizes. Skips .git, node_modules, and similar directories."
+	return "List directory contents with type indicators (file/dir) and sizes. " +
+		"Shows up to 200 entries. Skips .git, node_modules, vendor, __pycache__, .venv, and target."
 }
 func (t *ListDirectoryTool) Parameters() json.RawMessage { return listDirParams }
 
@@ -342,7 +350,8 @@ func NewSearchFilesTool(
 func (t *SearchFilesTool) Name() string        { return "search_files" }
 func (t *SearchFilesTool) Description() string { return "Search for text in files" }
 func (t *SearchFilesTool) FullDescription() string {
-	return "Search for text in files recursively. Returns matching lines with file paths and line numbers. Case-insensitive. Supports optional file glob filter."
+	return "Search for text in files recursively. Returns matching lines with file paths and line numbers. " +
+		"Case-insensitive. Shows up to 50 matches. Use file_glob (e.g. '*.go') to narrow results."
 }
 func (t *SearchFilesTool) Parameters() json.RawMessage { return searchFilesParams }
 

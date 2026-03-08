@@ -35,6 +35,7 @@ func (t *CreateSkillTool) Description() string {
 func (t *CreateSkillTool) FullDescription() string {
 	return "Create or update a skill on disk and register it immediately in the tool registry. " +
 		"The skill is saved as a SKILL.md file with YAML frontmatter (name, description) and a markdown body. " +
+		"Skills are saved to the agent's skill directory (~/.golem/agents/<name>/skills/). " +
 		"The skill becomes available as skill_<name> right away without restarting."
 }
 

@@ -59,7 +59,8 @@ func (t *WebSearchTool) Name() string        { return "web_search" }
 func (t *WebSearchTool) Description() string { return "Search the web" }
 func (t *WebSearchTool) FullDescription() string {
 	return "Search the web and return titles, URLs, and snippets. " +
-		"Use this to find current information, documentation, news, etc."
+		"Use this to find current information, documentation, or news. " +
+		"Returns up to 20 results (default 5). To read a specific result, pass its URL to web_fetch."
 }
 
 var webSearchParams = json.RawMessage(`{
@@ -314,9 +315,9 @@ func NewWebFetchTool(client *http.Client) *WebFetchTool {
 func (t *WebFetchTool) Name() string        { return "web_fetch" }
 func (t *WebFetchTool) Description() string { return "Fetch and extract text content from a URL" }
 func (t *WebFetchTool) FullDescription() string {
-	return "Fetch content from a URL and extract readable text. " +
-		"Strips HTML tags, scripts, styles, and navigation. " +
-		"Returns plain text suitable for reading and summarization."
+	return "Fetch a web page and extract readable text (strips HTML/scripts/nav). " +
+		"Best for reading articles, docs, and web pages. Default max 5000 chars. " +
+		"For API calls that return JSON, use http_request instead."
 }
 
 var webFetchParams = json.RawMessage(`{

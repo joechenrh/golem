@@ -46,7 +46,8 @@ func (t *HTTPRequestTool) Description() string { return "Make HTTP requests to A
 func (t *HTTPRequestTool) FullDescription() string {
 	return "Make HTTP requests with full control over method, headers, and body. " +
 		"Use this for REST API calls, webhooks, and services that return JSON or structured data. " +
-		"For fetching and reading web pages, prefer web_fetch instead."
+		"For reading web pages as text, prefer web_fetch instead. " +
+		"Note: Authorization, Cookie, and proxy headers are blocked for security."
 }
 
 var httpRequestParams = json.RawMessage(`{

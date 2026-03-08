@@ -9,7 +9,7 @@ When the user asks to summarize the session (or current conversation), follow th
 
 ## Step 1: Gather Session Info
 
-Run the `:tape.info` command by outputting it on its own line to get tape statistics (total entries, anchors, entries since last anchor).
+Run the `,tape.info` command by outputting it on its own line to get tape statistics (total entries, anchors, entries since last anchor).
 
 ## Step 2: Analyze the Conversation
 

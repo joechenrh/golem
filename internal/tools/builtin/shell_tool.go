@@ -34,7 +34,8 @@ func NewShellTool(
 func (t *ShellTool) Name() string        { return "shell_exec" }
 func (t *ShellTool) Description() string { return "Execute a shell command" }
 func (t *ShellTool) FullDescription() string {
-	return "Execute a shell command in the workspace directory. Returns stdout, stderr, and exit code."
+	return "Execute a shell command in the workspace directory. Returns stdout, stderr, and exit code. " +
+		"Set the timeout parameter (in seconds) for long-running commands; default is 30s."
 }
 func (t *ShellTool) Parameters() json.RawMessage { return shellParams }
 

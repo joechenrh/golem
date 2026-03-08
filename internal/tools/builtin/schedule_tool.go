@@ -25,8 +25,8 @@ func (t *ScheduleAddTool) Name() string        { return "schedule_add" }
 func (t *ScheduleAddTool) Description() string { return "Add a scheduled task" }
 func (t *ScheduleAddTool) FullDescription() string {
 	return "Add a scheduled task that fires a prompt on a cron schedule. " +
-		"The prompt is sent to the agent in an isolated session at each fire time, " +
-		"and the agent's response is posted to the target channel. " +
+		"Each fire runs in an isolated session with no prior conversation context. " +
+		"The agent's response is posted to the specified channel (use lark_list_chats to find chat IDs). " +
 		"Supports standard cron expressions (\"0 9 * * 1-5\"), descriptors (\"@daily\", \"@hourly\"), " +
 		"and intervals (\"@every 30m\"). Timezone prefix supported: \"CRON_TZ=Asia/Shanghai 0 9 * * *\"."
 }
