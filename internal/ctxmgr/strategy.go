@@ -45,12 +45,12 @@ func NewContextStrategy(name string) (ContextStrategy, error) {
 	case "anchor":
 		return &AnchorStrategy{}, nil
 	case "masking":
-		return &MaskingStrategy{MaskThreshold: 0.5, MaxOutputChars: 2000}, nil
+		return &MaskingStrategy{MaskThreshold: 0.3, MaxOutputChars: 1500}, nil
 	case "hybrid":
 		return &HybridStrategy{
-			MaskThreshold:      0.5,
+			MaskThreshold:      0.3,
 			SummarizeThreshold: 0.7,
-			MaxOutputChars:     2000,
+			MaxOutputChars:     1500,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unknown context strategy: %q", name)
