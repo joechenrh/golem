@@ -68,6 +68,35 @@ func TestLoadExternalTools_MissingRequiredFields(t *testing.T) {
 	}
 }
 
+func TestExternalTool_ExecuteEnv(t *testing.T) {
+	// Verify that manifest env vars are passed to the child process.
+	script := `#!/bin/sh
+read line
+printf '{"jsonrpc":"2.0","id":1,"result":"%s"}' "$TEST_SECRET"
+`
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "env_plugin.sh")
+	os.WriteFile(scriptPath, []byte(script), 0755)
+
+	tool := NewExternalTool(ExternalToolManifest{
+		Name:        "env_tool",
+		Description: "reads env",
+		Command:     "/bin/sh",
+		Args:        []string{scriptPath},
+		Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+		Env:         map[string]string{"TEST_SECRET": "s3cret"},
+	}, zap.NewNop())
+	defer tool.Close()
+
+	result, err := tool.Execute(context.Background(), "{}")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result != "s3cret" {
+		t.Errorf("expected 's3cret', got %q", result)
+	}
+}
+
 func TestExternalTool_ExecuteEcho(t *testing.T) {
 	// Create a tool that runs a simple echo script via sh.
 	// The script reads a JSON-RPC request from stdin and returns a response.

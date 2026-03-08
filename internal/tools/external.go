@@ -22,10 +22,11 @@ type ExternalToolManifest struct {
 	Description    string          `json:"description"`
 	FullDesc       string          `json:"full_description"`
 	Parameters     json.RawMessage `json:"parameters"`
-	Command        string          `json:"command"`        // path to executable
-	Args           []string        `json:"args,omitempty"` // extra args passed to the executable
-	WorkDir        string          `json:"work_dir,omitempty"`
-	TimeoutSeconds int             `json:"timeout_seconds,omitempty"` // default: 30
+	Command        string            `json:"command"`                   // path to executable
+	Args           []string          `json:"args,omitempty"`            // extra args passed to the executable
+	WorkDir        string            `json:"work_dir,omitempty"`
+	TimeoutSeconds int               `json:"timeout_seconds,omitempty"` // default: 30
+	Env            map[string]string `json:"env,omitempty"`             // optional environment variable overrides
 }
 
 // ExternalTool wraps an external process as a Tool.
@@ -162,6 +163,12 @@ func (t *ExternalTool) ensureRunning() error {
 	if t.manifest.WorkDir != "" {
 		cmd.Dir = t.manifest.WorkDir
 	}
+	if len(t.manifest.Env) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range t.manifest.Env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
 
 	// Capture stderr via a pipe so we can log it through the structured logger.
 	stderrPipe, err := cmd.StderrPipe()
@@ -258,6 +265,14 @@ func LoadExternalTools(dir string, logger *zap.Logger) ([]*ExternalTool, error) 
 		}
 		if manifest.Parameters == nil {
 			manifest.Parameters = json.RawMessage(`{"type":"object","properties":{}}`)
+		}
+
+		manifest.Command = os.ExpandEnv(manifest.Command)
+		for i, arg := range manifest.Args {
+			manifest.Args[i] = os.ExpandEnv(arg)
+		}
+		for k, v := range manifest.Env {
+			manifest.Env[k] = os.ExpandEnv(v)
 		}
 
 		tools = append(tools, NewExternalTool(manifest, logger))
