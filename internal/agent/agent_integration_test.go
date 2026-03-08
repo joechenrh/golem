@@ -502,19 +502,15 @@ func TestIntegration_NudgeBehavior(t *testing.T) {
 		t.Errorf("LLM called %d times, want 3", h.mock.callCount())
 	}
 
-	// Verify the nudge message was injected into the tape.
+	// Nudge messages should be ephemeral — NOT persisted to the tape.
 	entries, _ := h.tape.Entries()
-	foundNudge := false
 	for _, e := range entries {
 		pm := e.PayloadMap()
 		content, _ := pm["content"].(string)
 		if strings.Contains(content, "Call the appropriate tool") {
-			foundNudge = true
+			t.Error("nudge message should not be persisted to tape")
 			break
 		}
-	}
-	if !foundNudge {
-		t.Error("nudge message not found in tape")
 	}
 }
 

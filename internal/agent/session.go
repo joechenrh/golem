@@ -52,6 +52,10 @@ type Session struct {
 	// External hooks runner (nil if no hooks configured).
 	extHooks ExtHookRunner
 
+	// Ephemeral messages injected into the next LLM call only (nudges,
+	// recovery hints). They are not persisted to the tape.
+	ephemeralMessages []llm.Message
+
 	// Lifecycle fields (managed by SessionManager for remote chats;
 	// unused for the default CLI session).
 	ctx        context.Context
@@ -236,14 +240,16 @@ func (s *Session) runReActLoop(
 		}
 
 		// Empty response with no tool calls — retry up to maxEmptyRetries,
-		// then inject a recovery hint to break the loop.
+		// then inject an ephemeral recovery hint to break the loop.
 		if strings.TrimSpace(resp.Content) == "" {
 			emptyRetries++
 			s.logger.Warn("LLM returned empty response, retrying",
 				zap.Int("iter", iter), zap.Int("empty_retries", emptyRetries))
 			if emptyRetries >= maxEmptyRetries {
-				s.appendMessage(llm.RoleAssistant, resp.Content, nil, "", nil)
-				s.appendMessage(llm.RoleUser, emptyResponseHint(lastToolFailed), nil, "", nil)
+				s.ephemeralMessages = append(s.ephemeralMessages,
+					llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
+					llm.Message{Role: llm.RoleUser, Content: emptyResponseHint(lastToolFailed)},
+				)
 				emptyRetries = 0
 			}
 			continue
@@ -256,8 +262,10 @@ func (s *Session) runReActLoop(
 		shouldNudge := lastToolFailed || looksLikePlan(resp.Content)
 		lastToolFailed = false
 		if nudges < maxNudges && shouldNudge {
-			s.appendMessage(llm.RoleAssistant, resp.Content, nil, "", nil)
-			s.appendMessage(llm.RoleUser, nudgeMessage(resp.Content), nil, "", nil)
+			s.ephemeralMessages = append(s.ephemeralMessages,
+				llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
+				llm.Message{Role: llm.RoleUser, Content: nudgeMessage(resp.Content)},
+			)
 			nudges++
 			s.logger.Debug("nudging LLM to use tools",
 				zap.Int("nudge", nudges), zap.Int("iter", iter))
@@ -311,6 +319,12 @@ func (s *Session) executeLLMCall(
 			})
 		}
 		messages = append(messages, userMsg)
+	}
+
+	// Inject ephemeral messages (nudges, recovery hints) then clear them.
+	if len(s.ephemeralMessages) > 0 {
+		messages = append(messages, s.ephemeralMessages...)
+		s.ephemeralMessages = nil
 	}
 
 	// Run external hooks for context injection (skipped during retries).
