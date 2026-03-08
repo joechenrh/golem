@@ -796,12 +796,22 @@ func TestOpenAIChat_SystemPrompt(t *testing.T) {
 
 func TestAnthropicChat_SystemPrompt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req anthropicRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		// Decode into raw structure to verify the system array format.
+		var rawReq struct {
+			System []anthropicSystemBlock `json:"system"`
+		}
+		json.NewDecoder(r.Body).Decode(&rawReq)
 
-		// Verify system is a top-level field, not a message.
-		if req.System != "Be helpful" {
-			t.Errorf("system = %q, want %q", req.System, "Be helpful")
+		// Verify system is an array with cache_control for prompt caching.
+		if len(rawReq.System) != 1 {
+			t.Errorf("system blocks = %d, want 1", len(rawReq.System))
+		} else {
+			if rawReq.System[0].Text != "Be helpful" {
+				t.Errorf("system text = %q, want %q", rawReq.System[0].Text, "Be helpful")
+			}
+			if rawReq.System[0].CacheControl == nil || rawReq.System[0].CacheControl.Type != "ephemeral" {
+				t.Error("expected cache_control with type ephemeral on system block")
+			}
 		}
 
 		resp := anthropicResponse{

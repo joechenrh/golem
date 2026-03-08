@@ -18,7 +18,7 @@ import (
 type anthropicRequest struct {
 	Model       string             `json:"model"`
 	Messages    []anthropicMessage `json:"messages"`
-	System      string             `json:"system,omitempty"`
+	System      any                `json:"system,omitempty"`
 	MaxTokens   int                `json:"max_tokens"`
 	Temperature *float64           `json:"temperature,omitempty"`
 	Tools       []anthropicTool    `json:"tools,omitempty"`
@@ -47,10 +47,21 @@ type anthropicImageSource struct {
 	Data      string `json:"data"`
 }
 
+type anthropicCacheControl struct {
+	Type string `json:"type"`
+}
+
+type anthropicSystemBlock struct {
+	Type         string                `json:"type"`
+	Text         string                `json:"text"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
 type anthropicTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string                `json:"name"`
+	Description  string                `json:"description"`
+	InputSchema  json.RawMessage       `json:"input_schema"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 // Response structs.
@@ -62,8 +73,10 @@ type anthropicResponse struct {
 }
 
 type anthropicUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 }
 
 // Streaming structs.
@@ -215,7 +228,7 @@ func (c *anthropicClient) readStream(
 
 		switch ev.Event {
 		case "message_start":
-			// Capture initial usage (input tokens) from message_start.
+			// Capture initial usage (input tokens + cache stats) from message_start.
 			var ms struct {
 				Message struct {
 					Usage anthropicUsage `json:"usage"`
@@ -223,7 +236,9 @@ func (c *anthropicClient) readStream(
 			}
 			if json.Unmarshal([]byte(ev.Data), &ms) == nil {
 				usage = &Usage{
-					PromptTokens: ms.Message.Usage.InputTokens,
+					PromptTokens:             ms.Message.Usage.InputTokens,
+					CacheCreationInputTokens: ms.Message.Usage.CacheCreationInputTokens,
+					CacheReadInputTokens:     ms.Message.Usage.CacheReadInputTokens,
 				}
 			}
 
@@ -306,9 +321,17 @@ func (c *anthropicClient) buildRequest(
 
 	wireReq := anthropicRequest{
 		Model:     req.Model,
-		System:    system,
 		MaxTokens: maxTokens,
 		Stream:    stream,
+	}
+
+	// Use structured system blocks with cache_control for prompt caching.
+	if system != "" {
+		wireReq.System = []anthropicSystemBlock{{
+			Type:         "text",
+			Text:         system,
+			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+		}}
 	}
 	if req.Temperature != nil {
 		wireReq.Temperature = req.Temperature
@@ -322,6 +345,11 @@ func (c *anthropicClient) buildRequest(
 			Description: td.Description,
 			InputSchema: td.Parameters,
 		})
+	}
+
+	// Mark the last tool with cache_control for prompt caching.
+	if len(wireReq.Tools) > 0 {
+		wireReq.Tools[len(wireReq.Tools)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
 	}
 
 	return wireReq
@@ -428,9 +456,11 @@ func (c *anthropicClient) convertResponse(
 ) *ChatResponse {
 	cr := &ChatResponse{
 		Usage: Usage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
+			PromptTokens:             resp.Usage.InputTokens,
+			CompletionTokens:         resp.Usage.OutputTokens,
+			TotalTokens:              resp.Usage.InputTokens + resp.Usage.OutputTokens,
+			CacheCreationInputTokens: resp.Usage.CacheCreationInputTokens,
+			CacheReadInputTokens:     resp.Usage.CacheReadInputTokens,
 		},
 	}
 
