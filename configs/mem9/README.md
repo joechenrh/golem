@@ -39,8 +39,8 @@ done
 |-----------|-------|---------|
 | **Handler** | `mem9_handler.py` | Python3 script with JSON-RPC tool server + hook handler |
 | **Tools** | `plugins/*.tool.json` | 5 tool manifests (store, search, get, update, delete) |
-| **Hook** | `hooks/mem9-recall/` | Injects relevant memories before LLM calls |
-| **Hook** | `hooks/mem9-save/` | Saves session summaries to mem9 on reset |
+| **Hook** | `hooks/mem9-recall/` | Injects relevant memories before LLM calls (dual-query, iteration-aware) |
+| **Hook** | `hooks/mem9-save/` | Saves session summaries and dropped context to mem9 on reset/eviction/context overflow |
 | **Skill** | `skills/mem9/SKILL.md` | Interactive setup guide (invoke with `,skills` → `skill_mem9`) |
 
 ## Environment Variables

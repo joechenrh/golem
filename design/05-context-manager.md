@@ -8,6 +8,12 @@ The strategy is invoked in `session.go` inside `executeLLMCall`, where `entries`
 
 Strategy selection is controlled by the `GOLEM_CONTEXT_STRATEGY` env var or `context-strategy` config file key (default: `"masking"`). The factory `ctxmgr.NewContextStrategy` is called in `app.go` when building the main session, in `manager.go` when creating per-chat sessions via `SessionManager`, and in `app.go` for sub-agent sessions.
 
+## Overhead Budgeting
+
+All strategies now support an `Overhead` field (set via the `OverheadSetter` interface) that subtracts system prompt + tool schema tokens from the context window budget. In `executeLLMCall`, after building `systemPrompt` and `toolDefs`, the overhead is computed via `ctxmgr.EstimateOverhead(systemPrompt, toolDefs)` and set on the strategy. All threshold checks and `trimToFit` then operate on `effectiveMax = maxTokens - Overhead` instead of the raw model window size.
+
+`EstimateOverhead` uses the same `estimateStringTokens` heuristic applied to the system prompt text, tool names, descriptions, and JSON schema parameters.
+
 ## ContextStrategy Interface
 
 ```go
@@ -15,13 +21,17 @@ type ContextStrategy interface {
     BuildContext(ctx context.Context, entries []tape.TapeEntry, maxTokens int) ([]llm.Message, error)
     Name() string
 }
+
+type OverheadSetter interface {
+    SetOverhead(tokens int)
+}
 ```
 
-`NewContextStrategy(name)` is the factory. It accepts `"anchor"` and `"masking"`.
+`NewContextStrategy(name)` is the factory. It accepts `"anchor"`, `"masking"`, and `"hybrid"`.
 
 ## AnchorStrategy
 
-The simplest strategy. It calls `tape.BuildMessages(entries)` to obtain messages, then passes the result through `trimToFit(msgs, maxTokens)`. No modification of message content occurs; what the tape recorded is what the LLM sees.
+The simplest strategy. It calls `tape.BuildMessages(entries)` to obtain messages, then passes the result through `trimToFit(msgs, effectiveMax)`. No modification of message content occurs; what the tape recorded is what the LLM sees.
 
 Source: `internal/tape/entry.go`
 
@@ -31,12 +41,13 @@ Source: `internal/tape/entry.go`
 
 Extends the anchor approach with output truncation to reclaim token budget.
 
-| Field            | Default | Purpose                                               |
-|------------------|---------|-------------------------------------------------------|
-| `MaskThreshold`  | `0.5`   | Fraction of `maxTokens` above which masking activates |
-| `MaxOutputChars` | `2000`  | Max chars per tool output before truncation           |
+| Field            | Default | Purpose                                                       |
+|------------------|---------|---------------------------------------------------------------|
+| `MaskThreshold`  | `0.5`   | Fraction of `effectiveMax` above which masking activates      |
+| `MaxOutputChars` | `2000`  | Max chars per tool output before truncation                   |
+| `Overhead`       | `0`     | Set by `OverheadSetter`; subtracted from model context window |
 
-The pipeline first calls `tape.BuildMessages(entries)` (same as Anchor), then runs `EstimateTokens(msgs)`. If the estimate exceeds `maxTokens * MaskThreshold`, it calls `MaskObservations(msgs, MaxOutputChars)`. Finally, it passes the result through `trimToFit(msgs, maxTokens)`.
+The pipeline first calls `tape.BuildMessages(entries)` (same as Anchor), then runs `EstimateTokens(msgs)`. If the estimate exceeds `effectiveMax * MaskThreshold`, it calls `MaskObservations(msgs, MaxOutputChars)`. Finally, it passes the result through `trimToFit(msgs, effectiveMax)`.
 
 ### MaskObservations
 
@@ -44,7 +55,34 @@ The pipeline first calls `tape.BuildMessages(entries)` (same as Anchor), then ru
 
 ## HybridStrategy
 
-Config validation accepts `"hybrid"` as a valid strategy name, but `NewContextStrategy` does not yet implement it -- passing `"hybrid"` returns an error. The intent is to combine anchor-based windowing with masking, but the implementation is a current gap.
+The most capable strategy, combining LLM-powered summarization with adaptive masking and an `OnDrop` callback for saving discarded context.
+
+| Field                | Default | Purpose                                                       |
+|----------------------|---------|---------------------------------------------------------------|
+| `MaskThreshold`      | `0.5`   | Fraction of `effectiveMax` above which masking activates      |
+| `SummarizeThreshold` | `0.7`   | Fraction of `effectiveMax` above which LLM summarization runs |
+| `MaxOutputChars`     | `2000`  | Max chars per tool output before truncation                   |
+| `Overhead`           | `0`     | Set by `OverheadSetter`; subtracted from model context window |
+| `LLM`               | `nil`   | LLM client for summarization (set by wiring layer)            |
+| `Model`              | `""`    | Model name for summarization calls                            |
+| `OnDrop`             | `nil`   | Callback invoked with messages about to be discarded          |
+
+### Pipeline
+
+1. **`tape.BuildMessages(entries)`** — get all post-anchor messages with summary injection.
+2. **Summarize** (if `tokens > effectiveMax * SummarizeThreshold` and `LLM != nil`): Take the oldest half of messages, call the LLM to distill them into a structured summary (TOPIC, DECISIONS, OUTCOMES, PENDING, KEY FACTS), and replace them with a synthetic `[Summarized earlier context]` user message plus an assistant acknowledgment.
+3. **Mask** (if `tokens > effectiveMax * MaskThreshold`): Run `MaskObservations` on tool outputs.
+4. **Trim with callback** (last resort): Drop oldest messages to fit. Before discarding, the `OnDrop` callback is fired in a goroutine with the about-to-be-dropped messages, allowing hooks (e.g. mem9-save) to persist the content externally.
+
+When `LLM` is nil (not wired), step 2 is skipped, and the strategy degrades to mask + trim.
+
+### OnDrop and context_dropped Hook
+
+The `OnDrop` callback is wired in `session.go` / `app.go` / `manager.go` to fire the `context_dropped` external hook event. The hook data contains:
+- `dropped_text`: concatenated text of all dropped messages
+- `dropped_count`: number of messages dropped
+
+The mem9-save hook subscribes to both `after_reset` and `context_dropped`, saving dropped context with a `"dropped-context"` tag so it can be recalled later.
 
 ## Token Estimation
 
@@ -52,15 +90,26 @@ Token counting uses a lightweight heuristic that avoids depending on a tokenizer
 
 `EstimateTokens(msgs)` sums the per-string estimate over each message's `Content` and each tool call's `Arguments`.
 
+`EstimateOverhead(systemPrompt, tools)` estimates tokens for the system prompt and all tool definitions (name + description + JSON schema parameters).
+
 ## trimToFit
 
 `trimToFit` drops the oldest messages until `EstimateTokens(msgs) <= maxTokens`. It enforces two invariants: it always keeps at least the last message (the loop exits when `len(msgs) == 1`), and it preserves tool call/result pairs -- if the oldest message is an assistant with `ToolCalls`, it drops that message together with all immediately following `RoleTool` messages, preventing orphaned tool results that would cause API errors. If dropping the pair would empty the slice, the loop stops. Orphaned `RoleTool` messages at the front (left over from a prior trim) are dropped individually.
 
+## Session Exit Coverage
+
+All session exit paths now produce summaries and fire the `after_reset` hook for mem9 persistence:
+
+| Exit Path | Summarizes | Fires `after_reset` | Notes |
+|-----------|:----------:|:-------------------:|-------|
+| `:reset` / `/new` | Yes | Yes | Manual reset via `SessionManager.Reset` |
+| Idle eviction | Yes | Yes | `EvictIdle` summarizes + hooks outside the lock |
+| Capacity eviction | Yes | Yes | `evictOldestLocked` returns session; caller summarizes outside the lock |
+| Shutdown | Yes | Yes | `Shutdown` collects all sessions, summarizes in parallel (30s timeout) |
+
 ## Current Gaps
 
-1. **HybridStrategy not implemented.** Config validation accepts `"hybrid"` but `NewContextStrategy` returns an error for it. The factory and config are out of sync.
-2. **No semantic/relevance-based selection.** Both strategies use a positional window (everything after the last anchor). There is no mechanism to keep semantically important older messages while dropping less relevant recent ones.
-3. **Token estimation is coarse.** The heuristic ignores subword tokenization, special tokens, and message framing overhead. It does not account for system prompt tokens or tool definitions, which also consume context budget.
-4. **System prompt not counted.** `maxTokens` represents the full context window, but `trimToFit` only considers message tokens. The system prompt and tool schemas are sent separately and also consume context, so the effective budget for messages is smaller than `maxTokens`.
-5. **No per-strategy configuration surface.** `MaskThreshold` and `MaxOutputChars` are hardcoded in `NewContextStrategy`. There is no way to tune them via config or env vars.
-6. **Summary injection is strategy-agnostic.** The summary-prepend logic lives in `tape.BuildMessages`, not in the strategy. A strategy cannot opt out of or customize how summaries are incorporated.
+1. **No semantic/relevance-based selection.** All strategies use a positional window (everything after the last anchor). There is no mechanism to keep semantically important older messages while dropping less relevant recent ones.
+2. **Token estimation is coarse.** The heuristic ignores subword tokenization, special tokens, and message framing overhead. Overhead budgeting helps but is still approximate.
+3. **No per-strategy configuration surface.** `MaskThreshold`, `SummarizeThreshold`, and `MaxOutputChars` are hardcoded in `NewContextStrategy`. There is no way to tune them via config or env vars.
+4. **Summary injection is strategy-agnostic.** The summary-prepend logic lives in `tape.BuildMessages`, not in the strategy. A strategy cannot opt out of or customize how summaries are incorporated.
