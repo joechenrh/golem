@@ -50,19 +50,50 @@ def main():
         return
 
     data = event.get("data", {})
+
+    # Only recall on the first LLM call per turn (iteration 0).
+    iteration = data.get("iteration", 0)
+    if iteration > 0:
+        print(json.dumps({"content": ""}))
+        return
+
     user_msg = data.get("user_message", "")
     if not user_msg:
         print(json.dumps({"content": ""}))
         return
 
+    recent_context = data.get("recent_context", "")
+
     try:
+        # Dual-query: precise (user message) + broad (recent context).
+        seen_ids = set()
+        all_memories = []
+
         result = _request("GET", "/memories", params={"q": user_msg, "limit": 5})
         memories = result if isinstance(result, list) else result.get("memories", [])
-        if not memories:
+        for m in memories:
+            mid = m.get("id", m.get("content", "")[:50])
+            if mid not in seen_ids:
+                seen_ids.add(mid)
+                all_memories.append(m)
+
+        if recent_context and recent_context != user_msg:
+            result2 = _request("GET", "/memories", params={"q": recent_context, "limit": 5})
+            memories2 = result2 if isinstance(result2, list) else result2.get("memories", [])
+            for m in memories2:
+                mid = m.get("id", m.get("content", "")[:50])
+                if mid not in seen_ids:
+                    seen_ids.add(mid)
+                    all_memories.append(m)
+
+        # Return top 5 by relevance (already sorted by API).
+        all_memories = all_memories[:5]
+        if not all_memories:
             print(json.dumps({"content": ""}))
             return
+
         lines = ["[Relevant memories from previous sessions]"]
-        for m in memories:
+        for m in all_memories:
             content = m.get("content", "")
             if len(content) > 300:
                 content = content[:300] + "..."
