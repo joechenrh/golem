@@ -74,7 +74,7 @@ const (
 	maxLogTruncateLen = 500
 
 	// max messages to include in summarization
-	maxSummaryMessages = 50
+	maxSummaryMessages = 80
 )
 
 // ExtHookRunner is satisfied by exthook.Runner.
@@ -313,9 +313,26 @@ func (s *Session) executeLLMCall(
 			}
 		}
 
+		// Build recent_context from the last 3 user messages for richer recall.
+		var recentParts []string
+		count := 0
+		for i := len(messages) - 1; i >= 0 && count < 3; i-- {
+			if messages[i].Role == llm.RoleUser {
+				recentParts = append(recentParts, messages[i].Content)
+				count++
+			}
+		}
+		// Reverse so they're in chronological order.
+		for i, j := 0, len(recentParts)-1; i < j; i, j = i+1, j-1 {
+			recentParts[i], recentParts[j] = recentParts[j], recentParts[i]
+		}
+		recentContext := strings.Join(recentParts, "\n")
+
 		injected, err := s.extHooks.Run(ctx, "before_llm_call", s.config.AgentName, map[string]any{
-			"user_message": userText,
-			"iteration":    iter,
+			"user_message":   userText,
+			"iteration":      iter,
+			"recent_context": recentContext,
+			"message_count":  len(messages),
 		})
 		if err != nil {
 			s.logger.Warn("external hook before_llm_call failed", zap.Error(err))
@@ -329,6 +346,12 @@ func (s *Session) executeLLMCall(
 
 	systemPrompt := s.buildSystemPrompt()
 	toolDefs := s.tools.ToolDefinitions()
+
+	// Budget system prompt + tool schemas into the context window.
+	if setter, ok := s.contextStrategy.(ctxmgr.OverheadSetter); ok {
+		overhead := ctxmgr.EstimateOverhead(systemPrompt, toolDefs)
+		setter.SetOverhead(overhead)
+	}
 
 	s.hooks.Emit(ctx, hooks.Event{
 		Type:    hooks.EventBeforeLLMCall,
@@ -788,9 +811,13 @@ func (s *Session) Summarize(ctx context.Context) (string, error) {
 		msgs = msgs[len(msgs)-maxSummaryMessages:]
 	}
 
-	summaryPrompt := "Summarize the key points, decisions, and outcomes from this conversation in 3-5 concise bullet points. " +
-		"Focus on what was done, what was decided, and any important context for future reference. " +
-		"Use the same language the user was speaking."
+	summaryPrompt := "Summarize this conversation using the following structured format. " +
+		"Use the same language the user was speaking.\n\n" +
+		"TOPIC: <one-line description of the main subject>\n" +
+		"DECISIONS:\n- <bullet list of decisions made>\n" +
+		"OUTCOMES:\n- <bullet list of what was accomplished>\n" +
+		"PENDING:\n- <bullet list of unfinished items, if any>\n" +
+		"KEY FACTS:\n- <bullet list of important names, IDs, values, or context for future reference>"
 
 	summaryMsgs := append(msgs, llm.Message{
 		Role:    llm.RoleUser,
@@ -801,7 +828,7 @@ func (s *Session) Summarize(ctx context.Context) (string, error) {
 	resp, err := s.llm.Chat(ctx, llm.ChatRequest{
 		Model:     modelName,
 		Messages:  summaryMsgs,
-		MaxTokens: 1024,
+		MaxTokens: 2048,
 	})
 	if err != nil {
 		return "", fmt.Errorf("summarize: LLM call: %w", err)

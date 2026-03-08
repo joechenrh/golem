@@ -19,6 +19,26 @@ type ContextStrategy interface {
 	Name() string
 }
 
+// OverheadSetter is an optional interface for strategies that account for
+// system prompt + tool schema overhead when computing effective context budget.
+type OverheadSetter interface {
+	SetOverhead(tokens int)
+}
+
+// EstimateOverhead estimates token usage for the system prompt and tool schemas
+// so strategies can subtract it from the context window budget.
+func EstimateOverhead(systemPrompt string, tools []llm.ToolDefinition) int {
+	total := estimateStringTokens(systemPrompt)
+	for _, t := range tools {
+		total += estimateStringTokens(t.Name)
+		total += estimateStringTokens(t.Description)
+		if len(t.Parameters) > 0 {
+			total += estimateStringTokens(string(t.Parameters))
+		}
+	}
+	return total
+}
+
 // NewContextStrategy creates a strategy from a config name.
 func NewContextStrategy(name string) (ContextStrategy, error) {
 	switch name {
@@ -27,7 +47,11 @@ func NewContextStrategy(name string) (ContextStrategy, error) {
 	case "masking":
 		return &MaskingStrategy{MaskThreshold: 0.5, MaxOutputChars: 2000}, nil
 	case "hybrid":
-		return &HybridStrategy{MaskThreshold: 0.7, MaxOutputChars: 2000}, nil
+		return &HybridStrategy{
+			MaskThreshold:      0.5,
+			SummarizeThreshold: 0.7,
+			MaxOutputChars:     2000,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unknown context strategy: %q", name)
 	}
@@ -35,16 +59,20 @@ func NewContextStrategy(name string) (ContextStrategy, error) {
 
 // AnchorStrategy sends all messages since the last anchor, verbatim.
 // If context exceeds maxTokens, oldest messages are dropped.
-type AnchorStrategy struct{}
+type AnchorStrategy struct {
+	Overhead int // tokens consumed by system prompt + tool schemas
+}
 
-func (s *AnchorStrategy) Name() string { return "anchor" }
+func (s *AnchorStrategy) Name() string           { return "anchor" }
+func (s *AnchorStrategy) SetOverhead(tokens int) { s.Overhead = tokens }
 
 func (s *AnchorStrategy) BuildContext(
 	_ context.Context, entries []tape.TapeEntry,
 	maxTokens int,
 ) ([]llm.Message, error) {
+	effectiveMax := maxTokens - s.Overhead
 	msgs := tape.BuildMessages(entries)
-	return trimToFit(msgs, maxTokens), nil
+	return trimToFit(msgs, effectiveMax), nil
 }
 
 // MaskingStrategy extends AnchorStrategy by truncating large tool outputs
@@ -52,47 +80,177 @@ func (s *AnchorStrategy) BuildContext(
 type MaskingStrategy struct {
 	MaskThreshold  float64 // fraction of maxTokens before masking kicks in (default: 0.5)
 	MaxOutputChars int     // max chars per tool output before truncation (default: 2000)
+	Overhead       int     // tokens consumed by system prompt + tool schemas
 }
 
-func (s *MaskingStrategy) Name() string { return "masking" }
+func (s *MaskingStrategy) Name() string           { return "masking" }
+func (s *MaskingStrategy) SetOverhead(tokens int) { s.Overhead = tokens }
 
 func (s *MaskingStrategy) BuildContext(
 	_ context.Context, entries []tape.TapeEntry,
 	maxTokens int,
 ) ([]llm.Message, error) {
+	effectiveMax := maxTokens - s.Overhead
 	msgs := tape.BuildMessages(entries)
 
-	threshold := int(float64(maxTokens) * s.MaskThreshold)
+	threshold := int(float64(effectiveMax) * s.MaskThreshold)
 	if EstimateTokens(msgs) > threshold {
 		msgs = MaskObservations(msgs, s.MaxOutputChars)
 	}
 
-	return trimToFit(msgs, maxTokens), nil
+	return trimToFit(msgs, effectiveMax), nil
 }
 
-// HybridStrategy combines anchor windowing with adaptive masking.
-// It first masks large tool outputs, then trims oldest messages to fit.
-// Uses a higher mask threshold (0.7) than pure MaskingStrategy (0.5)
-// so masking is less aggressive and only kicks in closer to the limit.
+// HybridStrategy combines LLM-powered summarization with adaptive masking.
+// Pipeline:
+//  1. If tokens > effectiveMax * SummarizeThreshold: summarize oldest half via LLM
+//  2. If tokens > effectiveMax * MaskThreshold: mask large tool outputs
+//  3. trimToFit as last resort (with OnDrop callback)
 type HybridStrategy struct {
-	MaskThreshold  float64 // fraction of maxTokens before masking kicks in (default: 0.7)
-	MaxOutputChars int     // max chars per tool output before truncation (default: 2000)
+	MaskThreshold      float64 // fraction of effectiveMax before masking kicks in (default: 0.5)
+	SummarizeThreshold float64 // fraction of effectiveMax before LLM summarization kicks in (default: 0.7)
+	MaxOutputChars     int     // max chars per tool output before truncation (default: 2000)
+	Overhead           int     // tokens consumed by system prompt + tool schemas
+
+	// LLM and Model are set after construction by the wiring layer.
+	// When LLM is nil, summarization is skipped (falls back to mask-only).
+	LLM   llm.Client
+	Model string
+
+	// OnDrop is called with messages about to be discarded by trimToFit.
+	// Wired by session.go to fire the context_dropped hook.
+	OnDrop func(ctx context.Context, dropped []llm.Message)
 }
 
-func (s *HybridStrategy) Name() string { return "hybrid" }
+func (s *HybridStrategy) Name() string           { return "hybrid" }
+func (s *HybridStrategy) SetOverhead(tokens int) { s.Overhead = tokens }
 
 func (s *HybridStrategy) BuildContext(
-	_ context.Context, entries []tape.TapeEntry,
+	ctx context.Context, entries []tape.TapeEntry,
 	maxTokens int,
 ) ([]llm.Message, error) {
+	effectiveMax := maxTokens - s.Overhead
 	msgs := tape.BuildMessages(entries)
 
-	threshold := int(float64(maxTokens) * s.MaskThreshold)
-	if EstimateTokens(msgs) > threshold {
+	// Step 1: LLM summarization of oldest messages when over threshold.
+	sumThreshold := int(float64(effectiveMax) * s.SummarizeThreshold)
+	if s.LLM != nil && EstimateTokens(msgs) > sumThreshold && len(msgs) > 4 {
+		summarized, err := s.summarizeOldest(ctx, msgs)
+		if err == nil {
+			msgs = summarized
+		}
+		// On error, fall through to masking/trimming.
+	}
+
+	// Step 2: Mask large tool outputs.
+	maskThreshold := int(float64(effectiveMax) * s.MaskThreshold)
+	if EstimateTokens(msgs) > maskThreshold {
 		msgs = MaskObservations(msgs, s.MaxOutputChars)
 	}
 
-	return trimToFit(msgs, maxTokens), nil
+	// Step 3: trimToFit as last resort, with OnDrop callback.
+	msgs = s.trimWithCallback(ctx, msgs, effectiveMax)
+	return msgs, nil
+}
+
+// summarizeOldest takes the oldest half of messages, asks the LLM to distill
+// them into a concise summary, and replaces them with a synthetic message.
+func (s *HybridStrategy) summarizeOldest(
+	ctx context.Context, msgs []llm.Message,
+) ([]llm.Message, error) {
+	half := len(msgs) / 2
+	if half < 2 {
+		return msgs, nil
+	}
+	oldest := msgs[:half]
+	rest := msgs[half:]
+
+	// Build a condensed text representation of the oldest messages.
+	var sb strings.Builder
+	for _, m := range oldest {
+		fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, truncateForSummary(m.Content, 500))
+	}
+
+	summaryReq := llm.ChatRequest{
+		Model: s.Model,
+		Messages: []llm.Message{
+			{
+				Role: llm.RoleUser,
+				Content: "Distill the following conversation into a concise summary. " +
+					"Preserve: decisions made, key facts, IDs/names, pending tasks, and outcomes. " +
+					"Use structured format:\n" +
+					"TOPIC: <one line>\nDECISIONS: <bullet list>\nOUTCOMES: <bullet list>\n" +
+					"PENDING: <bullet list>\nKEY FACTS: <bullet list>\n\n" +
+					"Conversation:\n" + sb.String(),
+			},
+		},
+		MaxTokens: 1024,
+	}
+
+	resp, err := s.LLM.Chat(ctx, summaryReq)
+	if err != nil {
+		return nil, fmt.Errorf("summarize oldest: %w", err)
+	}
+
+	summaryMsg := llm.Message{
+		Role:    llm.RoleUser,
+		Content: "[Summarized earlier context]\n" + resp.Content,
+	}
+	ackMsg := llm.Message{
+		Role:    llm.RoleAssistant,
+		Content: "Understood. I have the summarized context from earlier in our conversation.",
+	}
+
+	result := make([]llm.Message, 0, 2+len(rest))
+	result = append(result, summaryMsg, ackMsg)
+	result = append(result, rest...)
+	return result, nil
+}
+
+// trimWithCallback is like trimToFit but calls OnDrop before discarding messages.
+func (s *HybridStrategy) trimWithCallback(
+	ctx context.Context, msgs []llm.Message, maxTokens int,
+) []llm.Message {
+	if EstimateTokens(msgs) <= maxTokens || len(msgs) <= 1 {
+		return msgs
+	}
+
+	// Collect messages that will be dropped.
+	var dropped []llm.Message
+	for len(msgs) > 1 && EstimateTokens(msgs) > maxTokens {
+		if msgs[0].Role == llm.RoleAssistant && len(msgs[0].ToolCalls) > 0 {
+			i := 1
+			for i < len(msgs) && msgs[i].Role == llm.RoleTool {
+				i++
+			}
+			if i >= len(msgs) {
+				break
+			}
+			dropped = append(dropped, msgs[:i]...)
+			msgs = msgs[i:]
+			continue
+		}
+		if msgs[0].Role == llm.RoleTool {
+			dropped = append(dropped, msgs[0])
+			msgs = msgs[1:]
+			continue
+		}
+		dropped = append(dropped, msgs[0])
+		msgs = msgs[1:]
+	}
+
+	if len(dropped) > 0 && s.OnDrop != nil {
+		go s.OnDrop(ctx, dropped)
+	}
+	return msgs
+}
+
+// truncateForSummary limits a string to maxLen chars for summarization input.
+func truncateForSummary(s string, maxLen int) string {
+	if len(s) > maxLen {
+		return s[:maxLen] + "..."
+	}
+	return s
 }
 
 // EstimateTokens roughly estimates token count.
