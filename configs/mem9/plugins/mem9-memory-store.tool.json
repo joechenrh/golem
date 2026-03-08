@@ -1,0 +1,16 @@
+{
+  "name": "memory_store",
+  "description": "Save information to shared memory",
+  "full_description": "Save important information to persistent shared memory for future sessions. Use when the user asks to remember, note down, or save something.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "content": {"type": "string", "description": "The information to remember."},
+      "tags": {"type": "array", "items": {"type": "string"}, "description": "1-3 short tags"},
+      "source": {"type": "string", "description": "Source agent identifier (default: golem)"}
+    },
+    "required": ["content"]
+  },
+  "command": "python3",
+  "args": ["__GOLEM_HOME__/plugins/mem9_handler.py", "--mode=tool", "--tool=memory_store"]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "memory_delete",
+  "description": "Delete a memory by ID",
+  "full_description": "Permanently delete a memory by its ID. Use when stored information is outdated or incorrect.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "id": {"type": "string", "description": "The memory ID to delete"}
+    },
+    "required": ["id"]
+  },
+  "command": "python3",
+  "args": ["__GOLEM_HOME__/plugins/mem9_handler.py", "--mode=tool", "--tool=memory_delete"]
+}

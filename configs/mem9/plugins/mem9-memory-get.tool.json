@@ -1,0 +1,14 @@
+{
+  "name": "memory_get",
+  "description": "Get a specific memory by ID",
+  "full_description": "Retrieve the full content and metadata of a specific memory by its ID.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "id": {"type": "string", "description": "The memory ID to retrieve"}
+    },
+    "required": ["id"]
+  },
+  "command": "python3",
+  "args": ["__GOLEM_HOME__/plugins/mem9_handler.py", "--mode=tool", "--tool=memory_get"]
+}

@@ -1,0 +1,15 @@
+{
+  "name": "memory_update",
+  "description": "Update an existing memory",
+  "full_description": "Update the content of an existing memory by its ID. Use when previously stored information needs correction or enrichment.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "id": {"type": "string", "description": "The memory ID to update"},
+      "content": {"type": "string", "description": "The new content for the memory"}
+    },
+    "required": ["id", "content"]
+  },
+  "command": "python3",
+  "args": ["__GOLEM_HOME__/plugins/mem9_handler.py", "--mode=tool", "--tool=memory_update"]
+}

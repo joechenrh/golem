@@ -1,0 +1,15 @@
+{
+  "name": "memory_search",
+  "description": "Search shared memories by relevance",
+  "full_description": "Search shared memories from past sessions. Use for questions involving historical decisions, preferences, or previously mentioned content. Returns relevant memories ranked by relevance.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": {"type": "string", "description": "Search query — use 2-3 keywords"},
+      "limit": {"type": "integer", "description": "Maximum number of results (default 10)"}
+    },
+    "required": ["query"]
+  },
+  "command": "python3",
+  "args": ["__GOLEM_HOME__/plugins/mem9_handler.py", "--mode=tool", "--tool=memory_search"]
+}
