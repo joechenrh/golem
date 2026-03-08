@@ -508,7 +508,7 @@ func TestIntegration_NudgeBehavior(t *testing.T) {
 	for _, e := range entries {
 		pm := e.PayloadMap()
 		content, _ := pm["content"].(string)
-		if strings.Contains(content, "use the available tools") {
+		if strings.Contains(content, "Call the appropriate tool") {
 			foundNudge = true
 			break
 		}

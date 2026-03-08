@@ -77,11 +77,13 @@ func startsWithPhrase(text, phrase string) bool {
 }
 
 // nudgeMessage returns a nudge prompt in the same language as the content.
+// The message reminds the LLM to call tools with correct parameters rather
+// than just describing its intentions.
 func nudgeMessage(content string) string {
 	if isMostlyCJK(content) {
-		return "不要只描述你打算做什么——现在就使用可用的工具来执行。"
+		return "请直接调用工具完成任务，确保传入所有必需参数。不要只描述你打算做什么。"
 	}
-	return "Don't just describe what you'll do — use the available tools now to proceed."
+	return "Call the appropriate tool now with all required parameters. Don't just describe what you plan to do."
 }
 
 // emptyResponseHint returns a recovery message injected after consecutive
