@@ -64,6 +64,9 @@ const (
 	// max auto-nudges per user turn before accepting the response
 	maxNudges = 2
 
+	// max consecutive empty LLM responses before injecting a recovery hint
+	maxEmptyRetries = 3
+
 	// consecutive failures of a single tool before injecting a "reconsider" hint
 	maxToolFailures = 3
 
@@ -189,6 +192,7 @@ func (s *Session) runReActLoop(
 	s.toolFailures = make(map[string]int)
 
 	nudges := 0
+	emptyRetries := 0
 	lastToolFailed := false // previous iteration had a tool failure
 
 	for iter := range s.config.MaxToolIter {
@@ -231,13 +235,20 @@ func (s *Session) runReActLoop(
 			continue
 		}
 
-		// Empty response with no tool calls — retry instead of
-		// returning a blank answer to the user.
+		// Empty response with no tool calls — retry up to maxEmptyRetries,
+		// then inject a recovery hint to break the loop.
 		if strings.TrimSpace(resp.Content) == "" {
+			emptyRetries++
 			s.logger.Warn("LLM returned empty response, retrying",
-				zap.Int("iter", iter))
+				zap.Int("iter", iter), zap.Int("empty_retries", emptyRetries))
+			if emptyRetries >= maxEmptyRetries {
+				s.appendMessage(llm.RoleAssistant, resp.Content, nil, "", nil)
+				s.appendMessage(llm.RoleUser, emptyResponseHint(lastToolFailed), nil, "", nil)
+				emptyRetries = 0
+			}
 			continue
 		}
+		emptyRetries = 0
 
 		// No tool calls — nudge the LLM to retry if:
 		// - a tool just failed (schema now expanded, worth retrying), or

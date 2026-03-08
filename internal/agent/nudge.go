@@ -84,6 +84,15 @@ func nudgeMessage(content string) string {
 	return "Don't just describe what you'll do — use the available tools now to proceed."
 }
 
+// emptyResponseHint returns a recovery message injected after consecutive
+// empty LLM responses to break the retry loop and provide guidance.
+func emptyResponseHint(afterToolError bool) string {
+	if afterToolError {
+		return "The previous tool call returned an error. Review the error message, check the required parameters, and retry with correct arguments."
+	}
+	return "Your previous response was empty. If you need to use a tool, call it with the correct parameters. Otherwise, reply with a text answer."
+}
+
 // isMostlyCJK returns true if CJK characters make up the majority of
 // non-whitespace, non-punctuation runes in the text.
 func isMostlyCJK(s string) bool {
