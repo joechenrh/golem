@@ -135,8 +135,31 @@ func TestAuditHook_AppendsToExisting(t *testing.T) {
 }
 
 func TestAuditHook_InvalidPath(t *testing.T) {
-	_, err := NewAuditHook("/nonexistent/dir/audit.jsonl")
+	// With lazy file creation, construction succeeds but the first Handle fails.
+	h, err := NewAuditHook("/nonexistent/dir/audit.jsonl")
+	if err != nil {
+		t.Fatalf("construction should succeed with lazy open: %v", err)
+	}
+	defer h.Close()
+
+	err = h.Handle(context.Background(), Event{Type: EventUserMessage, Payload: map[string]any{"text": "hi"}})
 	if err == nil {
-		t.Error("expected error for invalid path")
+		t.Error("expected error on first Handle with invalid path")
+	}
+}
+
+func TestAuditHook_NoFileWhenUnused(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+
+	h, err := NewAuditHook(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Close()
+
+	// File should not exist since no events were written.
+	if _, err := os.Stat(path); err == nil {
+		t.Error("audit file should not exist when no events were written")
 	}
 }

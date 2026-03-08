@@ -41,35 +41,45 @@ type FileStore struct {
 
 // NewFileStore creates or opens a JSONL tape file at the given path.
 // If the file already contains entries (session restore), they are loaded
-// into the in-memory cache. The file is kept open for appends.
+// into the in-memory cache. The file handle is opened lazily on the first
+// Append call, so sessions that never write avoid creating empty files.
 func NewFileStore(path string) (*FileStore, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("tape: open %s: %w", path, err)
-	}
+	s := &FileStore{path: path}
 
-	info, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("tape: stat %s: %w", path, err)
+	// Load existing entries from disk if the file exists.
+	if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+		entries, err := s.loadFromDisk()
+		if err != nil {
+			return nil, fmt.Errorf("tape: loading existing entries: %w", err)
+		}
+		s.entries = entries
+		s.diskBytes = info.Size()
 	}
-
-	s := &FileStore{path: path, file: f, diskBytes: info.Size()}
-
-	// Load existing entries from disk into the cache.
-	entries, err := s.loadFromDisk()
-	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("tape: loading existing entries: %w", err)
-	}
-	s.entries = entries
 
 	return s, nil
+}
+
+// ensureOpen opens the file handle for appends if not already open.
+// Must be called with s.mu held.
+func (s *FileStore) ensureOpen() error {
+	if s.file != nil {
+		return nil
+	}
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("tape: open %s: %w", s.path, err)
+	}
+	s.file = f
+	return nil
 }
 
 func (s *FileStore) Append(entry TapeEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
 
 	if entry.ID == "" {
 		entry.ID = uuid.NewString()

@@ -10,19 +10,30 @@ import (
 
 // AuditHook writes structured JSON audit entries to a file.
 // Each line is a self-contained JSON object for easy parsing.
+// The file is created lazily on the first event to avoid empty audit files.
 type AuditHook struct {
 	mu   sync.Mutex
+	path string
 	file *os.File
 }
 
-// NewAuditHook creates an audit hook that appends to the given file path.
-// The file is created if it does not exist.
+// NewAuditHook creates an audit hook that will append to the given file path.
+// The file is created lazily on the first Handle call.
 func NewAuditHook(path string) (*AuditHook, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return nil, err
+	return &AuditHook{path: path}, nil
+}
+
+// ensureOpen opens the audit file if not already open. Must be called with mu held.
+func (h *AuditHook) ensureOpen() error {
+	if h.file != nil {
+		return nil
 	}
-	return &AuditHook{file: f}, nil
+	f, err := os.OpenFile(h.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	h.file = f
+	return nil
 }
 
 func (h *AuditHook) Name() string { return "audit" }
@@ -49,13 +60,19 @@ func (h *AuditHook) Handle(_ context.Context, event Event) error {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if err := h.ensureOpen(); err != nil {
+		return err
+	}
 	_, err = h.file.Write(data)
 	return err
 }
 
-// Close closes the underlying file.
+// Close closes the underlying file. Safe to call if no events were written.
 func (h *AuditHook) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.file.Close()
+	if h.file != nil {
+		return h.file.Close()
+	}
+	return nil
 }

@@ -20,6 +20,20 @@ func newTestStore(t *testing.T) *FileStore {
 	return s
 }
 
+func TestFileStore_NoFileWhenUnused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lazy.jsonl")
+	s, err := NewFileStore(path)
+	if err != nil {
+		t.Fatalf("NewFileStore() error: %v", err)
+	}
+	s.Close()
+
+	// File should not exist since nothing was written.
+	if _, err := os.Stat(path); err == nil {
+		t.Error("tape file should not exist when no entries were appended")
+	}
+}
+
 func TestAppendAndEntries(t *testing.T) {
 	s := newTestStore(t)
 
