@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -63,10 +64,16 @@ func (r *Runner) BeforeLLMCall(ctx context.Context, agentName, userMessage strin
 			continue
 		}
 
+		r.logger.Debug("running external hook",
+			zap.String("hook", h.Name), zap.String("event", string(EventBeforeLLMCall)))
+		start := time.Now()
 		out, err := r.executeHook(ctx, h, data)
+		elapsed := time.Since(start)
 		if err != nil {
 			r.logger.Warn("external hook failed",
-				zap.String("hook", h.Name), zap.Error(err))
+				zap.String("hook", h.Name),
+				zap.Duration("elapsed", elapsed),
+				zap.Error(err))
 			continue
 		}
 
@@ -79,6 +86,10 @@ func (r *Runner) BeforeLLMCall(ctx context.Context, agentName, userMessage strin
 		}
 
 		if result.Content != "" {
+			r.logger.Debug("external hook injected context",
+				zap.String("hook", h.Name),
+				zap.Int("content_len", len(result.Content)),
+				zap.Duration("elapsed", elapsed))
 			parts = append(parts, result.Content)
 		}
 	}
@@ -105,9 +116,18 @@ func (r *Runner) AfterReset(ctx context.Context, summary, agentName string) {
 		if !h.subscribedTo(EventAfterReset) {
 			continue
 		}
+		r.logger.Debug("running external hook",
+			zap.String("hook", h.Name), zap.String("event", string(EventAfterReset)))
+		start := time.Now()
 		if _, err := r.executeHook(ctx, h, data); err != nil {
 			r.logger.Warn("external hook after_reset failed",
-				zap.String("hook", h.Name), zap.Error(err))
+				zap.String("hook", h.Name),
+				zap.Duration("elapsed", time.Since(start)),
+				zap.Error(err))
+		} else {
+			r.logger.Debug("external hook after_reset completed",
+				zap.String("hook", h.Name),
+				zap.Duration("elapsed", time.Since(start)))
 		}
 	}
 }

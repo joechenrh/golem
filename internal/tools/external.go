@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+
+	"go.uber.org/zap"
 )
 
 // ExternalToolManifest describes an external tool plugin loaded from a JSON file.
@@ -31,6 +33,7 @@ type ExternalToolManifest struct {
 // via JSON-RPC 2.0 over stdin/stdout.
 type ExternalTool struct {
 	manifest ExternalToolManifest
+	logger   *zap.Logger
 
 	mu     sync.Mutex
 	proc   *exec.Cmd
@@ -61,8 +64,8 @@ type jsonRPCError struct {
 }
 
 // NewExternalTool creates an ExternalTool from a manifest.
-func NewExternalTool(m ExternalToolManifest) *ExternalTool {
-	return &ExternalTool{manifest: m}
+func NewExternalTool(m ExternalToolManifest, logger *zap.Logger) *ExternalTool {
+	return &ExternalTool{manifest: m, logger: logger}
 }
 
 func (t *ExternalTool) Name() string        { return t.manifest.Name }
@@ -80,6 +83,10 @@ func (t *ExternalTool) Execute(ctx context.Context, args string) (string, error)
 	defer t.mu.Unlock()
 
 	if err := t.ensureRunning(); err != nil {
+		t.logger.Error("external tool process start failed",
+			zap.String("tool", t.manifest.Name),
+			zap.String("command", t.manifest.Command),
+			zap.Error(err))
 		return "", fmt.Errorf("external tool %q: start process: %w", t.manifest.Name, err)
 	}
 
@@ -98,13 +105,16 @@ func (t *ExternalTool) Execute(ctx context.Context, args string) (string, error)
 	data = append(data, '\n')
 
 	if _, err := t.stdin.Write(data); err != nil {
-		// Process may have died; restart on next call.
+		t.logger.Warn("external tool process died, will restart on next call",
+			zap.String("tool", t.manifest.Name), zap.Error(err))
 		t.cleanup()
 		return "", fmt.Errorf("external tool %q: write request: %w", t.manifest.Name, err)
 	}
 
 	if !t.stdout.Scan() {
 		err := t.stdout.Err()
+		t.logger.Warn("external tool process exited unexpectedly",
+			zap.String("tool", t.manifest.Name), zap.Error(err))
 		t.cleanup()
 		if err != nil {
 			return "", fmt.Errorf("external tool %q: read response: %w", t.manifest.Name, err)
@@ -114,10 +124,18 @@ func (t *ExternalTool) Execute(ctx context.Context, args string) (string, error)
 
 	var resp jsonRPCResponse
 	if err := json.Unmarshal(t.stdout.Bytes(), &resp); err != nil {
+		t.logger.Warn("external tool returned invalid JSON",
+			zap.String("tool", t.manifest.Name),
+			zap.String("raw", string(t.stdout.Bytes())),
+			zap.Error(err))
 		return "", fmt.Errorf("external tool %q: unmarshal response: %w", t.manifest.Name, err)
 	}
 
 	if resp.Error != nil {
+		t.logger.Warn("external tool returned error",
+			zap.String("tool", t.manifest.Name),
+			zap.Int("code", resp.Error.Code),
+			zap.String("message", resp.Error.Message))
 		return fmt.Sprintf("Error: %s (code %d)", resp.Error.Message, resp.Error.Code), nil
 	}
 
@@ -135,11 +153,21 @@ func (t *ExternalTool) ensureRunning() error {
 		return nil
 	}
 
+	t.logger.Info("starting external tool process",
+		zap.String("tool", t.manifest.Name),
+		zap.String("command", t.manifest.Command),
+		zap.Strings("args", t.manifest.Args))
+
 	cmd := exec.Command(t.manifest.Command, t.manifest.Args...)
 	if t.manifest.WorkDir != "" {
 		cmd.Dir = t.manifest.WorkDir
 	}
-	cmd.Stderr = os.Stderr // let plugin errors surface
+
+	// Capture stderr via a pipe so we can log it through the structured logger.
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -155,6 +183,16 @@ func (t *ExternalTool) ensureRunning() error {
 		stdin.Close()
 		return err
 	}
+
+	// Drain stderr in background and log lines.
+	go func() {
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			t.logger.Warn("external tool stderr",
+				zap.String("tool", t.manifest.Name),
+				zap.String("line", scanner.Text()))
+		}
+	}()
 
 	t.proc = cmd
 	t.stdin = stdin
@@ -172,6 +210,8 @@ func (t *ExternalTool) cleanup() {
 	if t.proc != nil {
 		t.proc.Process.Kill()
 		t.proc.Wait()
+		t.logger.Debug("external tool process stopped",
+			zap.String("tool", t.manifest.Name))
 	}
 	t.proc = nil
 	t.stdin = nil
@@ -187,7 +227,7 @@ func (t *ExternalTool) Close() {
 
 // LoadExternalTools reads all *.tool.json files from the given directory
 // and returns the corresponding ExternalTool instances.
-func LoadExternalTools(dir string) ([]*ExternalTool, error) {
+func LoadExternalTools(dir string, logger *zap.Logger) ([]*ExternalTool, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -220,7 +260,7 @@ func LoadExternalTools(dir string) ([]*ExternalTool, error) {
 			manifest.Parameters = json.RawMessage(`{"type":"object","properties":{}}`)
 		}
 
-		tools = append(tools, NewExternalTool(manifest))
+		tools = append(tools, NewExternalTool(manifest, logger))
 	}
 
 	return tools, nil

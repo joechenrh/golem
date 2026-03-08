@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"go.uber.org/zap"
 )
 
 func TestLoadExternalTools_ValidManifest(t *testing.T) {
@@ -20,7 +22,7 @@ func TestLoadExternalTools_ValidManifest(t *testing.T) {
 	data, _ := json.Marshal(manifest)
 	os.WriteFile(filepath.Join(dir, "test.tool.json"), data, 0644)
 
-	tools, err := LoadExternalTools(dir)
+	tools, err := LoadExternalTools(dir, zap.NewNop())
 	if err != nil {
 		t.Fatalf("LoadExternalTools: %v", err)
 	}
@@ -33,7 +35,7 @@ func TestLoadExternalTools_ValidManifest(t *testing.T) {
 }
 
 func TestLoadExternalTools_MissingDir(t *testing.T) {
-	tools, err := LoadExternalTools("/nonexistent/path")
+	tools, err := LoadExternalTools("/nonexistent/path", zap.NewNop())
 	if err != nil {
 		t.Fatalf("expected nil error for missing dir, got: %v", err)
 	}
@@ -46,7 +48,7 @@ func TestLoadExternalTools_InvalidManifest(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "bad.tool.json"), []byte("{invalid json}"), 0644)
 
-	_, err := LoadExternalTools(dir)
+	_, err := LoadExternalTools(dir, zap.NewNop())
 	if err == nil {
 		t.Fatal("expected error for invalid JSON manifest")
 	}
@@ -60,7 +62,7 @@ func TestLoadExternalTools_MissingRequiredFields(t *testing.T) {
 	data, _ := json.Marshal(manifest)
 	os.WriteFile(filepath.Join(dir, "test.tool.json"), data, 0644)
 
-	_, err := LoadExternalTools(dir)
+	_, err := LoadExternalTools(dir, zap.NewNop())
 	if err == nil {
 		t.Fatal("expected error for missing command")
 	}
@@ -83,7 +85,7 @@ echo '{"jsonrpc":"2.0","id":1,"result":"hello from plugin"}'
 		Command:     "/bin/sh",
 		Args:        []string{scriptPath},
 		Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
-	})
+	}, zap.NewNop())
 	defer tool.Close()
 
 	result, err := tool.Execute(context.Background(), "{}")
@@ -110,7 +112,7 @@ echo '{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"something went wrong
 		Command:     "/bin/sh",
 		Args:        []string{scriptPath},
 		Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
-	})
+	}, zap.NewNop())
 	defer tool.Close()
 
 	result, err := tool.Execute(context.Background(), "{}")

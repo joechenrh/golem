@@ -401,10 +401,20 @@ func BuildAgent(
 		globalHookDir := filepath.Join(config.GolemHome(), "hooks")
 		if hks, err := exthook.Discover(globalHookDir); err == nil {
 			allHooks = append(allHooks, hks...)
+		} else if !os.IsNotExist(err) {
+			logger.Warn("failed to discover global hooks", zap.String("dir", globalHookDir), zap.Error(err))
 		}
 		agentHookDir := filepath.Join(config.GolemHome(), "agents", name, "hooks")
 		if hks, err := exthook.Discover(agentHookDir); err == nil {
 			allHooks = append(allHooks, hks...)
+		} else if !os.IsNotExist(err) {
+			logger.Warn("failed to discover agent hooks", zap.String("dir", agentHookDir), zap.Error(err))
+		}
+		for _, h := range allHooks {
+			logger.Info("loaded external hook",
+				zap.String("name", h.Name),
+				zap.String("command", h.Command),
+				zap.Any("events", h.Events))
 		}
 		if len(allHooks) > 0 {
 			extHookRunner = exthook.NewRunner(allHooks, logger)
@@ -671,7 +681,7 @@ func BuildToolRegistry(
 
 	// Load external plugin tools from ~/.golem/plugins/.
 	pluginDir := filepath.Join(config.GolemHome(), "plugins")
-	extTools, err := tools.LoadExternalTools(pluginDir)
+	extTools, err := tools.LoadExternalTools(pluginDir, logger)
 	if err != nil {
 		logger.Warn("external tool loading failed", zap.Error(err))
 	}
