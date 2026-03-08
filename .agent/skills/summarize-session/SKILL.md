@@ -49,7 +49,7 @@ If the user asks to save the summary, or if this was a significant work session:
 2. Use `persona_self` (action: "write") to append or update the summary
 3. Keep memory concise — store only the essential takeaways, not the full summary
 
-If the mnemos memory system is available, also consider using `memory_store` to save key decisions or facts for cross-session recall.
+If shared memory tools are available (e.g. `memory_store`), also consider saving key decisions or facts for cross-session recall.
 
 ## Guidelines
 

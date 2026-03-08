@@ -40,12 +40,6 @@ All fields live in `config.Config`. Source: `internal/config/config.go`.
 | Channels | `LarkAppID` | `LARK_APP_ID` | `string` | `""` | Agent |
 | Channels | `LarkAppSecret` | `LARK_APP_SECRET` | `string` | `""` | Agent |
 | Channels | `LarkVerifyToken` | `LARK_VERIFY_TOKEN` | `string` | `""` | Agent |
-| Memory | `MnemosDBHost` | `MNEMO_DB_HOST` | `string` | `""` | Agent |
-| Memory | `MnemosDBUser` | `MNEMO_DB_USER` | `string` | `""` | Agent |
-| Memory | `MnemosDBPass` | `MNEMO_DB_PASS` | `string` | `""` | Agent |
-| Memory | `MnemosDBName` | `MNEMO_DB_NAME` | `string` | `"mnemos"` | Agent |
-| Memory | `MnemosAutoEmbedModel` | `MNEMO_AUTO_EMBED_MODEL` | `string` | `""` | Agent |
-| Memory | `MnemosAutoEmbedDims` | `MNEMO_AUTO_EMBED_DIMS` | `int` | `1024` | Agent |
 | Sessions | `MaxSessions` | `GOLEM_MAX_SESSIONS` | `int` | `100` | Agent |
 | Sessions | `SessionIdleTime` | `GOLEM_SESSION_IDLE_TIME` | `time.Duration` | `24h` | Agent |
 | Observability | `MetricsPort` | `GOLEM_METRICS_PORT` | `string` | `""` (disabled) | Global |

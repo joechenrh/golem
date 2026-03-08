@@ -48,12 +48,11 @@ Middlewares wrap `Execute` in registration order (outermost first). The app curr
 1. Core tools (shell, file ops)
 2. Web tools (search, fetch, HTTP)
 3. Lark tools (if `LarkChannel` is configured) — pre-expanded
-4. Memory tools (if mnemos is configured)
-5. Persona memory tool (if persona is configured)
-6. Schedule tools (added later, on the default registry)
-7. Spawn agent tool
-8. Skills (global from `~/.golem/skills/`, then per-agent from `~/.golem/agents/<name>/skills/`)
-9. External plugins (from `~/.golem/plugins/*.tool.json`)
+4. Persona memory tool (if persona is configured)
+5. Schedule tools (added later, on the default registry)
+6. Spawn agent tool
+7. Skills (global from `~/.golem/skills/`, then per-agent from `~/.golem/agents/<name>/skills/`)
+8. External plugins (from `~/.golem/plugins/*.tool.json`, e.g. mem9 memory tools)
 
 ## 4. Progressive Disclosure
 
@@ -135,8 +134,6 @@ Source: `internal/tools/external.go`
 | `lark_list_chats` | List Lark groups the bot belongs to | (none) |
 | `lark_read_doc` | Read plain text of a Feishu document; accepts full URL | `document_id` |
 | `lark_write_doc` | Replace entire document content with markdown converted to Feishu blocks | `document_id`, `content` (markdown) |
-| `memory_store` | Save information to persistent shared memory (mnemos vector DB) | `content`, `tags`, `key` (upsert), `source` |
-| `memory_recall` | Search shared memories by relevance | `query`, `limit` (default 10) |
 | `persona_memory` | Read/write the agent's own `MEMORY.md` file | `action` (`read`/`write`), `content` (for write) |
 | `schedule_add` | Create a cron-scheduled task; supports standard cron, `@daily`, `@every 30m`, `CRON_TZ=` | `cron_expr`, `prompt`, `channel_name`, `channel_id`, `description` |
 | `schedule_list` | List all scheduled tasks | (none) |

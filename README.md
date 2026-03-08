@@ -17,7 +17,7 @@ This project is a **Go clone** of [CrabClaw](https://github.com/jackwener/crabcl
 - **Skill discovery**: Two-scope skill loading from `~/.golem/skills/` (global) and `~/.golem/agents/<name>/skills/` (per-agent)
 - **Context management**: Tape-based conversation log with anchor/masking strategies
 - **Sandboxed execution**: Filesystem and shell commands confined to workspace root
-- **Persistent memory**: Optional vector-similarity memory via mnemos/TiDB
+- **Persistent memory**: Optional cloud memory via mem9 (external plugin)
 
 ## Quick Start
 

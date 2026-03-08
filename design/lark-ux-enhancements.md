@@ -94,7 +94,7 @@ button. When clicked, Lark sends a card action callback; the bot resets the sess
 **Problem:** No mechanism to collect user satisfaction signals.
 
 **Solution:** Add thumbs-up / thumbs-down buttons to every response card. On click, store
-the feedback in the tape as a `KindFeedback` entry. Optionally also store in mnemos for
+the feedback in the tape as a `KindFeedback` entry. Optionally also store in shared memory for
 cross-session analysis.
 
 **Files:**
