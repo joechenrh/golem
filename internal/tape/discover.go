@@ -1,6 +1,8 @@
 package tape
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -73,4 +75,39 @@ func ParseChatID(filename, prefix string) string {
 		return ""
 	}
 	return rest[:secondLastDash]
+}
+
+// ExtractLastSummary reads a tape file and returns the content of the last
+// KindSummary entry, or "" if none exists. The file is opened read-only
+// and scanned line by line to avoid loading the entire tape into memory.
+func ExtractLastSummary(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	var lastSummary string
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		var entry TapeEntry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if entry.Kind != KindSummary {
+			continue
+		}
+		var payload struct {
+			Summary string `json:"summary"`
+		}
+		if json.Unmarshal(entry.Payload, &payload) == nil && payload.Summary != "" {
+			lastSummary = payload.Summary
+		}
+	}
+	return lastSummary
 }

@@ -619,10 +619,10 @@ func (l *LarkChannel) buildCardWithImages(ctx context.Context, text string) []by
 
 		if imageKeys[i] != "" {
 			elements = append(elements, map[string]any{
-				"tag":          "img",
-				"img_key":      imageKeys[i],
-				"alt":          map[string]string{"tag": "plain_text", "content": "image"},
-				"mode":         "fit_horizontal",
+				"tag":           "img",
+				"img_key":       imageKeys[i],
+				"alt":           map[string]string{"tag": "plain_text", "content": "image"},
+				"mode":          "fit_horizontal",
 				"compact_width": false,
 			})
 		}
@@ -743,6 +743,89 @@ func (l *LarkChannel) ListChats(
 		chats = append(chats, ci)
 	}
 	return chats, nil
+}
+
+// ChatMessage represents a single message from a Lark chat history.
+type ChatMessage struct {
+	SenderID   string // open_id or app_id
+	SenderType string // "user" or "app"
+	MsgType    string // "text", "post", "image", etc.
+	Content    string // extracted text content
+	CreateTime string // millisecond timestamp
+}
+
+// ListMessages returns recent messages from a Lark chat, sorted oldest-first.
+func (l *LarkChannel) ListMessages(
+	ctx context.Context, chatID string, count int,
+) ([]ChatMessage, error) {
+	if count <= 0 {
+		count = 20
+	}
+	if count > 50 {
+		count = 50
+	}
+
+	req := larkim.NewListMessageReqBuilder().
+		ContainerIdType("chat").
+		ContainerId(chatID).
+		PageSize(count).
+		SortType("ByCreateTimeDesc").
+		Build()
+
+	resp, err := l.client.Im.V1.Message.List(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("lark list messages: %w", err)
+	}
+	if !resp.Success() {
+		return nil, fmt.Errorf("lark list messages: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+
+	var msgs []ChatMessage
+	for _, item := range resp.Data.Items {
+		cm := ChatMessage{}
+		if item.MsgType != nil {
+			cm.MsgType = *item.MsgType
+		}
+		if item.CreateTime != nil {
+			cm.CreateTime = *item.CreateTime
+		}
+		if item.Sender != nil {
+			if item.Sender.Id != nil {
+				cm.SenderID = *item.Sender.Id
+			}
+			if item.Sender.SenderType != nil {
+				cm.SenderType = *item.Sender.SenderType
+			}
+		}
+
+		// Extract text content based on message type.
+		if item.Body != nil && item.Body.Content != nil {
+			raw := *item.Body.Content
+			switch cm.MsgType {
+			case "text":
+				var tc struct {
+					Text string `json:"text"`
+				}
+				if json.Unmarshal([]byte(raw), &tc) == nil {
+					cm.Content = tc.Text
+				}
+			case "post":
+				text, _ := extractPostContent(raw)
+				cm.Content = text
+			default:
+				cm.Content = "[" + cm.MsgType + "]"
+			}
+		}
+
+		msgs = append(msgs, cm)
+	}
+
+	// Reverse to oldest-first order.
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+
+	return msgs, nil
 }
 
 // ReadDocContent returns the plain text content of a Feishu document.

@@ -95,6 +95,9 @@ func NewSession(
 func (s *Session) HandleInput(
 	ctx context.Context, msg channel.IncomingMessage,
 ) (string, error) {
+	// Inject channel ID so tools (e.g. chat_history) can access it.
+	ctx = channel.WithChannelID(ctx, msg.ChannelID)
+
 	// Route user input.
 	route := router.RouteUser(msg.Text)
 	if route.IsCommand {
@@ -110,6 +113,9 @@ func (s *Session) HandleInputStream(
 	ctx context.Context, msg channel.IncomingMessage,
 	tokenCh chan<- string,
 ) error {
+	// Inject channel ID so tools (e.g. chat_history) can access it.
+	ctx = channel.WithChannelID(ctx, msg.ChannelID)
+
 	// Route user input.
 	route := router.RouteUser(msg.Text)
 	if route.IsCommand {

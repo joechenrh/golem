@@ -1,6 +1,8 @@
 package channel
 
-import "context"
+import (
+	"context"
+)
 
 // ImageData holds a downloaded image for multimodal messages.
 type ImageData struct {
@@ -57,4 +59,21 @@ type SystemPrinter interface {
 	PrintSystem(text string)
 	PrintError(text string)
 	PrintBanner(model string, toolCount int, tapePath string)
+}
+
+// channelIDKey is the context key for the current channel ID.
+type channelIDKey struct{}
+
+// WithChannelID returns a context carrying the channel ID so that
+// downstream tools can discover which chat they are operating in.
+func WithChannelID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, channelIDKey{}, id)
+}
+
+// ChannelIDFromContext extracts the channel ID from a context.
+func ChannelIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(channelIDKey{}).(string); ok {
+		return v
+	}
+	return ""
 }

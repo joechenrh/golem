@@ -127,6 +127,18 @@ func (sm *SessionManager) createSession(
 
 	registry := sm.factory.ToolFactory()
 
+	// Carry forward summary from the previous session's tape so the
+	// new session starts with context about earlier conversations.
+	if summary := sm.findPredecessorSummary(channelID, tapePath); summary != "" {
+		tapeStore.Append(tape.TapeEntry{
+			Kind:    tape.KindSummary,
+			Payload: tape.MarshalPayload(map[string]string{"summary": summary}),
+		})
+		sm.logger.Info("carried forward predecessor summary",
+			zap.String("channel_id", channelID),
+			zap.Int("summary_len", len(summary)))
+	}
+
 	ctx, cancel := context.WithCancel(sm.baseCtx)
 	sess := NewSession(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger)
 	sess.ctx = ctx
@@ -225,17 +237,29 @@ func (sm *SessionManager) LoadExisting(tapeDir string) error {
 }
 
 // Reset evicts the session for the given channelID, allowing a fresh one
-// to be created on the next message. If no session exists, this is a no-op.
+// to be created on the next message. Before eviction, the session is
+// summarized so the next session can carry forward context.
 func (sm *SessionManager) Reset(channelID string) {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	if s, ok := sm.sessions[channelID]; ok {
-		if s.cancel != nil {
-			s.cancel()
-		}
-		delete(sm.sessions, channelID)
-		sm.logger.Info("session reset", zap.String("channel_id", channelID))
+	s, ok := sm.sessions[channelID]
+	if !ok {
+		sm.mu.Unlock()
+		return
 	}
+	delete(sm.sessions, channelID)
+	sm.mu.Unlock()
+
+	// Summarize outside the lock (makes an LLM call).
+	if s.ctx != nil {
+		if err := s.Summarize(s.ctx); err != nil {
+			sm.logger.Warn("failed to summarize before reset",
+				zap.String("channel_id", channelID), zap.Error(err))
+		}
+	}
+	if s.cancel != nil {
+		s.cancel()
+	}
+	sm.logger.Info("session reset", zap.String("channel_id", channelID))
 }
 
 // Get returns the Session for the given channelID, or nil if none exists.
@@ -350,6 +374,32 @@ func (sm *SessionManager) Len() int {
 // their own context).
 func (s *Session) Context() context.Context {
 	return s.ctx
+}
+
+// findPredecessorSummary looks for the most recent previous tape file for the
+// same chatID and extracts its last summary. Returns "" if no predecessor
+// exists or has no summary.
+func (sm *SessionManager) findPredecessorSummary(channelID, currentTapePath string) string {
+	safeID := sanitizeForFilename(channelID)
+	agentDir := filepath.Dir(currentTapePath)
+	tapes, err := tape.Discover(agentDir, "session-")
+	if err != nil {
+		return ""
+	}
+
+	// Walk backwards to find the most recent tape for this chatID,
+	// excluding the current one.
+	for i := len(tapes) - 1; i >= 0; i-- {
+		if tapes[i] == currentTapePath {
+			continue
+		}
+		chatID := tape.ParseChatID(filepath.Base(tapes[i]), "session-")
+		if chatID != safeID {
+			continue
+		}
+		return tape.ExtractLastSummary(tapes[i])
+	}
+	return ""
 }
 
 // sanitizeForFilename replaces characters unsafe for filenames.
