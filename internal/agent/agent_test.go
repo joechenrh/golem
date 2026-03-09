@@ -561,6 +561,84 @@ func TestTruncateForLog(t *testing.T) {
 	}
 }
 
+func TestParseClassifierResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantDec  string
+		wantTask string
+		wantOK   bool
+	}{
+		{
+			name:    "nudge decision",
+			body:    `{"decision":"nudge"}`,
+			wantDec: "nudge", wantTask: "", wantOK: true,
+		},
+		{
+			name:    "accept decision",
+			body:    `{"decision":"accept"}`,
+			wantDec: "accept", wantTask: "", wantOK: true,
+		},
+		{
+			name:     "stuck with summary",
+			body:     `{"decision":"stuck","task_summary":"Rewrite the doc in English"}`,
+			wantDec:  "stuck",
+			wantTask: "Rewrite the doc in English",
+			wantOK:   true,
+		},
+		{
+			name:   "invalid json",
+			body:   `not json`,
+			wantOK: false,
+		},
+		{
+			name:   "unknown decision",
+			body:   `{"decision":"unknown"}`,
+			wantOK: false,
+		},
+		{
+			name:    "whitespace around json",
+			body:    `  {"decision":"accept"}  `,
+			wantDec: "accept", wantOK: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dec, task, ok := parseClassifierResponse(tt.body)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if dec != tt.wantDec {
+				t.Errorf("decision = %q, want %q", dec, tt.wantDec)
+			}
+			if task != tt.wantTask {
+				t.Errorf("task_summary = %q, want %q", task, tt.wantTask)
+			}
+		})
+	}
+}
+
+func TestTaskReminderMessage(t *testing.T) {
+	en := taskReminderMessage("Rewrite the doc in English", "Hello, I will rewrite the doc.")
+	if !strings.Contains(en, "Rewrite the doc in English") {
+		t.Errorf("English reminder missing task: %q", en)
+	}
+	if !strings.Contains(en, "stuck") {
+		t.Errorf("English reminder missing stuck indicator: %q", en)
+	}
+
+	cn := taskReminderMessage("用英语重写文档", "好的，我来重写一下这个文档。这个文档需要用中文来完成。")
+	if !strings.Contains(cn, "用英语重写文档") {
+		t.Errorf("Chinese reminder missing task: %q", cn)
+	}
+	if !strings.Contains(cn, "卡住") {
+		t.Errorf("Chinese reminder missing stuck indicator: %q", cn)
+	}
+}
+
 func TestBuildSystemPrompt(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
