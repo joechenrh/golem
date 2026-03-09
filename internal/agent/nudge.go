@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/joechenrh/golem/internal/ctxmgr"
 	"github.com/joechenrh/golem/internal/llm"
@@ -90,9 +91,11 @@ func startsWithPhrase(text, phrase string) bool {
 	if idx == 0 {
 		return true
 	}
-	// Check the rune immediately before the match.
-	for i := idx - 1; i >= 0; i-- {
-		r := rune(text[i])
+	// Scan backwards by rune (not byte) to find the preceding character.
+	pos := idx
+	for pos > 0 {
+		r, size := utf8.DecodeLastRuneInString(text[:pos])
+		pos -= size
 		// Skip whitespace.
 		if r == ' ' || r == '\t' {
 			continue
