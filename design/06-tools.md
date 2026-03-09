@@ -142,7 +142,47 @@ Source: `internal/tools/external.go`
 
 File tools skip binary files (detected by extension) and ignore directories like `.git`, `node_modules`, `vendor`, `__pycache__`, `.venv`, and `target` during listing and searching. All Lark tools are pre-expanded in the registry. Both doc tools auto-extract the document token from full Feishu/Lark URLs. Schedules fire prompts into isolated agent sessions at cron times.
 
-## 8. Current Gaps
+## 8. MCP (Model Context Protocol) Servers
+
+Golem supports MCP servers as a tool source alongside external plugins. While external plugins use Golem's custom JSON-RPC protocol (`method: "execute"`, one process per tool), MCP servers use the standard MCP protocol (`tools/list`, `tools/call`, one server exposes many tools).
+
+### Manifest format (`*.mcp.json`)
+
+Place manifest files in `~/.golem/plugins/` alongside `*.tool.json` files:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"],
+  "env": {}
+}
+```
+
+Only `command` is required. `args` and `env` are optional. Environment variables in `command`, `args`, and `env` values are expanded via `os.ExpandEnv`.
+
+### Protocol (stdio transport)
+
+The MCP client communicates via newline-delimited JSON-RPC 2.0 over stdin/stdout:
+
+1. Launch subprocess
+2. `initialize` request → server capabilities
+3. `notifications/initialized` notification
+4. `tools/list` → discover tool names, descriptions, and input schemas
+5. `tools/call` with `{name, arguments}` → tool results
+6. Close stdin + SIGTERM on shutdown
+
+### Lifecycle
+
+MCP servers are started during registry setup in `app.go`, after external plugins. Each `*.mcp.json` launches one subprocess that may expose multiple tools. All tools from one server share the subprocess. Tools go through the normal middleware chain (ACL, cache, redaction).
+
+### Key files
+
+| File | Role |
+|------|------|
+| `internal/mcp/client.go` | MCP client — subprocess lifecycle, JSON-RPC, handshake |
+| `internal/tools/mcp.go` | `MCPTool` adapter — implements `Tool` interface, `LoadMCPServers` discovery |
+
+## 9. Current Gaps
 
 1. **No streaming tool output.** `Execute` returns a complete string. Long-running shell commands or large fetches block until completion with no incremental feedback to the user.
 
