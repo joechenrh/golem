@@ -612,10 +612,10 @@ func buildScheduleStore(name string, logger *zap.Logger) *scheduler.Store {
 	return store
 }
 
-// BuildLLMClient creates an LLM client from the config, auto-registering
-// unknown providers as OpenAI-compatible.
-func BuildLLMClient(cfg *config.Config, logger *zap.Logger) (llm.Client, error) {
-	provider, _ := llm.ParseModelProvider(cfg.Model)
+// buildProviderClient creates an LLM client for the given model string,
+// auto-registering unknown providers as OpenAI-compatible.
+func buildProviderClient(model string, cfg *config.Config, logger *zap.Logger, opts ...llm.ClientOption) (llm.Client, error) {
+	provider, _ := llm.ParseModelProvider(model)
 	apiKey := cfg.APIKeys[string(provider)]
 	if apiKey == "" {
 		return nil, fmt.Errorf("no API key for provider %q — set %s_API_KEY",
@@ -632,15 +632,11 @@ func BuildLLMClient(cfg *config.Config, logger *zap.Logger) (llm.Client, error) 
 		llm.RegisterProvider(provider, baseURL, llm.NewOpenAICompatibleClient)
 	}
 
-	var opts []llm.ClientOption
 	if baseURL := cfg.BaseURLs[string(provider)]; baseURL != "" {
 		opts = append(opts, llm.WithBaseURL(baseURL))
 	}
 	if logger != nil {
 		opts = append(opts, llm.WithLogger(logger))
-	}
-	if cfg.UseResponsesAPI {
-		opts = append(opts, llm.WithResponsesAPI())
 	}
 	client, err := llm.NewClient(provider, apiKey, opts...)
 	if err != nil {
@@ -649,40 +645,27 @@ func BuildLLMClient(cfg *config.Config, logger *zap.Logger) (llm.Client, error) 
 	return llm.NewRateLimitedClient(client, cfg.LLMRateLimit, logger), nil
 }
 
+// BuildLLMClient creates an LLM client from the config, auto-registering
+// unknown providers as OpenAI-compatible.
+func BuildLLMClient(cfg *config.Config, logger *zap.Logger) (llm.Client, error) {
+	var opts []llm.ClientOption
+	if cfg.UseResponsesAPI {
+		opts = append(opts, llm.WithResponsesAPI())
+	}
+	return buildProviderClient(cfg.Model, cfg, logger, opts...)
+}
+
 // BuildClassifierClient creates a lightweight LLM client for nudge
 // classification. Returns nil if ClassifierModel is not configured.
 func BuildClassifierClient(cfg *config.Config, logger *zap.Logger) (llm.Client, error) {
 	if cfg.ClassifierModel == "" {
 		return nil, nil
 	}
-	provider, _ := llm.ParseModelProvider(cfg.ClassifierModel)
-	apiKey := cfg.APIKeys[string(provider)]
-	if apiKey == "" {
-		return nil, fmt.Errorf("no API key for classifier provider %q — set %s_API_KEY",
-			provider, strings.ToUpper(string(provider)))
-	}
-
-	if provider != llm.ProviderOpenAI && provider != llm.ProviderAnthropic {
-		baseURL := cfg.BaseURLs[string(provider)]
-		if baseURL == "" {
-			return nil, fmt.Errorf("classifier provider %q requires %s_BASE_URL",
-				provider, strings.ToUpper(string(provider)))
-		}
-		llm.RegisterProvider(provider, baseURL, llm.NewOpenAICompatibleClient)
-	}
-
-	var opts []llm.ClientOption
-	if baseURL := cfg.BaseURLs[string(provider)]; baseURL != "" {
-		opts = append(opts, llm.WithBaseURL(baseURL))
-	}
-	if logger != nil {
-		opts = append(opts, llm.WithLogger(logger.Named("classifier")))
-	}
-	client, err := llm.NewClient(provider, apiKey, opts...)
+	client, err := buildProviderClient(cfg.ClassifierModel, cfg, logger.Named("classifier"))
 	if err != nil {
 		return nil, fmt.Errorf("classifier client: %w", err)
 	}
-	return llm.NewRateLimitedClient(client, cfg.LLMRateLimit, logger), nil
+	return client, nil
 }
 
 // BuildToolRegistry creates and populates a tool registry with all built-in
