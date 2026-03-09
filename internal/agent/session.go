@@ -303,19 +303,26 @@ func (s *Session) runReActLoop(
 
 		// Phase 2: stuck escalation — if we already nudged and still no tool call,
 		// inject a task-specific reminder instead of another generic nudge.
-		if nudges >= 1 && s.lastTaskSummary != "" {
-			if nudges < maxNudges+1 {
+		// Gets one extra attempt beyond maxNudges since the task reminder is
+		// qualitatively different from a generic nudge.
+		if nudges >= 1 && nudges < maxNudges+1 {
+			summary := s.lastTaskSummary
+			if summary == "" {
+				// No classifier summary available (e.g., Phase 1 heuristic fired
+				// first). Fall back to the last user message as context.
+				summary = s.lastUserMessage()
+			}
+			if summary != "" {
 				s.ephemeralMessages = append(s.ephemeralMessages,
 					llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-					llm.Message{Role: llm.RoleUser, Content: taskReminderMessage(s.lastTaskSummary, resp.Content)},
+					llm.Message{Role: llm.RoleUser, Content: taskReminderMessage(summary, resp.Content)},
 				)
 				nudges++
 				s.logger.Debug("injecting task reminder (stuck escalation)",
 					zap.Int("nudge", nudges), zap.Int("iter", iter),
-					zap.String("task_summary", s.lastTaskSummary))
+					zap.String("task_summary", summary))
 				continue
 			}
-			// Give up — fall through to accept.
 		}
 
 		// Phase 3: classifier for ambiguous short responses.
