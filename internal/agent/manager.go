@@ -22,6 +22,7 @@ import (
 // SessionFactory contains everything needed to create a new per-chat session.
 type SessionFactory struct {
 	LLMClient       llm.Client
+	ClassifierLLM   llm.Client
 	Config          *config.Config
 	Logger          *zap.Logger
 	ToolFactory     func() *tools.Registry // creates a fresh registry per session
@@ -185,7 +186,7 @@ func (sm *SessionManager) createSession(
 	}
 
 	ctx, cancel := context.WithCancel(sm.baseCtx)
-	sess := NewSession(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger)
+	sess := NewSession(sm.factory.LLMClient, sm.factory.ClassifierLLM, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger)
 	sess.ctx = ctx
 	sess.cancel = cancel
 	sess.lastAccess = time.Now()
@@ -219,7 +220,7 @@ func (sm *SessionManager) createSessionFromTape(
 
 	registry := sm.factory.ToolFactory()
 
-	sess := NewSession(sm.factory.LLMClient, registry, tapeStore, ctxStrategy, hookBus, sm.factory.Config, sm.logger)
+	sess := NewSession(sm.factory.LLMClient, sm.factory.ClassifierLLM, registry, tapeStore, ctxStrategy, hookBus, sm.factory.Config, sm.logger)
 	sess.TapePath = tapePath
 	sess.SetSkillReload(sm.factory.SkillDirs, sm.factory.Config.SkillReloadInterval)
 	sess.SetExtHooks(sm.factory.ExtHookRunner)

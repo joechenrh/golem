@@ -319,6 +319,11 @@ func BuildAgent(
 		return nil, err
 	}
 
+	classifierLLM, err := BuildClassifierClient(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("classifier client: %w", err)
+	}
+
 	agentTapeDir, err := tape.AgentDir(cfg.TapeDir, name)
 	if err != nil {
 		return nil, err
@@ -397,7 +402,7 @@ func BuildAgent(
 
 	extHookRunner := buildExtHookRunner(name, logger)
 
-	defaultSess := agent.NewSession(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
+	defaultSess := agent.NewSession(llmClient, classifierLLM, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
 	defaultSess.MetricsSummary = metricsHook.Summary
 	defaultSess.SetSkillReload(skillDirs, cfg.SkillReloadInterval)
 	defaultSess.SetExtHooks(extHookRunner)
@@ -445,6 +450,7 @@ func BuildAgent(
 	if cfg.HasRemoteChannels() {
 		sessions = agent.NewSessionManager(agent.SessionFactory{
 			LLMClient:       llmClient,
+			ClassifierLLM:   classifierLLM,
 			Config:          cfg,
 			Logger:          logger,
 			ToolFactory:     toolFactory,
@@ -633,12 +639,48 @@ func BuildLLMClient(cfg *config.Config, logger *zap.Logger) (llm.Client, error) 
 	if logger != nil {
 		opts = append(opts, llm.WithLogger(logger))
 	}
-	if cfg.UseResponsesAPI && provider == llm.ProviderOpenAI {
+	if cfg.UseResponsesAPI {
 		opts = append(opts, llm.WithResponsesAPI())
 	}
 	client, err := llm.NewClient(provider, apiKey, opts...)
 	if err != nil {
 		return nil, err
+	}
+	return llm.NewRateLimitedClient(client, cfg.LLMRateLimit, logger), nil
+}
+
+// BuildClassifierClient creates a lightweight LLM client for nudge
+// classification. Returns nil if ClassifierModel is not configured.
+func BuildClassifierClient(cfg *config.Config, logger *zap.Logger) (llm.Client, error) {
+	if cfg.ClassifierModel == "" {
+		return nil, nil
+	}
+	provider, _ := llm.ParseModelProvider(cfg.ClassifierModel)
+	apiKey := cfg.APIKeys[string(provider)]
+	if apiKey == "" {
+		return nil, fmt.Errorf("no API key for classifier provider %q — set %s_API_KEY",
+			provider, strings.ToUpper(string(provider)))
+	}
+
+	if provider != llm.ProviderOpenAI && provider != llm.ProviderAnthropic {
+		baseURL := cfg.BaseURLs[string(provider)]
+		if baseURL == "" {
+			return nil, fmt.Errorf("classifier provider %q requires %s_BASE_URL",
+				provider, strings.ToUpper(string(provider)))
+		}
+		llm.RegisterProvider(provider, baseURL, llm.NewOpenAICompatibleClient)
+	}
+
+	var opts []llm.ClientOption
+	if baseURL := cfg.BaseURLs[string(provider)]; baseURL != "" {
+		opts = append(opts, llm.WithBaseURL(baseURL))
+	}
+	if logger != nil {
+		opts = append(opts, llm.WithLogger(logger.Named("classifier")))
+	}
+	client, err := llm.NewClient(provider, apiKey, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("classifier client: %w", err)
 	}
 	return llm.NewRateLimitedClient(client, cfg.LLMRateLimit, logger), nil
 }
@@ -863,5 +905,5 @@ func buildEphemeralSession(
 	hookBus.Register(hooks.NewLoggingHook(logger.Named(name)))
 
 	registry := toolFactory()
-	return agent.NewSession(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger.Named(name)), nil
+	return agent.NewSession(llmClient, nil, registry, tapeStore, ctxStrategy, hookBus, cfg, logger.Named(name)), nil
 }

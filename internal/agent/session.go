@@ -27,6 +27,7 @@ import (
 // Each conversation (CLI or remote chat) gets its own Session.
 type Session struct {
 	llm             llm.Client
+	classifierLLM   llm.Client // lightweight model for nudge classification (nil = disabled)
 	tools           *tools.Registry
 	tape            tape.Store
 	contextStrategy ctxmgr.ContextStrategy
@@ -134,6 +135,7 @@ func (s *Session) maybeReloadSkills() {
 // NewSession creates a Session with all dependencies wired in.
 func NewSession(
 	llmClient llm.Client,
+	classifierLLM llm.Client,
 	toolRegistry *tools.Registry,
 	tapeStore tape.Store,
 	ctxStrategy ctxmgr.ContextStrategy,
@@ -143,6 +145,7 @@ func NewSession(
 ) *Session {
 	return &Session{
 		llm:             llmClient,
+		classifierLLM:   classifierLLM,
 		tools:           toolRegistry,
 		tape:            tapeStore,
 		contextStrategy: ctxStrategy,

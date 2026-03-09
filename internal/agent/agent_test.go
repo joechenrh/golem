@@ -107,7 +107,7 @@ func newTestAgent(t *testing.T, client *mockLLMClient, extraTools ...tools.Tool)
 		MaxToolIter: 15,
 	}
 
-	return NewSession(client, registry, store, strategy, bus, cfg, logger)
+	return NewSession(client, nil, registry, store, strategy, bus, cfg, logger)
 }
 
 func cliMsg(text string) channel.IncomingMessage {
