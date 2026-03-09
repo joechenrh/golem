@@ -467,6 +467,33 @@ func TestLoadPersonaFallback(t *testing.T) {
 	}
 }
 
+func TestLoadClassifierModel(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("GOLEM_MODEL", "openai:gpt-4o")
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("GOLEM_CLASSIFIER_MODEL", "openai:gpt-4o-mini")
+	cfg, err := Load("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClassifierModel != "openai:gpt-4o-mini" {
+		t.Errorf("ClassifierModel = %q, want %q", cfg.ClassifierModel, "openai:gpt-4o-mini")
+	}
+}
+
+func TestLoadClassifierModelEmpty(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("GOLEM_MODEL", "openai:gpt-4o")
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	cfg, err := Load("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClassifierModel != "" {
+		t.Errorf("ClassifierModel = %q, want empty", cfg.ClassifierModel)
+	}
+}
+
 func TestExpandHome(t *testing.T) {
 	home, _ := os.UserHomeDir()
 

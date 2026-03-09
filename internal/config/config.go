@@ -105,6 +105,7 @@ type Config struct {
 	UseResponsesAPI    bool     // use OpenAI Responses API instead of Chat Completions (default: false)
 	ResponsesStore     *bool    // Responses API: store responses server-side (nil = server default true)
 	UseNativeWebSearch bool     // use Responses API native web_search_preview instead of Bing scraping (default: false)
+	ClassifierModel    string   // lightweight model for nudge classification (e.g. "openai:gpt-4o-mini", empty=disabled)
 
 	ShellTimeout time.Duration // shell command timeout (default: 30s)
 
@@ -191,6 +192,7 @@ func Load(
 		LLMRateLimit:     g.integer("GOLEM_LLM_RATE_LIMIT", 10),
 		MetricsPort:      g.str("GOLEM_METRICS_PORT", ""),
 		WebSearchBackend: g.str("GOLEM_WEB_SEARCH_BACKEND", "bing"),
+		ClassifierModel:  g.str("GOLEM_CLASSIFIER_MODEL", ""),
 
 		// Agent tier: behavior, storage, logging.
 		MaxToolIter:         a.integer("GOLEM_MAX_TOOL_ITER", 15),
