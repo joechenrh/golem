@@ -376,18 +376,12 @@ func BuildAgent(
 	registry.Register(builtin.NewSpawnAgentTool(func(ctx context.Context, prompt string) (string, error) {
 		seq := subAgentSeq.Add(1)
 		subTapePath := filepath.Join(agentTapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
-		subTape, err := tape.NewFileStore(subTapePath)
+		sess, err := buildEphemeralSession(llmClient, cfg, toolFactory, logger, "sub-agent", subTapePath)
 		if err != nil {
-			return "", fmt.Errorf("sub-agent tape: %w", err)
+			return "", fmt.Errorf("sub-agent: %w", err)
 		}
-		subCtxStrategy, _ := ctxmgr.NewContextStrategy(cfg.ContextStrategy)
-		subHooks := hooks.NewBus(logger.Named("sub-agent"))
-		subHooks.Register(hooks.NewLoggingHook(logger.Named("sub-agent")))
 
-		subRegistry := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
-		subSess := agent.NewSession(llmClient, subRegistry, subTape, subCtxStrategy, subHooks, cfg, logger.Named("sub-agent"))
-
-		return subSess.HandleInput(ctx, channel.IncomingMessage{
+		return sess.HandleInput(ctx, channel.IncomingMessage{
 			ChannelName: "internal",
 			Text:        prompt,
 		})
@@ -831,17 +825,34 @@ func (f *appSessionFactory) HandleScheduledPrompt(
 		return "", err
 	}
 	fullTapePath := filepath.Join(agentDir, tapePath)
-	tapeStore, err := tape.NewFileStore(fullTapePath)
+	sess, err := buildEphemeralSession(f.llmClient, f.cfg, f.toolFactory, f.logger, "scheduler", fullTapePath)
 	if err != nil {
-		return "", fmt.Errorf("scheduler tape: %w", err)
+		return "", fmt.Errorf("scheduler: %w", err)
 	}
 
-	ctxStrategy, _ := ctxmgr.NewContextStrategy(f.cfg.ContextStrategy)
-	hookBus := hooks.NewBus(f.logger.Named("scheduler"))
-	hookBus.Register(hooks.NewLoggingHook(f.logger.Named("scheduler")))
-
-	registry := f.toolFactory()
-	sess := agent.NewSession(f.llmClient, registry, tapeStore, ctxStrategy, hookBus, f.cfg, f.logger.Named("scheduler"))
-
 	return sess.HandleInput(ctx, msg)
+}
+
+// buildEphemeralSession creates a short-lived session with its own tape,
+// context strategy, hook bus, and tool registry. Used by spawn_agent and
+// the scheduler to avoid duplicating session setup logic.
+func buildEphemeralSession(
+	llmClient llm.Client,
+	cfg *config.Config,
+	toolFactory func() *tools.Registry,
+	logger *zap.Logger,
+	name string,
+	tapePath string,
+) (*agent.Session, error) {
+	tapeStore, err := tape.NewFileStore(tapePath)
+	if err != nil {
+		return nil, fmt.Errorf("tape: %w", err)
+	}
+
+	ctxStrategy, _ := ctxmgr.NewContextStrategy(cfg.ContextStrategy)
+	hookBus := hooks.NewBus(logger.Named(name))
+	hookBus.Register(hooks.NewLoggingHook(logger.Named(name)))
+
+	registry := toolFactory()
+	return agent.NewSession(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger.Named(name)), nil
 }
