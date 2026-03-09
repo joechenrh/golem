@@ -193,7 +193,7 @@ func Load(
 		MaxToolIter:         a.integer("GOLEM_MAX_TOOL_ITER", 15),
 		MaxOutputTokens:     a.integer("GOLEM_MAX_OUTPUT_TOKENS", 4096),
 		Temperature:         a.optFloat64("GOLEM_TEMPERATURE"),
-		ReasoningEffort:     a.str("GOLEM_REASONING_EFFORT", ""),
+		ReasoningEffort:     a.str("GOLEM_REASONING_EFFORT", "high"),
 		ShellTimeout:        a.duration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
 		ContextStrategy:     a.str("GOLEM_CONTEXT_STRATEGY", "masking"),
 		Executor:            a.str("GOLEM_EXECUTOR", "local"),
