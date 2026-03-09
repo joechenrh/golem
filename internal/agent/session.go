@@ -329,6 +329,9 @@ func (s *Session) runReActLoop(
 		if nudges == 0 && s.classifierLLM != nil && isAmbiguousResponse(resp.Content, s.tape) {
 			lastUserMsg := s.lastUserMessage()
 			toolNames := s.tools.Names()
+			s.logger.Debug("invoking classifier for ambiguous response",
+				zap.Int("resp_len", len(resp.Content)),
+				zap.Int("iter", iter))
 			decision, taskSummary, ok := classifyResponse(
 				ctx, s.classifierLLM, s.config.ClassifierModel,
 				lastUserMsg, resp.Content, toolNames,
@@ -336,7 +339,8 @@ func (s *Session) runReActLoop(
 			if ok {
 				s.logger.Debug("classifier decision",
 					zap.String("decision", decision),
-					zap.String("task_summary", taskSummary))
+					zap.String("task_summary", taskSummary),
+					zap.Int("iter", iter))
 				switch decision {
 				case "nudge":
 					s.ephemeralMessages = append(s.ephemeralMessages,
@@ -354,10 +358,14 @@ func (s *Session) runReActLoop(
 					nudges++
 					continue
 				case "accept":
+					s.logger.Debug("classifier accepted response as final answer",
+						zap.Int("iter", iter))
 					// Fall through to accept.
 				}
+			} else {
+				s.logger.Warn("classifier returned unparseable response, falling back to accept",
+					zap.Int("iter", iter))
 			}
-			// Classifier failed to parse — fall through to accept.
 		}
 
 		// Final answer — no tool calls.
