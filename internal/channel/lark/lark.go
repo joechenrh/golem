@@ -308,7 +308,7 @@ func (l *LarkChannel) onMessageReceive(
 	// Add typing reaction to user's message to indicate processing.
 	chatID := *msg.ChatId
 	if msgID != "" {
-		reactionID := l.addReaction(context.Background(), msgID, "TYPING")
+		reactionID := l.addReaction(context.Background(), msgID, "Typing")
 		if reactionID != "" {
 			l.pendingReactions.Store(chatID, reactionInfo{
 				messageID:  msgID,
