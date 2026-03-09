@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -57,6 +58,9 @@ type Session struct {
 	// Ephemeral messages injected into the next LLM call only (nudges,
 	// recovery hints). They are not persisted to the tape.
 	ephemeralMessages []llm.Message
+
+	// Task summary from classifier, used for stuck escalation.
+	lastTaskSummary string
 
 	// Cached system prompt for the current turn, rebuilt once at the
 	// start of runReActLoop and reused across iterations.
@@ -219,6 +223,7 @@ func (s *Session) runReActLoop(
 	s.cachedSystemPrompt = s.buildSystemPrompt()
 
 	nudges := 0
+	s.lastTaskSummary = ""
 	emptyRetries := 0
 	lastToolFailed := false // previous iteration had a tool failure
 
@@ -279,20 +284,73 @@ func (s *Session) runReActLoop(
 		}
 		emptyRetries = 0
 
-		// No tool calls — nudge the LLM to retry if:
-		// - a tool just failed (schema now expanded, worth retrying), or
-		// - the response looks like a plan rather than a final answer.
-		shouldNudge := lastToolFailed || looksLikePlan(resp.Content)
+		// Phase 1: heuristic — obvious plan phrases or tool failure.
+		if lastToolFailed || looksLikePlan(resp.Content) {
+			lastToolFailed = false
+			if nudges < maxNudges {
+				s.ephemeralMessages = append(s.ephemeralMessages,
+					llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
+					llm.Message{Role: llm.RoleUser, Content: nudgeMessage(resp.Content)},
+				)
+				nudges++
+				s.logger.Debug("nudging LLM to use tools (heuristic)",
+					zap.Int("nudge", nudges), zap.Int("iter", iter))
+				continue
+			}
+			// Nudge budget exhausted — fall through to accept.
+		}
 		lastToolFailed = false
-		if nudges < maxNudges && shouldNudge {
-			s.ephemeralMessages = append(s.ephemeralMessages,
-				llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-				llm.Message{Role: llm.RoleUser, Content: nudgeMessage(resp.Content)},
+
+		// Phase 2: stuck escalation — if we already nudged and still no tool call,
+		// inject a task-specific reminder instead of another generic nudge.
+		if nudges >= 1 && s.lastTaskSummary != "" {
+			if nudges < maxNudges+1 {
+				s.ephemeralMessages = append(s.ephemeralMessages,
+					llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
+					llm.Message{Role: llm.RoleUser, Content: taskReminderMessage(s.lastTaskSummary, resp.Content)},
+				)
+				nudges++
+				s.logger.Debug("injecting task reminder (stuck escalation)",
+					zap.Int("nudge", nudges), zap.Int("iter", iter),
+					zap.String("task_summary", s.lastTaskSummary))
+				continue
+			}
+			// Give up — fall through to accept.
+		}
+
+		// Phase 3: classifier for ambiguous short responses.
+		if nudges == 0 && s.classifierLLM != nil && isAmbiguousResponse(resp.Content, s.tape) {
+			lastUserMsg := s.lastUserMessage()
+			toolNames := s.tools.Names()
+			decision, taskSummary, ok := classifyResponse(
+				ctx, s.classifierLLM, s.config.ClassifierModel,
+				lastUserMsg, resp.Content, toolNames,
 			)
-			nudges++
-			s.logger.Debug("nudging LLM to use tools",
-				zap.Int("nudge", nudges), zap.Int("iter", iter))
-			continue
+			if ok {
+				s.logger.Debug("classifier decision",
+					zap.String("decision", decision),
+					zap.String("task_summary", taskSummary))
+				switch decision {
+				case "nudge":
+					s.ephemeralMessages = append(s.ephemeralMessages,
+						llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
+						llm.Message{Role: llm.RoleUser, Content: nudgeMessage(resp.Content)},
+					)
+					nudges++
+					continue
+				case "stuck":
+					s.lastTaskSummary = taskSummary
+					s.ephemeralMessages = append(s.ephemeralMessages,
+						llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
+						llm.Message{Role: llm.RoleUser, Content: taskReminderMessage(taskSummary, resp.Content)},
+					)
+					nudges++
+					continue
+				case "accept":
+					// Fall through to accept.
+				}
+			}
+			// Classifier failed to parse — fall through to accept.
 		}
 
 		// Final answer — no tool calls.
@@ -301,6 +359,27 @@ func (s *Session) runReActLoop(
 	}
 
 	return "Tool calling limit reached. Please try a simpler request.", nil
+}
+
+// lastUserMessage returns the most recent user message text from the tape.
+func (s *Session) lastUserMessage() string {
+	entries, err := s.tape.Entries()
+	if err != nil {
+		return ""
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind != tape.KindMessage {
+			continue
+		}
+		var msg struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}
+		if json.Unmarshal(entries[i].Payload, &msg) == nil && msg.Role == "user" {
+			return msg.Content
+		}
+	}
+	return ""
 }
 
 // executeLLMCall builds context, calls the LLM (streaming or not), and emits hooks.

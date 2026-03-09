@@ -59,6 +59,11 @@ func (r *Registry) Count() int {
 	return len(r.tools)
 }
 
+// Names returns the names of all registered tools in insertion order.
+func (r *Registry) Names() []string {
+	return slices.Clone(r.order)
+}
+
 // Get returns a tool by name, or nil if not found.
 func (r *Registry) Get(name string) Tool {
 	return r.tools[name]
