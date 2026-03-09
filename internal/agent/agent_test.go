@@ -16,6 +16,7 @@ import (
 	"github.com/joechenrh/golem/internal/ctxmgr"
 	"github.com/joechenrh/golem/internal/hooks"
 	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/stringutil"
 	"github.com/joechenrh/golem/internal/tape"
 	"github.com/joechenrh/golem/internal/tools"
 )
@@ -545,9 +546,9 @@ func TestNudgeMessage(t *testing.T) {
 	}
 }
 
-func TestTruncateForLog(t *testing.T) {
+func TestTruncate(t *testing.T) {
 	long := strings.Repeat("a", 200)
-	truncated := truncateForLog(long, 50)
+	truncated := stringutil.Truncate(long, 50)
 	if len(truncated) != 53 { // 50 + "..."
 		t.Errorf("truncated length = %d, want 53", len(truncated))
 	}
@@ -556,7 +557,7 @@ func TestTruncateForLog(t *testing.T) {
 	}
 
 	short := "hello"
-	if truncateForLog(short, 50) != "hello" {
+	if stringutil.Truncate(short, 50) != "hello" {
 		t.Error("short strings should not be truncated")
 	}
 }

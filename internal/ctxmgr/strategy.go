@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/stringutil"
 	"github.com/joechenrh/golem/internal/tape"
 )
 
@@ -168,7 +169,7 @@ func (s *HybridStrategy) summarizeOldest(
 	// Build a condensed text representation of the oldest messages.
 	var sb strings.Builder
 	for _, m := range oldest {
-		fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, truncateForSummary(m.Content, 500))
+		fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, stringutil.Truncate(m.Content, 500))
 	}
 
 	summaryReq := llm.ChatRequest{
@@ -246,13 +247,6 @@ func (s *HybridStrategy) trimWithCallback(
 }
 
 // truncateForSummary limits a string to maxLen chars for summarization input.
-func truncateForSummary(s string, maxLen int) string {
-	if len(s) > maxLen {
-		return s[:maxLen] + "..."
-	}
-	return s
-}
-
 // EstimateTokens roughly estimates token count.
 // ASCII/Latin text uses ~4 chars per token; CJK characters are ~1 token each.
 func EstimateTokens(msgs []llm.Message) int {

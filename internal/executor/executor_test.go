@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/joechenrh/golem/internal/stringutil"
 )
 
 func TestLocalExecutor_Echo(t *testing.T) {
@@ -126,12 +128,12 @@ func TestFormatResult(t *testing.T) {
 
 func TestTruncate(t *testing.T) {
 	short := "hello"
-	if got := truncate(short, 100); got != short {
-		t.Errorf("truncate(%q, 100) = %q, want %q", short, got, short)
+	if got := stringutil.TruncateWithNote(short, 100); got != short {
+		t.Errorf("stringutil.TruncateWithNote(%q, 100) = %q, want %q", short, got, short)
 	}
 
 	long := strings.Repeat("x", 100)
-	got := truncate(long, 50)
+	got := stringutil.TruncateWithNote(long, 50)
 	if !strings.HasSuffix(got, "... [truncated]") {
 		t.Errorf("truncated output should end with '... [truncated]', got %q", got)
 	}

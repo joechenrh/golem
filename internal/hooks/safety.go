@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/joechenrh/golem/internal/stringutil"
 )
 
 // SafetyHook blocks dangerous tool calls before execution.
@@ -86,7 +88,7 @@ func (h *SafetyHook) checkShell(args string) error {
 	cmd := strings.ToLower(params.Command)
 	for _, pat := range dangerousPatterns {
 		if pat.MatchString(cmd) {
-			return fmt.Errorf("blocked dangerous shell command: %s", truncateStr(params.Command, 100))
+			return fmt.Errorf("blocked dangerous shell command: %s", stringutil.Truncate(params.Command, 100))
 		}
 	}
 	return nil
@@ -189,11 +191,4 @@ func (h *SafetyHook) checkFileWrite(args string) error {
 		}
 	}
 	return nil
-}
-
-func truncateStr(s string, maxLen int) string {
-	if len(s) > maxLen {
-		return s[:maxLen] + "..."
-	}
-	return s
 }

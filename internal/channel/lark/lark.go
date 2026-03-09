@@ -25,6 +25,7 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	"github.com/joechenrh/golem/internal/channel"
+	"github.com/joechenrh/golem/internal/stringutil"
 )
 
 // CardActionCallback is called when a user clicks a button on a Lark card.
@@ -301,7 +302,7 @@ func (l *LarkChannel) onMessageReceive(
 		zap.String("chat_id", *msg.ChatId),
 		zap.String("sender", senderID),
 		zap.String("type", msgType),
-		zap.String("text", truncateForLog(text, 80)))
+		zap.String("text", stringutil.Truncate(text, 80)))
 
 	// Reset per-cycle duplicate tracking before dispatching.
 	l.sentChats.Clear()
@@ -366,13 +367,6 @@ func (l *LarkChannel) seenMsgsEvictionLoop(
 			}
 		}
 	}
-}
-
-func truncateForLog(s string, maxLen int) string {
-	if len(s) > maxLen {
-		return s[:maxLen] + "..."
-	}
-	return s
 }
 
 // Send sends a message to the chat identified in msg.ChannelID.

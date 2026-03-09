@@ -19,6 +19,7 @@ import (
 	"github.com/joechenrh/golem/internal/hooks"
 	"github.com/joechenrh/golem/internal/llm"
 	"github.com/joechenrh/golem/internal/router"
+	"github.com/joechenrh/golem/internal/stringutil"
 	"github.com/joechenrh/golem/internal/tape"
 	"github.com/joechenrh/golem/internal/tools"
 )
@@ -366,7 +367,7 @@ func (s *Session) runReActLoop(
 			} else {
 				s.logger.Warn("classifier returned unparseable response, falling back to accept",
 					zap.Int("iter", iter),
-					zap.String("raw_body", truncateForLog(rawBody, 200)))
+					zap.String("raw_body", stringutil.Truncate(rawBody, 200)))
 			}
 		}
 
@@ -802,7 +803,7 @@ func (s *Session) executeTool(
 		Payload: map[string]any{
 			"tool_name": tc.Name,
 			"tool_id":   tc.ID,
-			"result":    truncateForLog(result, maxLogTruncateLen),
+			"result":    stringutil.Truncate(result, maxLogTruncateLen),
 		},
 	})
 
@@ -972,13 +973,6 @@ func (s *Session) appendToolResult(
 }
 
 // truncateForLog truncates a string to maxLen and appends "..." if truncated.
-func truncateForLog(s string, maxLen int) string {
-	if len(s) > maxLen {
-		return s[:maxLen] + "..."
-	}
-	return s
-}
-
 // RecordFeedback appends a KindFeedback entry to the tape.
 func (s *Session) RecordFeedback(chatID, value string) {
 	s.tape.Append(tape.TapeEntry{

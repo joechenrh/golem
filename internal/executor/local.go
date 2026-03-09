@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+
+	"github.com/joechenrh/golem/internal/stringutil"
 )
 
 const maxOutputBytes = 50 * 1024 // 50KB
@@ -40,8 +42,8 @@ func (e *LocalExecutor) Execute(
 	err := cmd.Run()
 
 	result := &Result{
-		Stdout:  truncate(stdout.String(), maxOutputBytes),
-		Stderr:  truncate(stderr.String(), maxOutputBytes),
+		Stdout:  stringutil.TruncateWithNote(stdout.String(), maxOutputBytes),
+		Stderr:  stringutil.TruncateWithNote(stderr.String(), maxOutputBytes),
 		Command: command,
 	}
 
@@ -65,11 +67,4 @@ func (e *LocalExecutor) Execute(
 	}
 
 	return result, nil
-}
-
-func truncate(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
-		return s
-	}
-	return s[:maxBytes] + "\n... [truncated]"
 }

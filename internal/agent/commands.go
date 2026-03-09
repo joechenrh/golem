@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/joechenrh/golem/internal/router"
+	"github.com/joechenrh/golem/internal/stringutil"
 )
 
 // ErrQuit signals that the user wants to quit.
@@ -63,7 +64,7 @@ func (s *Session) handleInternalCommand(
 		var b strings.Builder
 		fmt.Fprintf(&b, "Found %d matches:\n", len(results))
 		for _, e := range results {
-			fmt.Fprintf(&b, "  [%s] %s: %s\n", e.Kind, e.Timestamp.Format(time.RFC3339), truncateForLog(string(e.Payload), maxLogTruncateLen))
+			fmt.Fprintf(&b, "  [%s] %s: %s\n", e.Kind, e.Timestamp.Format(time.RFC3339), stringutil.Truncate(string(e.Payload), maxLogTruncateLen))
 		}
 		return b.String(), nil
 
