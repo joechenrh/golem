@@ -422,48 +422,14 @@ func BuildAgent(
 		}
 	}
 
-	// Wire card action handler for Lark (reset session, feedback buttons).
-	// Must be set before SessionManager is created since the handler uses it.
+	// Wire card action handler and session manager for remote channels.
 	var sessions *agent.SessionManager
-	if larkCh != nil {
-		larkCh.SetCardActionHandler(func(chatID string, action map[string]any) {
-			act, _ := action["action"].(string)
-			switch act {
-			case "reset_session":
-				if sessions != nil {
-					sessions.Reset(chatID)
-				}
-				larkCh.SendDirect(context.Background(), chatID, "Session reset. Starting a fresh conversation.")
-			case "feedback":
-				val, _ := action["value"].(string)
-				if sessions != nil {
-					if sess := sessions.Get(chatID); sess != nil {
-						sess.RecordFeedback(chatID, val)
-					}
-				}
-				logger.Info("user feedback received",
-					zap.String("chat_id", chatID), zap.String("value", val))
-			}
-		})
-	}
-
 	if cfg.HasRemoteChannels() {
-		sessions = agent.NewSessionManager(agent.SessionFactory{
-			LLMClient:       llmClient,
-			ClassifierLLM:   classifierLLM,
-			Config:          cfg,
-			Logger:          logger,
-			ToolFactory:     toolFactory,
-			ContextStrategy: cfg.ContextStrategy,
-			AgentName:       name,
-			MetricsHook:     metricsHook,
-			AuditDir:        agentTapeDir,
-			SkillDirs:       skillDirs,
-			ExtHookRunner:   extHookRunner,
-		}, logger)
-		if err := sessions.LoadExisting(cfg.TapeDir); err != nil {
-			logger.Warn("failed to restore sessions", zap.Error(err))
-		}
+		sessions = buildSessionManager(name, cfg, llmClient, classifierLLM,
+			toolFactory, metricsHook, agentTapeDir, skillDirs, extHookRunner, logger)
+	}
+	if larkCh != nil {
+		setupCardActionHandler(larkCh, sessions, logger)
 	}
 
 	return &AgentInstance{
@@ -481,6 +447,64 @@ func BuildAgent(
 		MetricsHook: metricsHook,
 		toolFactory: toolFactory,
 	}, nil
+}
+
+// buildSessionManager creates and populates a SessionManager for remote channels.
+func buildSessionManager(
+	name string, cfg *config.Config,
+	llmClient, classifierLLM llm.Client,
+	toolFactory func() *tools.Registry,
+	metricsHook *hooks.MetricsHook,
+	auditDir string,
+	skillDirs []string,
+	extHookRunner agent.ExtHookRunner,
+	logger *zap.Logger,
+) *agent.SessionManager {
+	sessions := agent.NewSessionManager(agent.SessionFactory{
+		LLMClient:       llmClient,
+		ClassifierLLM:   classifierLLM,
+		Config:          cfg,
+		Logger:          logger,
+		ToolFactory:     toolFactory,
+		ContextStrategy: cfg.ContextStrategy,
+		AgentName:       name,
+		MetricsHook:     metricsHook,
+		AuditDir:        auditDir,
+		SkillDirs:       skillDirs,
+		ExtHookRunner:   extHookRunner,
+	}, logger)
+	if err := sessions.LoadExisting(cfg.TapeDir); err != nil {
+		logger.Warn("failed to restore sessions", zap.Error(err))
+	}
+	return sessions
+}
+
+// setupCardActionHandler wires the Lark card action handler for session reset
+// and user feedback buttons.
+func setupCardActionHandler(
+	larkCh *larkchan.LarkChannel,
+	sessions *agent.SessionManager,
+	logger *zap.Logger,
+) {
+	larkCh.SetCardActionHandler(func(chatID string, action map[string]any) {
+		act, _ := action["action"].(string)
+		switch act {
+		case "reset_session":
+			if sessions != nil {
+				sessions.Reset(chatID)
+			}
+			larkCh.SendDirect(context.Background(), chatID, "Session reset. Starting a fresh conversation.")
+		case "feedback":
+			val, _ := action["value"].(string)
+			if sessions != nil {
+				if sess := sessions.Get(chatID); sess != nil {
+					sess.RecordFeedback(chatID, val)
+				}
+			}
+			logger.Info("user feedback received",
+				zap.String("chat_id", chatID), zap.String("value", val))
+		}
+	})
 }
 
 // buildSkillDirs returns the global and per-agent skill directories.
