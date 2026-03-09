@@ -33,6 +33,11 @@ func defaultRetryConfig() retryConfig {
 }
 
 // doWithRetry executes fn with exponential backoff and jitter for retryable failures.
+//
+// Body-consumption contract:
+//   - On 2xx success: body is NOT consumed; caller must close it.
+//   - On non-retryable 4xx (except 429): body is NOT consumed; caller must close it.
+//   - On retryable status (429, 5xx): body IS consumed and closed before retry.
 func doWithRetry(
 	ctx context.Context, cfg retryConfig,
 	fn func() (*http.Response, error),
