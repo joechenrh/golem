@@ -3,6 +3,8 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/joechenrh/golem/internal/tools"
 )
 
 // SubAgentRunner runs a prompt through a sub-agent and returns the response.
@@ -61,8 +63,8 @@ func (t *SpawnAgentTool) Execute(
 		Prompt  string `json:"prompt"`
 		Context string `json:"context"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.Prompt == "" {
 		return "Error: 'prompt' is required", nil

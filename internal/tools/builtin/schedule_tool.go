@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/joechenrh/golem/internal/scheduler"
+	"github.com/joechenrh/golem/internal/tools"
 )
 
 // --- schedule_add ---
@@ -68,8 +69,8 @@ func (t *ScheduleAddTool) Execute(_ context.Context, args string) (string, error
 		ChannelID   string `json:"channel_id"`
 		Description string `json:"description"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.CronExpr == "" {
 		return "Error: 'cron_expr' is required", nil
@@ -182,8 +183,8 @@ func (t *ScheduleRemoveTool) Execute(_ context.Context, args string) (string, er
 	var params struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "Error: invalid arguments: " + err.Error(), nil
+	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
+		return errMsg, nil
 	}
 	if params.ID == "" {
 		return "Error: 'id' is required", nil
