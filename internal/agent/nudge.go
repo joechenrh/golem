@@ -36,6 +36,8 @@ func looksLikePlan(content string) bool {
 	for _, phrase := range []string{
 		"我来", "让我", "我会", "我将",
 		"首先", "接下来我",
+		"收到", "马上", "正在", "稍等",
+		"给我", "我现在就",
 	} {
 		if startsWithPhrase(prefix, phrase) {
 			return true
