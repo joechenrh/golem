@@ -4,12 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/joechenrh/golem/internal/ctxmgr"
 	"github.com/joechenrh/golem/internal/llm"
 	"github.com/joechenrh/golem/internal/tape"
 )
+
+// maxTaskSummaryLen caps the fallback task summary (from lastUserMessage)
+// to avoid injecting enormous prompts when the user message contains URLs
+// or other long content.
+const maxTaskSummaryLen = 200
+
+// urlPattern matches http/https URLs for stripping from task summaries.
+var urlPattern = regexp.MustCompile(`https?://\S+`)
 
 const ambiguousMaxLen = 100
 
@@ -140,8 +149,9 @@ func isMostlyCJK(s string) bool {
 }
 
 // classifyResponse calls the classifier LLM to decide how to handle an
-// ambiguous agent response. Returns ("nudge"|"accept"|"stuck", taskSummary, true)
-// on success, or ("", "", false) if the call fails or returns unparseable output.
+// ambiguous agent response. Returns ("nudge"|"accept"|"stuck", taskSummary, rawBody, true)
+// on success, or ("", "", rawBody, false) if the call fails or returns unparseable output.
+// rawBody is always returned when available so the caller can log it on failure.
 func classifyResponse(
 	ctx context.Context,
 	client llm.Client,
@@ -149,7 +159,7 @@ func classifyResponse(
 	userMessage string,
 	agentResponse string,
 	toolNames []string,
-) (decision string, taskSummary string, ok bool) {
+) (decision string, taskSummary string, rawBody string, ok bool) {
 	_, modelName := llm.ParseModelProvider(model)
 	userContent := fmt.Sprintf(
 		"User's last message: %s\nAgent's response: %s\nAvailable tools: %s",
@@ -163,9 +173,10 @@ func classifyResponse(
 		MaxTokens:    150,
 	})
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
-	return parseClassifierResponse(resp.Content)
+	decision, taskSummary, ok = parseClassifierResponse(resp.Content)
+	return decision, taskSummary, resp.Content, ok
 }
 
 // parseClassifierResponse extracts decision and task_summary from classifier JSON.
@@ -209,6 +220,17 @@ func hasToolHistory(tapeStore tape.Store) bool {
 		}
 	}
 	return false
+}
+
+// sanitizeTaskSummary strips URLs and truncates a raw user message so it
+// can be used as a meaningful task summary in stuck-recovery prompts.
+func sanitizeTaskSummary(s string) string {
+	s = urlPattern.ReplaceAllString(s, "")
+	s = strings.TrimSpace(s)
+	if len(s) > maxTaskSummaryLen {
+		s = s[:maxTaskSummaryLen] + "..."
+	}
+	return s
 }
 
 // taskReminderMessage returns a language-aware stuck-recovery message

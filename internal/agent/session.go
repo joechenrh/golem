@@ -223,6 +223,7 @@ func (s *Session) runReActLoop(
 	s.cachedSystemPrompt = s.buildSystemPrompt()
 
 	nudges := 0
+	stuckEscalated := false
 	s.lastTaskSummary = ""
 	emptyRetries := 0
 	lastToolFailed := false // previous iteration had a tool failure
@@ -303,14 +304,14 @@ func (s *Session) runReActLoop(
 
 		// Phase 2: stuck escalation — if we already nudged and still no tool call,
 		// inject a task-specific reminder instead of another generic nudge.
-		// Gets one extra attempt beyond maxNudges since the task reminder is
-		// qualitatively different from a generic nudge.
-		if nudges >= 1 && nudges < maxNudges+1 {
+		// Gets exactly one attempt beyond the heuristic nudges.
+		if nudges >= 1 && !stuckEscalated {
+			stuckEscalated = true
 			summary := s.lastTaskSummary
 			if summary == "" {
 				// No classifier summary available (e.g., Phase 1 heuristic fired
-				// first). Fall back to the last user message as context.
-				summary = s.lastUserMessage()
+				// first). Fall back to a sanitized version of the last user message.
+				summary = sanitizeTaskSummary(s.lastUserMessage())
 			}
 			if summary != "" {
 				s.ephemeralMessages = append(s.ephemeralMessages,
@@ -332,7 +333,7 @@ func (s *Session) runReActLoop(
 			s.logger.Debug("invoking classifier for ambiguous response",
 				zap.Int("resp_len", len(resp.Content)),
 				zap.Int("iter", iter))
-			decision, taskSummary, ok := classifyResponse(
+			decision, taskSummary, rawBody, ok := classifyResponse(
 				ctx, s.classifierLLM, s.config.ClassifierModel,
 				lastUserMsg, resp.Content, toolNames,
 			)
@@ -364,7 +365,8 @@ func (s *Session) runReActLoop(
 				}
 			} else {
 				s.logger.Warn("classifier returned unparseable response, falling back to accept",
-					zap.Int("iter", iter))
+					zap.Int("iter", iter),
+					zap.String("raw_body", truncateForLog(rawBody, 200)))
 			}
 		}
 

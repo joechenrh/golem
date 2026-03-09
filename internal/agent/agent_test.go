@@ -639,6 +639,48 @@ func TestTaskReminderMessage(t *testing.T) {
 	}
 }
 
+func TestSanitizeTaskSummary(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "plain text unchanged",
+			in:   "修改文档顺序",
+			want: "修改文档顺序",
+		},
+		{
+			name: "strips URL",
+			in:   "https://example.com/very/long/path?token=abc123 这个文档继续修改，顺序还是不对",
+			want: "这个文档继续修改，顺序还是不对",
+		},
+		{
+			name: "strips multiple URLs",
+			in:   "check https://a.com and https://b.com please",
+			want: "check  and  please",
+		},
+		{
+			name: "truncates long text",
+			in:   strings.Repeat("x", 300),
+			want: strings.Repeat("x", 200) + "...",
+		},
+		{
+			name: "empty after URL strip",
+			in:   "https://example.com/path",
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeTaskSummary(tt.in)
+			if got != tt.want {
+				t.Errorf("sanitizeTaskSummary() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildSystemPrompt(t *testing.T) {
 	agent := newTestAgent(t, &mockLLMClient{})
 
