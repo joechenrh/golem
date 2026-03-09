@@ -67,6 +67,7 @@ type ChatRequest struct {
 	Temperature    *float64         `json:"temperature,omitempty"`
 	SystemPrompt   string           `json:"system_prompt,omitempty"` // separate field; Anthropic requires top-level system
 	ResponseFormat *ResponseFormat  `json:"response_format,omitempty"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"` // "low", "medium", "high", "xhigh" (OpenAI reasoning models)
 }
 
 // ChatResponse holds a complete non-streaming response.
@@ -82,6 +83,7 @@ type Usage struct {
 	PromptTokens             int `json:"prompt_tokens"`
 	CompletionTokens         int `json:"completion_tokens"`
 	TotalTokens              int `json:"total_tokens"`
+	ReasoningTokens          int `json:"reasoning_tokens,omitempty"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }

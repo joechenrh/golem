@@ -347,6 +347,8 @@ func trimToFit(msgs []llm.Message, maxTokens int) []llm.Message {
 func ModelContextWindow(model string) int {
 	lower := strings.ToLower(model)
 	switch {
+	case strings.Contains(lower, "gpt-5"):
+		return 400_000
 	case strings.Contains(lower, "claude"):
 		return 200_000
 	case strings.Contains(lower, "gpt-4o"):

@@ -16,13 +16,19 @@ import (
 // Wire-format structs for OpenAI Chat Completions API.
 
 type openaiChatRequest struct {
-	Model          string          `json:"model"`
-	Messages       []openaiMessage `json:"messages"`
-	Tools          []openaiTool    `json:"tools,omitempty"`
-	MaxTokens      int             `json:"max_tokens,omitempty"`
-	Temperature    *float64        `json:"temperature,omitempty"`
-	Stream         bool            `json:"stream,omitempty"`
-	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
+	Model           string          `json:"model"`
+	Messages        []openaiMessage `json:"messages"`
+	Tools           []openaiTool    `json:"tools,omitempty"`
+	MaxTokens       int             `json:"max_tokens,omitempty"`
+	Temperature     *float64        `json:"temperature,omitempty"`
+	Stream          bool            `json:"stream,omitempty"`
+	ResponseFormat  *ResponseFormat `json:"response_format,omitempty"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
+	StreamOptions   *streamOptions  `json:"stream_options,omitempty"`
+}
+
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type openaiMessage struct {
@@ -78,9 +84,14 @@ type openaiChoice struct {
 }
 
 type openaiUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens           int                          `json:"prompt_tokens"`
+	CompletionTokens       int                          `json:"completion_tokens"`
+	TotalTokens            int                          `json:"total_tokens"`
+	CompletionTokensDetails *openaiCompletionTokensDetails `json:"completion_tokens_details,omitempty"`
+}
+
+type openaiCompletionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
 // Streaming structs.
@@ -247,6 +258,9 @@ func (c *openaiClient) readStream(
 				CompletionTokens: chunk.Usage.CompletionTokens,
 				TotalTokens:      chunk.Usage.TotalTokens,
 			}
+			if chunk.Usage.CompletionTokensDetails != nil {
+				usage.ReasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
+			}
 		}
 
 		for _, choice := range chunk.Choices {
@@ -322,11 +336,15 @@ func (c *openaiClient) buildRequest(
 	}
 
 	wireReq := openaiChatRequest{
-		Model:          req.Model,
-		Messages:       msgs,
-		MaxTokens:      req.MaxTokens,
-		Stream:         stream,
-		ResponseFormat: req.ResponseFormat,
+		Model:           req.Model,
+		Messages:        msgs,
+		MaxTokens:       req.MaxTokens,
+		Stream:          stream,
+		ResponseFormat:  req.ResponseFormat,
+		ReasoningEffort: req.ReasoningEffort,
+	}
+	if stream {
+		wireReq.StreamOptions = &streamOptions{IncludeUsage: true}
 	}
 	if req.Temperature != nil {
 		wireReq.Temperature = req.Temperature
@@ -355,6 +373,9 @@ func (c *openaiClient) convertResponse(
 			CompletionTokens: resp.Usage.CompletionTokens,
 			TotalTokens:      resp.Usage.TotalTokens,
 		},
+	}
+	if resp.Usage.CompletionTokensDetails != nil {
+		cr.Usage.ReasoningTokens = resp.Usage.CompletionTokensDetails.ReasoningTokens
 	}
 
 	if len(resp.Choices) > 0 {

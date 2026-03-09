@@ -101,6 +101,8 @@ type Config struct {
 	MaxToolIter     int           // max tool-calling iterations per turn (default: 15)
 	MaxOutputTokens int           // max tokens in LLM response (default: 4096)
 	Temperature     *float64      // LLM sampling temperature (nil = provider default)
+	ReasoningEffort string        // reasoning effort for OpenAI models: "low", "medium", "high", "xhigh" (default: "")
+
 	ShellTimeout    time.Duration // shell command timeout (default: 30s)
 
 	// Context management
@@ -191,6 +193,7 @@ func Load(
 		MaxToolIter:         a.integer("GOLEM_MAX_TOOL_ITER", 15),
 		MaxOutputTokens:     a.integer("GOLEM_MAX_OUTPUT_TOKENS", 4096),
 		Temperature:         a.optFloat64("GOLEM_TEMPERATURE"),
+		ReasoningEffort:     a.str("GOLEM_REASONING_EFFORT", ""),
 		ShellTimeout:        a.duration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
 		ContextStrategy:     a.str("GOLEM_CONTEXT_STRATEGY", "masking"),
 		Executor:            a.str("GOLEM_EXECUTOR", "local"),
