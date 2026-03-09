@@ -93,9 +93,12 @@ func (s *FileStore) Append(entry TapeEntry) error {
 		return fmt.Errorf("tape: marshal entry: %w", err)
 	}
 
-	line := append(data, '\n')
+	line := append(data[:len(data):len(data)], '\n')
 	if _, err := s.file.Write(line); err != nil {
 		return fmt.Errorf("tape: write entry: %w", err)
+	}
+	if err := s.file.Sync(); err != nil {
+		return fmt.Errorf("tape: fsync: %w", err)
 	}
 	s.diskBytes += int64(len(line))
 

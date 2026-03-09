@@ -515,11 +515,12 @@ func (s *Session) processToolCalls(
 	}
 	g.Wait()
 
-	// Append results and track failures.
+	// Append results in original tool call order and track failures.
 	// For skill results, expand any tools mentioned in the skill body so
 	// the LLM has full parameter schemas when acting on the instructions.
 	hadFailure := false
-	results.Range(func(_, v any) bool {
+	for i := range resp.ToolCalls {
+		v, _ := results.Load(i)
 		r := v.(toolResultEntry)
 		s.appendToolResult(r.id, r.name, r.result)
 
@@ -532,8 +533,7 @@ func (s *Session) processToolCalls(
 						r.name, s.toolFailures[r.name]), nil, "", nil)
 			}
 		}
-		return true
-	})
+	}
 	return hadFailure
 }
 
