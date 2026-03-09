@@ -518,6 +518,9 @@ func TestLooksLikePlan(t *testing.T) {
 		{"chinese plan rang", "让我检查一下。", true},
 		{"chinese greeting", "你好！我是 Golem，你的助手。你现在想让我帮你做什么？", false},
 		{"chinese answer", "这个问题的答案是42。", false},
+		{"chinese shoudao not plan", "收到，我明白了。", false},
+		{"intent at char 300", strings.Repeat("x", 300) + "I'll do it now", true},
+		{"intent at char 450", strings.Repeat("x", 450) + "I'll do it now", false},
 		{"intent buried deep", strings.Repeat("正常内容。", 50) + "让我看看", false},
 		{"empty", "", false},
 	}

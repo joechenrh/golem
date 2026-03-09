@@ -10,7 +10,7 @@ import (
 // to check for intent phrases. Plans open with intent; greetings or
 // answers that happen to contain intent words deeper in the text should
 // not trigger a nudge.
-const planCheckPrefixLen = 200
+const planCheckPrefixLen = 400
 
 // looksLikePlan returns true if the opening of the content appears to
 // describe intended actions rather than providing a final answer.
@@ -36,7 +36,7 @@ func looksLikePlan(content string) bool {
 	for _, phrase := range []string{
 		"我来", "让我", "我会", "我将",
 		"首先", "接下来我",
-		"收到", "马上", "正在", "稍等",
+		"马上", "正在", "稍等",
 		"给我", "我现在就",
 	} {
 		if startsWithPhrase(prefix, phrase) {
