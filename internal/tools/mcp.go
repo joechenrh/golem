@@ -21,9 +21,9 @@ type MCPTool struct {
 	client      *mcp.Client
 }
 
-func (t *MCPTool) Name() string              { return t.name }
-func (t *MCPTool) Description() string        { return t.description }
-func (t *MCPTool) FullDescription() string    { return t.description }
+func (t *MCPTool) Name() string                { return t.name }
+func (t *MCPTool) Description() string         { return t.description }
+func (t *MCPTool) FullDescription() string     { return t.description }
 func (t *MCPTool) Parameters() json.RawMessage { return t.parameters }
 
 func (t *MCPTool) Execute(ctx context.Context, args string) (string, error) {

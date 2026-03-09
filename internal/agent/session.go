@@ -398,10 +398,10 @@ func (s *Session) executeLLMCall(
 	})
 
 	req := llm.ChatRequest{
-		Model:        modelName,
-		SystemPrompt: systemPrompt,
-		Messages:     messages,
-		Tools:        toolDefs,
+		Model:           modelName,
+		SystemPrompt:    systemPrompt,
+		Messages:        messages,
+		Tools:           toolDefs,
 		MaxTokens:       s.config.MaxOutputTokens,
 		Temperature:     s.config.Temperature,
 		ReasoningEffort: s.config.ReasoningEffort,

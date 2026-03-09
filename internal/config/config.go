@@ -98,15 +98,15 @@ type Config struct {
 	BaseURLs map[string]string // provider name -> custom base URL (optional)
 
 	// Agent behavior
-	MaxToolIter     int           // max tool-calling iterations per turn (default: 15)
-	MaxOutputTokens int           // max tokens in LLM response (default: 4096)
-	Temperature     *float64      // LLM sampling temperature (nil = provider default)
-	ReasoningEffort string        // reasoning effort for OpenAI models: "low", "medium", "high", "xhigh" (default: "")
-	UseResponsesAPI    bool   // use OpenAI Responses API instead of Chat Completions (default: false)
-	ResponsesStore     *bool  // Responses API: store responses server-side (nil = server default true)
-	UseNativeWebSearch bool   // use Responses API native web_search_preview instead of Bing scraping (default: false)
+	MaxToolIter        int      // max tool-calling iterations per turn (default: 15)
+	MaxOutputTokens    int      // max tokens in LLM response (default: 4096)
+	Temperature        *float64 // LLM sampling temperature (nil = provider default)
+	ReasoningEffort    string   // reasoning effort for OpenAI models: "low", "medium", "high", "xhigh" (default: "")
+	UseResponsesAPI    bool     // use OpenAI Responses API instead of Chat Completions (default: false)
+	ResponsesStore     *bool    // Responses API: store responses server-side (nil = server default true)
+	UseNativeWebSearch bool     // use Responses API native web_search_preview instead of Bing scraping (default: false)
 
-	ShellTimeout    time.Duration // shell command timeout (default: 30s)
+	ShellTimeout time.Duration // shell command timeout (default: 30s)
 
 	// Context management
 	ContextStrategy string // "anchor", "masking", "hybrid" (default: "masking")

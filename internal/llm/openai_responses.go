@@ -46,11 +46,11 @@ type responsesTool struct {
 type responsesInputItem struct {
 	Type      string `json:"type"`
 	Role      string `json:"role,omitempty"`
-	Content   any    `json:"content,omitempty"`    // string or []responsesContentPart
-	CallID    string `json:"call_id,omitempty"`    // function_call_output
-	Output    string `json:"output,omitempty"`     // function_call_output
-	ID        string `json:"id,omitempty"`         // function_call (for assistant tool calls)
-	Name      string `json:"name,omitempty"`       // function_call
+	Content   any    `json:"content,omitempty"`   // string or []responsesContentPart
+	CallID    string `json:"call_id,omitempty"`   // function_call_output
+	Output    string `json:"output,omitempty"`    // function_call_output
+	ID        string `json:"id,omitempty"`        // function_call (for assistant tool calls)
+	Name      string `json:"name,omitempty"`      // function_call
 	Arguments string `json:"arguments,omitempty"` // function_call
 }
 
@@ -72,13 +72,13 @@ type responsesResponse struct {
 type responsesOutputItem struct {
 	Type      string `json:"type"`
 	ID        string `json:"id,omitempty"`        // function_call ID
-	CallID    string `json:"call_id,omitempty"`    // function_call
-	Name      string `json:"name,omitempty"`       // function_call
+	CallID    string `json:"call_id,omitempty"`   // function_call
+	Name      string `json:"name,omitempty"`      // function_call
 	Arguments string `json:"arguments,omitempty"` // function_call
 	Status    string `json:"status,omitempty"`    // web_search_call status
 	Content   []struct {
-		Type        string               `json:"type"`
-		Text        string               `json:"text,omitempty"`
+		Type        string                `json:"type"`
+		Text        string                `json:"text,omitempty"`
 		Annotations []responsesAnnotation `json:"annotations,omitempty"`
 	} `json:"content,omitempty"` // message content
 }
@@ -92,9 +92,9 @@ type responsesAnnotation struct {
 }
 
 type responsesUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-	TotalTokens  int `json:"total_tokens"`
+	InputTokens         int `json:"input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+	TotalTokens         int `json:"total_tokens"`
 	OutputTokensDetails *struct {
 		ReasoningTokens int `json:"reasoning_tokens"`
 	} `json:"output_tokens_details,omitempty"`

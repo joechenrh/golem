@@ -1169,8 +1169,8 @@ func TestOpenAIResponsesAPI_Chat(t *testing.T) {
 			Output: []responsesOutputItem{{
 				Type: "message",
 				Content: []struct {
-					Type string `json:"type"`
-					Text        string               `json:"text,omitempty"`
+					Type        string                `json:"type"`
+					Text        string                `json:"text,omitempty"`
 					Annotations []responsesAnnotation `json:"annotations,omitempty"`
 				}{{Type: "output_text", Text: "Hello!"}},
 			}},
@@ -1253,8 +1253,8 @@ func TestOpenAIResponsesAPI_PreviousResponseID(t *testing.T) {
 			Output: []responsesOutputItem{{
 				Type: "message",
 				Content: []struct {
-					Type string `json:"type"`
-					Text        string               `json:"text,omitempty"`
+					Type        string                `json:"type"`
+					Text        string                `json:"text,omitempty"`
 					Annotations []responsesAnnotation `json:"annotations,omitempty"`
 				}{{Type: "output_text", Text: "Chained!"}},
 			}},
@@ -1522,8 +1522,8 @@ func TestConvertResponsesResponse_WebSearchCall(t *testing.T) {
 			{
 				Type: "message",
 				Content: []struct {
-					Type        string               `json:"type"`
-					Text        string               `json:"text,omitempty"`
+					Type        string                `json:"type"`
+					Text        string                `json:"text,omitempty"`
 					Annotations []responsesAnnotation `json:"annotations,omitempty"`
 				}{
 					{
