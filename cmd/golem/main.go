@@ -170,6 +170,11 @@ func initLogger(level, logDir string) (*zap.Logger, error) {
 		zapLevel = zapcore.InfoLevel
 	}
 
+	// Ensure the log directory exists (e.g. after a tape dir reset).
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create log dir %s: %w", logDir, err)
+	}
+
 	logFile := filepath.Join(logDir, fmt.Sprintf("golem-%s.log", time.Now().Format("20060102-150405")))
 
 	cfg := zap.Config{
