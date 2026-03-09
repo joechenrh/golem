@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -217,24 +216,12 @@ func convertToResponsesInput(msgs []Message) []responsesInputItem {
 
 // chatResponses performs a non-streaming Responses API call.
 func (c *openaiClient) chatResponses(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	wireReq := c.buildResponsesRequest(req, false)
-
-	body, err := json.Marshal(wireReq)
+	body, err := json.Marshal(c.buildResponsesRequest(req, false))
 	if err != nil {
 		return nil, fmt.Errorf("openai responses: marshal: %w", err)
 	}
 
-	retryCfg := defaultRetryConfig()
-	retryCfg.logger = c.logger
-	resp, err := doWithRetry(ctx, retryCfg, func() (*http.Response, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/responses", bytes.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-		return c.http.Do(httpReq)
-	})
+	resp, err := c.doRetryRequest(ctx, "/responses", body)
 	if err != nil {
 		return nil, err
 	}
@@ -322,21 +309,12 @@ func formatAnnotations(annotations []responsesAnnotation) string {
 func (c *openaiClient) chatResponsesStream(
 	ctx context.Context, req ChatRequest,
 ) (<-chan StreamEvent, error) {
-	wireReq := c.buildResponsesRequest(req, true)
-
-	body, err := json.Marshal(wireReq)
+	body, err := json.Marshal(c.buildResponsesRequest(req, true))
 	if err != nil {
 		return nil, fmt.Errorf("openai responses: marshal: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/responses", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.streamHTTP.Do(httpReq)
+	resp, err := c.newRequest(ctx, "/responses", body, c.streamHTTP)
 	if err != nil {
 		return nil, err
 	}

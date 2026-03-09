@@ -153,6 +153,27 @@ func (c *openaiClient) Provider() Provider {
 	return ProviderOpenAI
 }
 
+// doRetryRequest sends a POST with retry and returns the response.
+// The caller must close the response body on success.
+func (c *openaiClient) doRetryRequest(ctx context.Context, path string, body []byte) (*http.Response, error) {
+	retryCfg := defaultRetryConfig()
+	retryCfg.logger = c.logger
+	return doWithRetry(ctx, retryCfg, func() (*http.Response, error) {
+		return c.newRequest(ctx, path, body, c.http)
+	})
+}
+
+// newRequest builds and sends a POST request with standard OpenAI headers.
+func (c *openaiClient) newRequest(ctx context.Context, path string, body []byte, client *http.Client) (*http.Response, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	return client.Do(httpReq)
+}
+
 func (c *openaiClient) Chat(
 	ctx context.Context, req ChatRequest,
 ) (*ChatResponse, error) {
@@ -160,24 +181,12 @@ func (c *openaiClient) Chat(
 		return c.chatResponses(ctx, req)
 	}
 
-	wireReq := c.buildRequest(req, false)
-
-	body, err := json.Marshal(wireReq)
+	body, err := json.Marshal(c.buildRequest(req, false))
 	if err != nil {
 		return nil, fmt.Errorf("openai: marshal request: %w", err)
 	}
 
-	retryCfg := defaultRetryConfig()
-	retryCfg.logger = c.logger
-	resp, err := doWithRetry(ctx, retryCfg, func() (*http.Response, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-		return c.http.Do(httpReq)
-	})
+	resp, err := c.doRetryRequest(ctx, "/chat/completions", body)
 	if err != nil {
 		return nil, err
 	}
@@ -202,21 +211,12 @@ func (c *openaiClient) ChatStream(
 		return c.chatResponsesStream(ctx, req)
 	}
 
-	wireReq := c.buildRequest(req, true)
-
-	body, err := json.Marshal(wireReq)
+	body, err := json.Marshal(c.buildRequest(req, true))
 	if err != nil {
 		return nil, fmt.Errorf("openai: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.streamHTTP.Do(httpReq)
+	resp, err := c.newRequest(ctx, "/chat/completions", body, c.streamHTTP)
 	if err != nil {
 		return nil, err
 	}
