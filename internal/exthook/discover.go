@@ -2,6 +2,7 @@ package exthook
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 )
@@ -28,7 +29,8 @@ func Discover(dir string) ([]*HookDef, error) {
 		}
 		h, err := ParseHook(hookPath)
 		if err != nil {
-			// Skip invalid hooks, don't fail the whole discovery.
+			// Skip invalid hooks, but log so operators can diagnose.
+			log.Printf("skipping invalid hook %s: %v", hookPath, err)
 			continue
 		}
 		hooks = append(hooks, h)

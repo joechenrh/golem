@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,7 +136,8 @@ func discoverSkills(dir string) ([]Tool, error) {
 		}
 		t, err := ParseSkill(skillPath)
 		if err != nil {
-			// Skip invalid skills with a note, don't fail the whole discovery.
+			// Skip invalid skills, but log so operators can diagnose.
+			log.Printf("skipping invalid skill %s: %v", skillPath, err)
 			continue
 		}
 		skills = append(skills, t)
