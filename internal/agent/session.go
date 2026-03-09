@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,10 @@ type Session struct {
 	// Ephemeral messages injected into the next LLM call only (nudges,
 	// recovery hints). They are not persisted to the tape.
 	ephemeralMessages []llm.Message
+
+	// Cached system prompt for the current turn, rebuilt once at the
+	// start of runReActLoop and reused across iterations.
+	cachedSystemPrompt string
 
 	// Responses API chain tracking (OpenAI only).
 	lastResponseID      string        // previous_response_id for chaining
@@ -205,6 +210,10 @@ func (s *Session) runReActLoop(
 	// Reset per-turn tracking.
 	s.turnUsage = llm.Usage{}
 	s.toolFailures = make(map[string]int)
+
+	// Cache system prompt once per turn to avoid rebuilding (and re-reading
+	// persona files) on every LLM iteration within the same turn.
+	s.cachedSystemPrompt = s.buildSystemPrompt()
 
 	nudges := 0
 	emptyRetries := 0
@@ -362,9 +371,7 @@ func (s *Session) executeLLMCall(
 			}
 		}
 		// Reverse so they're in chronological order.
-		for i, j := 0, len(recentParts)-1; i < j; i, j = i+1, j-1 {
-			recentParts[i], recentParts[j] = recentParts[j], recentParts[i]
-		}
+		slices.Reverse(recentParts)
 		recentContext := strings.Join(recentParts, "\n")
 
 		injected, err := s.extHooks.Run(ctx, "before_llm_call", s.config.AgentName, map[string]any{
@@ -383,7 +390,7 @@ func (s *Session) executeLLMCall(
 		}
 	}
 
-	systemPrompt := s.buildSystemPrompt()
+	systemPrompt := s.cachedSystemPrompt
 	toolDefs := s.tools.ToolDefinitions()
 
 	// Budget system prompt + tool schemas into the context window.
