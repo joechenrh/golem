@@ -174,17 +174,25 @@ func NewRateLimitedClient(inner Client, rps int, logger *zap.Logger) Client {
 
 func (r *RateLimitedClient) Provider() Provider { return r.inner.Provider() }
 
-func (r *RateLimitedClient) Chat(
-	ctx context.Context, req ChatRequest,
-) (*ChatResponse, error) {
+// wait blocks until the rate limiter allows the next request.
+func (r *RateLimitedClient) wait(ctx context.Context) error {
 	start := time.Now()
 	if err := r.limiter.Wait(ctx); err != nil {
-		return nil, err
+		return err
 	}
 	if r.logger != nil {
 		if waited := time.Since(start); waited > 100*time.Millisecond {
 			r.logger.Debug("rate limiter wait", zap.Duration("waited", waited))
 		}
+	}
+	return nil
+}
+
+func (r *RateLimitedClient) Chat(
+	ctx context.Context, req ChatRequest,
+) (*ChatResponse, error) {
+	if err := r.wait(ctx); err != nil {
+		return nil, err
 	}
 	return r.inner.Chat(ctx, req)
 }
@@ -192,14 +200,8 @@ func (r *RateLimitedClient) Chat(
 func (r *RateLimitedClient) ChatStream(
 	ctx context.Context, req ChatRequest,
 ) (<-chan StreamEvent, error) {
-	start := time.Now()
-	if err := r.limiter.Wait(ctx); err != nil {
+	if err := r.wait(ctx); err != nil {
 		return nil, err
-	}
-	if r.logger != nil {
-		if waited := time.Since(start); waited > 100*time.Millisecond {
-			r.logger.Debug("rate limiter wait", zap.Duration("waited", waited))
-		}
 	}
 	return r.inner.ChatStream(ctx, req)
 }

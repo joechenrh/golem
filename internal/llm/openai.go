@@ -356,9 +356,7 @@ func (c *openaiClient) buildRequest(
 	if stream {
 		wireReq.StreamOptions = &streamOptions{IncludeUsage: true}
 	}
-	if req.Temperature != nil {
-		wireReq.Temperature = req.Temperature
-	}
+	wireReq.Temperature = req.Temperature
 
 	for _, td := range req.Tools {
 		wireReq.Tools = append(wireReq.Tools, openaiTool{

@@ -110,9 +110,7 @@ func (c *openaiClient) buildResponsesRequest(req ChatRequest, stream bool) respo
 		PreviousResponseID: req.PreviousResponseID,
 		Stream:             stream,
 	}
-	if req.Temperature != nil {
-		wireReq.Temperature = req.Temperature
-	}
+	wireReq.Temperature = req.Temperature
 	if req.ReasoningEffort != "" {
 		wireReq.Reasoning = &responsesReasoning{Effort: req.ReasoningEffort}
 	}
@@ -271,12 +269,12 @@ func (c *openaiClient) convertResponsesResponse(resp responsesResponse) *ChatRes
 	for _, item := range resp.Output {
 		switch item.Type {
 		case "message":
-			for _, c := range item.Content {
-				if c.Type == "output_text" && c.Text != "" {
-					cr.Content += c.Text
+			for _, part := range item.Content {
+				if part.Type == "output_text" && part.Text != "" {
+					cr.Content += part.Text
 					// Append URL citations from annotations.
-					if len(c.Annotations) > 0 {
-						cr.Content += formatAnnotations(c.Annotations)
+					if len(part.Annotations) > 0 {
+						cr.Content += formatAnnotations(part.Annotations)
 					}
 				}
 			}

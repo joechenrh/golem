@@ -37,7 +37,7 @@ type anthropicContentBlock struct {
 	Name      string                `json:"name,omitempty"`        // tool_use
 	Input     json.RawMessage       `json:"input,omitempty"`       // tool_use (JSON object)
 	ToolUseID string                `json:"tool_use_id,omitempty"` // tool_result
-	Content   string                `json:"content,omitempty"`     // tool_result (reuses Text for simple string)
+	Content   string                `json:"content,omitempty"`     // tool_result text
 	Source    *anthropicImageSource `json:"source,omitempty"`      // image
 }
 
@@ -333,9 +333,7 @@ func (c *anthropicClient) buildRequest(
 			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
 		}}
 	}
-	if req.Temperature != nil {
-		wireReq.Temperature = req.Temperature
-	}
+	wireReq.Temperature = req.Temperature
 
 	wireReq.Messages = convertMessages(req.Messages)
 
