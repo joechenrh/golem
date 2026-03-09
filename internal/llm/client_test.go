@@ -1170,7 +1170,8 @@ func TestOpenAIResponsesAPI_Chat(t *testing.T) {
 				Type: "message",
 				Content: []struct {
 					Type string `json:"type"`
-					Text string `json:"text,omitempty"`
+					Text        string               `json:"text,omitempty"`
+					Annotations []responsesAnnotation `json:"annotations,omitempty"`
 				}{{Type: "output_text", Text: "Hello!"}},
 			}},
 			Usage: responsesUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15},
@@ -1253,7 +1254,8 @@ func TestOpenAIResponsesAPI_PreviousResponseID(t *testing.T) {
 				Type: "message",
 				Content: []struct {
 					Type string `json:"type"`
-					Text string `json:"text,omitempty"`
+					Text        string               `json:"text,omitempty"`
+					Annotations []responsesAnnotation `json:"annotations,omitempty"`
 				}{{Type: "output_text", Text: "Chained!"}},
 			}},
 			Usage: responsesUsage{InputTokens: 5, OutputTokens: 3, TotalTokens: 8},
@@ -1404,5 +1406,172 @@ func TestAnthropic_ConvertMessages_NoImages(t *testing.T) {
 	}
 	if s != "Hello" {
 		t.Errorf("Content = %q, want %q", s, "Hello")
+	}
+}
+
+func TestBuildResponsesRequest_Truncation(t *testing.T) {
+	c := newOpenAIClient("test-key", "https://api.openai.com/v1")
+
+	req := c.buildResponsesRequest(ChatRequest{
+		Model:      "gpt-4o",
+		Messages:   []Message{{Role: RoleUser, Content: "hi"}},
+		Truncation: "auto",
+	}, false)
+
+	if req.Truncation == nil {
+		t.Fatal("Truncation should not be nil")
+	}
+	if req.Truncation.Type != "auto" {
+		t.Errorf("Truncation.Type = %q, want auto", req.Truncation.Type)
+	}
+}
+
+func TestBuildResponsesRequest_Store(t *testing.T) {
+	c := newOpenAIClient("test-key", "https://api.openai.com/v1")
+
+	storeFalse := false
+	req := c.buildResponsesRequest(ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+		Store:    &storeFalse,
+	}, false)
+
+	if req.Store == nil {
+		t.Fatal("Store should not be nil")
+	}
+	if *req.Store != false {
+		t.Errorf("Store = %v, want false", *req.Store)
+	}
+}
+
+func TestBuildResponsesRequest_StoreNil(t *testing.T) {
+	c := newOpenAIClient("test-key", "https://api.openai.com/v1")
+
+	req := c.buildResponsesRequest(ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, false)
+
+	if req.Store != nil {
+		t.Errorf("Store should be nil (omitted), got %v", *req.Store)
+	}
+}
+
+func TestBuildResponsesRequest_NativeWebSearch(t *testing.T) {
+	c := newOpenAIClient("test-key", "https://api.openai.com/v1")
+
+	req := c.buildResponsesRequest(ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+		Tools: []ToolDefinition{
+			{Name: "web_search", Description: "Search the web", Parameters: json.RawMessage(`{}`)},
+			{Name: "read_file", Description: "Read a file", Parameters: json.RawMessage(`{}`)},
+		},
+		UseNativeWebSearch: true,
+	}, false)
+
+	if len(req.Tools) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(req.Tools))
+	}
+
+	if req.Tools[0].Type != "web_search_preview" {
+		t.Errorf("tool[0].Type = %q, want web_search_preview", req.Tools[0].Type)
+	}
+	if req.Tools[0].Name != "" {
+		t.Errorf("tool[0].Name = %q, want empty", req.Tools[0].Name)
+	}
+
+	if req.Tools[1].Type != "function" {
+		t.Errorf("tool[1].Type = %q, want function", req.Tools[1].Type)
+	}
+	if req.Tools[1].Name != "read_file" {
+		t.Errorf("tool[1].Name = %q, want read_file", req.Tools[1].Name)
+	}
+}
+
+func TestBuildResponsesRequest_NoNativeWebSearch(t *testing.T) {
+	c := newOpenAIClient("test-key", "https://api.openai.com/v1")
+
+	req := c.buildResponsesRequest(ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+		Tools: []ToolDefinition{
+			{Name: "web_search", Description: "Search the web", Parameters: json.RawMessage(`{}`)},
+		},
+		UseNativeWebSearch: false,
+	}, false)
+
+	if len(req.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+	}
+	if req.Tools[0].Type != "function" {
+		t.Errorf("tool[0].Type = %q, want function", req.Tools[0].Type)
+	}
+	if req.Tools[0].Name != "web_search" {
+		t.Errorf("tool[0].Name = %q, want web_search", req.Tools[0].Name)
+	}
+}
+
+func TestConvertResponsesResponse_WebSearchCall(t *testing.T) {
+	c := newOpenAIClient("test-key", "https://api.openai.com/v1")
+
+	resp := responsesResponse{
+		ID: "resp_ws",
+		Output: []responsesOutputItem{
+			{Type: "web_search_call", Status: "completed"},
+			{
+				Type: "message",
+				Content: []struct {
+					Type        string               `json:"type"`
+					Text        string               `json:"text,omitempty"`
+					Annotations []responsesAnnotation `json:"annotations,omitempty"`
+				}{
+					{
+						Type: "output_text",
+						Text: "The answer is 42.",
+						Annotations: []responsesAnnotation{
+							{Type: "url_citation", URL: "https://example.com", Title: "Example"},
+						},
+					},
+				},
+			},
+		},
+		Usage: responsesUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15},
+	}
+
+	cr := c.convertResponsesResponse(resp)
+	if !strings.Contains(cr.Content, "The answer is 42.") {
+		t.Errorf("content should contain main text, got: %q", cr.Content)
+	}
+	if !strings.Contains(cr.Content, "https://example.com") {
+		t.Errorf("content should contain citation URL, got: %q", cr.Content)
+	}
+	if !strings.Contains(cr.Content, "Example") {
+		t.Errorf("content should contain citation title, got: %q", cr.Content)
+	}
+}
+
+func TestTruncation_WireFormat(t *testing.T) {
+	c := newOpenAIClient("test-key", "https://api.openai.com/v1")
+	req := c.buildResponsesRequest(ChatRequest{
+		Model:      "gpt-4o",
+		Messages:   []Message{{Role: RoleUser, Content: "hi"}},
+		Truncation: "auto",
+	}, false)
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var m map[string]any
+	json.Unmarshal(data, &m)
+
+	trunc, ok := m["truncation"].(map[string]any)
+	if !ok {
+		t.Fatalf("truncation field missing or wrong type in JSON: %s", data)
+	}
+	if trunc["type"] != "auto" {
+		t.Errorf("truncation.type = %v, want auto", trunc["type"])
 	}
 }

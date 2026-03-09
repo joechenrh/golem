@@ -72,6 +72,12 @@ type ChatRequest struct {
 	// Responses API fields (OpenAI only).
 	PreviousResponseID string    `json:"previous_response_id,omitempty"` // chain to a previous response
 	IncrementalInput   []Message `json:"incremental_input,omitempty"`    // new messages only (used with PreviousResponseID)
+	Truncation         string    `json:"truncation,omitempty"`           // "auto" enables server-side truncation
+	Store              *bool     `json:"store,omitempty"`                // whether to store responses server-side (nil = server default)
+
+	// Native web search: when true AND in responses mode, emit web_search_preview
+	// instead of the function-based web_search tool definition.
+	UseNativeWebSearch bool `json:"-"`
 }
 
 // ChatResponse holds a complete non-streaming response.

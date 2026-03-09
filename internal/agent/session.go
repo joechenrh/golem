@@ -407,10 +407,16 @@ func (s *Session) executeLLMCall(
 		ReasoningEffort: s.config.ReasoningEffort,
 	}
 
-	// Responses API chaining: send only incremental input when we have a valid chain.
-	if s.config.UseResponsesAPI && s.lastResponseID != "" && s.chainValid {
-		req.PreviousResponseID = s.lastResponseID
-		req.IncrementalInput = s.incrementalMessages
+	// Responses API: truncation, store, native web search, and chaining.
+	if s.config.UseResponsesAPI {
+		req.Truncation = "auto"
+		req.Store = s.config.ResponsesStore
+		req.UseNativeWebSearch = s.config.UseNativeWebSearch
+
+		if s.lastResponseID != "" && s.chainValid {
+			req.PreviousResponseID = s.lastResponseID
+			req.IncrementalInput = s.incrementalMessages
+		}
 	}
 
 	var resp *llm.ChatResponse
@@ -430,9 +436,11 @@ func (s *Session) executeLLMCall(
 	}
 
 	// Capture response ID for Responses API chaining.
+	// When Store is explicitly false, the server won't remember the response,
+	// so chaining via previous_response_id is not possible.
 	if s.config.UseResponsesAPI && resp.ResponseID != "" {
 		s.lastResponseID = resp.ResponseID
-		s.chainValid = true
+		s.chainValid = s.config.ResponsesStore == nil || *s.config.ResponsesStore
 		s.incrementalMessages = nil // reset; will accumulate new messages
 	}
 
