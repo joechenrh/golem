@@ -36,8 +36,8 @@ func (m *mockChannel) SendDirect(_ context.Context, channelID, text string) erro
 	m.sent = append(m.sent, channel.OutgoingMessage{ChannelID: channelID, Text: text})
 	return nil
 }
-func (m *mockChannel) SendError(_ context.Context, _, _ string) error             { return nil }
-func (m *mockChannel) SendTyping(_ context.Context, _ string) error               { return nil }
+func (m *mockChannel) SendError(_ context.Context, _, _ string) error                { return nil }
+func (m *mockChannel) SendTyping(_ context.Context, _ string) error                  { return nil }
 func (m *mockChannel) SupportsStreaming() bool                                       { return false }
 func (m *mockChannel) SendStream(_ context.Context, _ string, _ <-chan string) error { return nil }
 

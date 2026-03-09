@@ -28,8 +28,8 @@ type MetricsHook struct {
 	toolErrors map[string]int64
 
 	// Timing — llmCallStarts is keyed per-goroutine to handle concurrent calls.
-	llmCallStarts sync.Map   // goroutine-safe: event payload key → time.Time
-	llmLatencyMs  []int64    // ring buffer of recent latencies (guarded by mu)
+	llmCallStarts sync.Map // goroutine-safe: event payload key → time.Time
+	llmLatencyMs  []int64  // ring buffer of recent latencies (guarded by mu)
 }
 
 // NewMetricsHook creates a MetricsHook.

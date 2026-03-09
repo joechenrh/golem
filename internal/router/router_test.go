@@ -189,4 +189,3 @@ func TestRouteAssistant_CodeFenceWithLang(t *testing.T) {
 		t.Errorf("Command = %q, want %q", commands[0].Command, "tools")
 	}
 }
-

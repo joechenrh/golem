@@ -18,12 +18,12 @@ import (
 // ExternalToolManifest describes an external tool plugin loaded from a JSON file.
 // The plugin communicates via JSON-RPC 2.0 over stdin/stdout.
 type ExternalToolManifest struct {
-	Name           string          `json:"name"`
-	Description    string          `json:"description"`
-	FullDesc       string          `json:"full_description"`
-	Parameters     json.RawMessage `json:"parameters"`
-	Command        string            `json:"command"`                   // path to executable
-	Args           []string          `json:"args,omitempty"`            // extra args passed to the executable
+	Name           string            `json:"name"`
+	Description    string            `json:"description"`
+	FullDesc       string            `json:"full_description"`
+	Parameters     json.RawMessage   `json:"parameters"`
+	Command        string            `json:"command"`        // path to executable
+	Args           []string          `json:"args,omitempty"` // extra args passed to the executable
 	WorkDir        string            `json:"work_dir,omitempty"`
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"` // default: 30
 	Env            map[string]string `json:"env,omitempty"`             // optional environment variable overrides

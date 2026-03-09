@@ -84,9 +84,9 @@ type openaiChoice struct {
 }
 
 type openaiUsage struct {
-	PromptTokens           int                          `json:"prompt_tokens"`
-	CompletionTokens       int                          `json:"completion_tokens"`
-	TotalTokens            int                          `json:"total_tokens"`
+	PromptTokens            int                            `json:"prompt_tokens"`
+	CompletionTokens        int                            `json:"completion_tokens"`
+	TotalTokens             int                            `json:"total_tokens"`
 	CompletionTokensDetails *openaiCompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 }
 
@@ -146,8 +146,8 @@ func newOpenAIClient(apiKey, baseURL string) *openaiClient {
 	}
 }
 
-func (c *openaiClient) setLogger(l *zap.Logger)    { c.logger = l }
-func (c *openaiClient) setResponsesMode(v bool)    { c.responsesMode = v }
+func (c *openaiClient) setLogger(l *zap.Logger) { c.logger = l }
+func (c *openaiClient) setResponsesMode(v bool) { c.responsesMode = v }
 
 func (c *openaiClient) Provider() Provider {
 	return ProviderOpenAI

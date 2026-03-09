@@ -29,8 +29,8 @@ func (t *TelegramChannel) Send(
 }
 
 func (t *TelegramChannel) SendDirect(_ context.Context, _, _ string) error { return nil }
-func (t *TelegramChannel) SendError(_ context.Context, _, _ string) error { return nil }
-func (t *TelegramChannel) SendTyping(_ context.Context, _ string) error   { return nil }
+func (t *TelegramChannel) SendError(_ context.Context, _, _ string) error  { return nil }
+func (t *TelegramChannel) SendTyping(_ context.Context, _ string) error    { return nil }
 
 func (t *TelegramChannel) SupportsStreaming() bool { return false }
 

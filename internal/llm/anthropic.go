@@ -52,15 +52,15 @@ type anthropicCacheControl struct {
 }
 
 type anthropicSystemBlock struct {
-	Type         string                `json:"type"`
-	Text         string                `json:"text"`
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicTool struct {
-	Name         string                `json:"name"`
-	Description  string                `json:"description"`
-	InputSchema  json.RawMessage       `json:"input_schema"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description"`
+	InputSchema  json.RawMessage        `json:"input_schema"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
