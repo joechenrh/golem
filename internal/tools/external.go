@@ -26,8 +26,7 @@ type ExternalToolManifest struct {
 	Command        string            `json:"command"`        // path to executable
 	Args           []string          `json:"args,omitempty"` // extra args passed to the executable
 	WorkDir        string            `json:"work_dir,omitempty"`
-	TimeoutSeconds int               `json:"timeout_seconds,omitempty"` // default: 30
-	Env            map[string]string `json:"env,omitempty"`             // optional environment variable overrides
+	Env map[string]string `json:"env,omitempty"` // optional environment variable overrides
 }
 
 // ExternalTool wraps an external process as a Tool.
