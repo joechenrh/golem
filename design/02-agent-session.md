@@ -30,16 +30,48 @@ The assistant message (with tool calls) is first recorded to tape. Progressive d
 
 `router.RouteAssistant()` scans the final answer for embedded colon commands at line starts, skipping lines inside code fences. Detected commands are executed and their output appended; command lines are stripped from the clean text.
 
-## 3. Auto-Nudge
+## 3. Auto-Nudge (Hybrid Three-Tier System)
 
-When the LLM returns text but no tool calls, `looksLikePlan()` checks whether the opening of the response is a plan rather than a final answer. It scans the first 200 characters for intent phrases:
+When the LLM returns text but no tool calls, a three-tier decision flow determines whether to nudge, escalate, or accept the response.
+
+### Phase 1: Heuristic Detection
+
+`looksLikePlan()` scans the first 400 characters for intent phrases:
 
 | Language | Phrases checked |
 |---|---|
 | English | `"i'll "`, `"i will "`, `"let me "`, `"i'm going to "`, `"i can help"`, `"i can do"`, `"first, i'll"`, `"first, let me"` |
-| Chinese | `"我来"`, `"让我"`, `"我会"`, `"我将"`, `"首先"`, `"接下来我"` (must appear at sentence boundary via `startsWithPhrase`) |
+| Chinese | `"我来"`, `"让我"`, `"我会"`, `"我将"`, `"首先"`, `"接下来我"`, `"马上"`, `"正在"`, `"稍等"`, `"给我"`, `"我现在就"` (must appear at sentence boundary via `startsWithPhrase`) |
 
-The nudge limit is 2 per turn. When triggered, the plan text is appended as an assistant message, followed by a language-aware nudge prompt (selected via `isMostlyCJK()`) as a user message. If the limit is reached, the response is accepted as the final answer even if it still looks like a plan.
+When a plan phrase is detected (or the previous tool call failed), a generic nudge prompt is injected, up to `maxNudges` (2) per turn.
+
+### Phase 2: Stuck Escalation
+
+If a nudge already fired and the LLM still responds with text-only (no tool calls), the system assumes the LLM is stuck rather than lazy. Instead of another generic nudge, it injects a **task-specific reminder** using either the classifier's task summary (if available) or the last user message as context. This gets one additional attempt beyond `maxNudges`.
+
+### Phase 3: Classifier (optional)
+
+When configured via `GOLEM_CLASSIFIER_MODEL`, a lightweight LLM classifies ambiguous responses -- short (<100 chars) text-only responses in sessions that have used tools before, where no heuristic phrase was matched. The classifier returns one of:
+
+- **"nudge"**: The agent is planning instead of acting. Inject a generic nudge.
+- **"accept"**: The response is a valid final answer. Accept it.
+- **"stuck"**: The agent is lost. Inject a task-specific reminder with the classifier's summary.
+
+The classifier fires at most once per turn, only on the first nudge opportunity (`nudges == 0`), and only when `classifierLLM` is configured.
+
+### Escalation Flow
+
+```
+Iteration N: LLM responds with text (no tool calls)
+  → Phase 1: plan phrase detected? → generic nudge (nudges=1)
+  → Phase 3: ambiguous & classifier configured? → classifier decides
+Iteration N+1: still text-only
+  → Phase 2: assume stuck → task reminder (nudges=2 or 3)
+Iteration N+2: still text-only
+  → Accept as final answer
+```
+
+Source: `internal/agent/nudge.go`, `internal/agent/session.go` (lines 286-358)
 
 ## 4. Self-Correction
 
