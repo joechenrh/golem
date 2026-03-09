@@ -1575,3 +1575,196 @@ func TestTruncation_WireFormat(t *testing.T) {
 		t.Errorf("truncation.type = %v, want auto", trunc["type"])
 	}
 }
+
+// ─── Request Wire-Format Verification Tests ──────────────────────
+
+func TestOpenAI_BuildRequest_ToolsAndOptions(t *testing.T) {
+	temp := 0.7
+	client := newOpenAIClient("test-key", "https://api.example.com")
+	wireReq := client.buildRequest(ChatRequest{
+		Model:           "gpt-4o",
+		Messages:        []Message{{Role: RoleUser, Content: "Hi"}},
+		Temperature:     &temp,
+		ReasoningEffort: "high",
+		Tools: []ToolDefinition{{
+			Name:        "search",
+			Description: "Search the web",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
+		}},
+	}, true)
+
+	if wireReq.Model != "gpt-4o" {
+		t.Errorf("Model = %q, want gpt-4o", wireReq.Model)
+	}
+	if wireReq.Temperature == nil || *wireReq.Temperature != 0.7 {
+		t.Errorf("Temperature = %v, want 0.7", wireReq.Temperature)
+	}
+	if wireReq.ReasoningEffort != "high" {
+		t.Errorf("ReasoningEffort = %q, want high", wireReq.ReasoningEffort)
+	}
+	if !wireReq.Stream {
+		t.Error("Stream should be true")
+	}
+	if wireReq.StreamOptions == nil || !wireReq.StreamOptions.IncludeUsage {
+		t.Error("StreamOptions.IncludeUsage should be true when streaming")
+	}
+	if len(wireReq.Tools) != 1 {
+		t.Fatalf("len(Tools) = %d, want 1", len(wireReq.Tools))
+	}
+	if wireReq.Tools[0].Type != "function" {
+		t.Errorf("Tool.Type = %q, want function", wireReq.Tools[0].Type)
+	}
+	if wireReq.Tools[0].Function.Name != "search" {
+		t.Errorf("Tool.Function.Name = %q, want search", wireReq.Tools[0].Function.Name)
+	}
+}
+
+func TestOpenAI_BuildRequest_ToolCallMessage(t *testing.T) {
+	client := newOpenAIClient("test-key", "https://api.example.com")
+	wireReq := client.buildRequest(ChatRequest{
+		Model: "gpt-4o",
+		Messages: []Message{
+			{Role: RoleUser, Content: "search for cats"},
+			{Role: RoleAssistant, ToolCalls: []ToolCall{
+				{ID: "call_1", Name: "search", Arguments: `{"q":"cats"}`},
+			}},
+			{Role: RoleTool, ToolCallID: "call_1", Name: "search", Content: "found cats"},
+		},
+	}, false)
+
+	if len(wireReq.Messages) != 3 {
+		t.Fatalf("len(Messages) = %d, want 3", len(wireReq.Messages))
+	}
+
+	// Verify assistant message with tool calls.
+	assistantMsg := wireReq.Messages[1]
+	if len(assistantMsg.ToolCalls) != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1", len(assistantMsg.ToolCalls))
+	}
+	if assistantMsg.ToolCalls[0].Type != "function" {
+		t.Errorf("ToolCall.Type = %q, want function", assistantMsg.ToolCalls[0].Type)
+	}
+	if assistantMsg.ToolCalls[0].ID != "call_1" {
+		t.Errorf("ToolCall.ID = %q, want call_1", assistantMsg.ToolCalls[0].ID)
+	}
+
+	// Verify tool result message.
+	toolMsg := wireReq.Messages[2]
+	if toolMsg.Role != "tool" {
+		t.Errorf("Role = %q, want tool", toolMsg.Role)
+	}
+	if toolMsg.ToolCallID != "call_1" {
+		t.Errorf("ToolCallID = %q, want call_1", toolMsg.ToolCallID)
+	}
+}
+
+func TestAnthropic_BuildRequest_CacheControlOnTools(t *testing.T) {
+	client := newAnthropicClient("test-key", "https://api.example.com")
+	wireReq := client.buildRequest(ChatRequest{
+		Model:    "claude-sonnet-4-20250514",
+		Messages: []Message{{Role: RoleUser, Content: "Hi"}},
+		Tools: []ToolDefinition{
+			{Name: "tool_a", Description: "A", Parameters: json.RawMessage(`{}`)},
+			{Name: "tool_b", Description: "B", Parameters: json.RawMessage(`{}`)},
+		},
+	}, false)
+
+	if len(wireReq.Tools) != 2 {
+		t.Fatalf("len(Tools) = %d, want 2", len(wireReq.Tools))
+	}
+
+	// Only the last tool should have cache_control.
+	if wireReq.Tools[0].CacheControl != nil {
+		t.Error("first tool should NOT have cache_control")
+	}
+	if wireReq.Tools[1].CacheControl == nil || wireReq.Tools[1].CacheControl.Type != "ephemeral" {
+		t.Error("last tool should have cache_control with type ephemeral")
+	}
+
+	// Verify input_schema is used (not parameters).
+	data, _ := json.Marshal(wireReq.Tools[0])
+	if !strings.Contains(string(data), `"input_schema"`) {
+		t.Errorf("expected input_schema field, got: %s", data)
+	}
+}
+
+func TestAnthropic_BuildRequest_MaxTokensDefault(t *testing.T) {
+	client := newAnthropicClient("test-key", "https://api.example.com")
+	wireReq := client.buildRequest(ChatRequest{
+		Model:    "claude-sonnet-4-20250514",
+		Messages: []Message{{Role: RoleUser, Content: "Hi"}},
+	}, false)
+
+	if wireReq.MaxTokens != 4096 {
+		t.Errorf("MaxTokens = %d, want 4096 (default)", wireReq.MaxTokens)
+	}
+}
+
+func TestAnthropic_BuildRequest_JSONModeSystemPrompt(t *testing.T) {
+	client := newAnthropicClient("test-key", "https://api.example.com")
+	wireReq := client.buildRequest(ChatRequest{
+		Model:          "claude-sonnet-4-20250514",
+		SystemPrompt:   "Be helpful",
+		Messages:       []Message{{Role: RoleUser, Content: "Hi"}},
+		ResponseFormat: &ResponseFormat{Type: "json_object"},
+	}, false)
+
+	systemBlocks, ok := wireReq.System.([]anthropicSystemBlock)
+	if !ok {
+		t.Fatalf("System type = %T, want []anthropicSystemBlock", wireReq.System)
+	}
+	if len(systemBlocks) != 1 {
+		t.Fatalf("len(System) = %d, want 1", len(systemBlocks))
+	}
+	if !strings.Contains(systemBlocks[0].Text, "valid JSON only") {
+		t.Errorf("system should contain JSON instruction, got: %q", systemBlocks[0].Text)
+	}
+}
+
+func TestNormalizeArgs(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", "{}"},
+		{"  ", "{}"},
+		{`{"key":"val"}`, `{"key":"val"}`},
+		{"{}", "{}"},
+	}
+	for _, tt := range tests {
+		if got := NormalizeArgs(tt.input); got != tt.want {
+			t.Errorf("NormalizeArgs(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestUsageAdd(t *testing.T) {
+	u := Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}
+	u.Add(Usage{
+		PromptTokens:             20,
+		CompletionTokens:         10,
+		TotalTokens:              30,
+		ReasoningTokens:          5,
+		CacheCreationInputTokens: 100,
+		CacheReadInputTokens:     50,
+	})
+
+	if u.PromptTokens != 30 {
+		t.Errorf("PromptTokens = %d, want 30", u.PromptTokens)
+	}
+	if u.CompletionTokens != 15 {
+		t.Errorf("CompletionTokens = %d, want 15", u.CompletionTokens)
+	}
+	if u.TotalTokens != 45 {
+		t.Errorf("TotalTokens = %d, want 45", u.TotalTokens)
+	}
+	if u.ReasoningTokens != 5 {
+		t.Errorf("ReasoningTokens = %d, want 5", u.ReasoningTokens)
+	}
+	if u.CacheCreationInputTokens != 100 {
+		t.Errorf("CacheCreationInputTokens = %d, want 100", u.CacheCreationInputTokens)
+	}
+	if u.CacheReadInputTokens != 50 {
+		t.Errorf("CacheReadInputTokens = %d, want 50", u.CacheReadInputTokens)
+	}
+}
