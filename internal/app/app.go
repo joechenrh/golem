@@ -665,6 +665,10 @@ func BuildToolRegistry(
 
 	// Web tools.
 	webClient := &http.Client{Timeout: 30 * time.Second}
+	// When native web search is enabled (Responses API handles search server-side),
+	// still register the builtin web_search so it appears in tool definitions —
+	// the Responses API request builder replaces it with web_search_preview.
+	// Keep web_fetch and http_request regardless.
 	registry.RegisterAll(
 		builtin.NewWebSearchTool(webClient, cfg.WebSearchBackend),
 		builtin.NewWebFetchTool(webClient),
@@ -720,6 +724,15 @@ func BuildToolRegistry(
 	for _, et := range extTools {
 		registry.Register(et)
 		logger.Info("loaded external tool", zap.String("name", et.Name()))
+	}
+
+	// Load MCP server tools from ~/.golem/plugins/*.mcp.json.
+	mcpTools, _, err := tools.LoadMCPServers(pluginDir, logger)
+	if err != nil {
+		logger.Warn("MCP server loading failed", zap.Error(err))
+	}
+	for _, mt := range mcpTools {
+		registry.Register(mt)
 	}
 
 	// Per-tool access control: allow/deny lists from config.
