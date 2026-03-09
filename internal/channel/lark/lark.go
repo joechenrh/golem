@@ -49,6 +49,11 @@ type LarkChannel struct {
 	// recently seen message IDs to discard duplicates.
 	seenMsgs sync.Map
 
+	// pendingReactions tracks typing reaction IDs keyed by channelID,
+	// so SendStream can remove the reaction when the response completes.
+	// Values are reactionInfo structs.
+	pendingReactions sync.Map
+
 	// startedAt is the process startup time. Messages with a Lark
 	// CreateTime before this are stale redeliveries from a previous
 	// process and are dropped.
@@ -57,6 +62,12 @@ type LarkChannel struct {
 	// onCardAction is called when a user clicks a button on a card.
 	// Set via SetCardActionHandler before Start.
 	onCardAction CardActionCallback
+}
+
+// reactionInfo holds the IDs needed to remove a typing reaction.
+type reactionInfo struct {
+	messageID  string
+	reactionID string
 }
 
 // New creates a LarkChannel with the given credentials.
@@ -294,9 +305,21 @@ func (l *LarkChannel) onMessageReceive(
 	// Reset per-cycle duplicate tracking before dispatching.
 	l.sentChats.Clear()
 
+	// Add typing reaction to user's message to indicate processing.
+	chatID := *msg.ChatId
+	if msgID != "" {
+		reactionID := l.addReaction(context.Background(), msgID, "TYPING")
+		if reactionID != "" {
+			l.pendingReactions.Store(chatID, reactionInfo{
+				messageID:  msgID,
+				reactionID: reactionID,
+			})
+		}
+	}
+
 	done := make(chan struct{})
 	inCh <- channel.IncomingMessage{
-		ChannelID:   *msg.ChatId,
+		ChannelID:   chatID,
 		ChannelName: "lark",
 		SenderID:    senderID,
 		Text:        text,
@@ -361,11 +384,53 @@ func (l *LarkChannel) Send(
 		l.logger.Debug("skipping duplicate send", zap.String("chat_id", msg.ChannelID))
 		return nil
 	}
+	defer l.removePendingReaction(ctx, msg.ChannelID)
 	return l.sendCard(ctx, msg.ChannelID, msg.Text)
 }
 
 // SendTyping is a no-op for Lark.
 func (l *LarkChannel) SendTyping(_ context.Context, _ string) error { return nil }
+
+// addReaction adds an emoji reaction to a message and returns the reaction ID.
+func (l *LarkChannel) addReaction(ctx context.Context, messageID, emojiType string) string {
+	req := larkim.NewCreateMessageReactionReqBuilder().
+		MessageId(messageID).
+		Body(larkim.NewCreateMessageReactionReqBodyBuilder().
+			ReactionType(larkim.NewEmojiBuilder().EmojiType(emojiType).Build()).
+			Build()).
+		Build()
+
+	resp, err := l.client.Im.V1.MessageReaction.Create(ctx, req)
+	if err != nil {
+		l.logger.Debug("lark add reaction error", zap.Error(err))
+		return ""
+	}
+	if !resp.Success() {
+		l.logger.Debug("lark add reaction failed", zap.Int("code", resp.Code), zap.String("msg", resp.Msg))
+		return ""
+	}
+	if resp.Data != nil && resp.Data.ReactionId != nil {
+		return *resp.Data.ReactionId
+	}
+	return ""
+}
+
+// deleteReaction removes a reaction from a message.
+func (l *LarkChannel) deleteReaction(ctx context.Context, messageID, reactionID string) {
+	req := larkim.NewDeleteMessageReactionReqBuilder().
+		MessageId(messageID).
+		ReactionId(reactionID).
+		Build()
+
+	resp, err := l.client.Im.V1.MessageReaction.Delete(ctx, req)
+	if err != nil {
+		l.logger.Debug("lark delete reaction error", zap.Error(err))
+		return
+	}
+	if !resp.Success() {
+		l.logger.Debug("lark delete reaction failed", zap.Int("code", resp.Code), zap.String("msg", resp.Msg))
+	}
+}
 
 // SupportsStreaming returns true; Lark updates cards progressively.
 func (l *LarkChannel) SupportsStreaming() bool { return true }
@@ -373,23 +438,17 @@ func (l *LarkChannel) SupportsStreaming() bool { return true }
 // streamUpdateInterval controls how often the Lark card is patched during streaming.
 const streamUpdateInterval = 800 * time.Millisecond
 
-// SendStream sends an initial "Thinking..." card immediately, then patches it
-// as tokens arrive. Tokens are buffered and the card is updated at
-// streamUpdateInterval. The typing cursor (▍) is appended during streaming
-// and removed on the final update.
+// SendStream streams tokens into a Lark card. The card is only created once
+// actual content arrives (no "Thinking..." placeholder). A typing reaction on
+// the user's message (added in onMessageReceive) signals that processing is
+// in progress; it is removed when the stream completes.
 func (l *LarkChannel) SendStream(
 	ctx context.Context, channelID string,
 	tokenCh <-chan string,
 ) error {
 	l.sentChats.Store(channelID, true)
 
-	// Send a thinking indicator immediately so the user sees feedback.
-	messageID, err := l.sendCardReturnID(ctx, channelID, "Thinking... ▍")
-	if err != nil {
-		l.logger.Warn("lark stream: failed to send thinking indicator", zap.Error(err))
-		messageID = ""
-	}
-
+	var messageID string
 	var sb strings.Builder
 	ticker := time.NewTicker(streamUpdateInterval)
 	defer ticker.Stop()
@@ -404,7 +463,6 @@ func (l *LarkChannel) SendStream(
 				finalText := sb.String()
 				if messageID != "" {
 					if finalText == "" {
-						// No content produced; clear the thinking indicator.
 						l.patchCard(ctx, messageID, "...")
 					} else {
 						l.patchCardRaw(ctx, messageID, l.buildCardWithImages(ctx, finalText))
@@ -412,6 +470,7 @@ func (l *LarkChannel) SendStream(
 				} else if finalText != "" {
 					l.sendCardRaw(ctx, channelID, l.buildCardWithImages(ctx, finalText))
 				}
+				l.removePendingReaction(ctx, channelID)
 				l.logger.Debug("stream complete",
 					zap.String("chat_id", channelID),
 					zap.Int("chars", sb.Len()))
@@ -438,9 +497,20 @@ func (l *LarkChannel) SendStream(
 			dirty = false
 
 		case <-ctx.Done():
+			l.removePendingReaction(ctx, channelID)
 			return ctx.Err()
 		}
 	}
+}
+
+// removePendingReaction removes the typing reaction stored for a channelID.
+func (l *LarkChannel) removePendingReaction(ctx context.Context, channelID string) {
+	val, ok := l.pendingReactions.LoadAndDelete(channelID)
+	if !ok {
+		return
+	}
+	info := val.(reactionInfo)
+	l.deleteReaction(ctx, info.messageID, info.reactionID)
 }
 
 // SendDirect sends a message unconditionally to a specific chat_id.
