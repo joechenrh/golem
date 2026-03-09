@@ -99,6 +99,16 @@ type Usage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
+// Add accumulates the token counts from other into u.
+func (u *Usage) Add(other Usage) {
+	u.PromptTokens += other.PromptTokens
+	u.CompletionTokens += other.CompletionTokens
+	u.TotalTokens += other.TotalTokens
+	u.ReasoningTokens += other.ReasoningTokens
+	u.CacheCreationInputTokens += other.CacheCreationInputTokens
+	u.CacheReadInputTokens += other.CacheReadInputTokens
+}
+
 // streamBufferSize is the channel buffer size for streaming events.
 const streamBufferSize = 8
 

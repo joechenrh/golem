@@ -445,18 +445,8 @@ func (s *Session) executeLLMCall(
 	}
 
 	// Accumulate token usage.
-	s.turnUsage.PromptTokens += resp.Usage.PromptTokens
-	s.turnUsage.CompletionTokens += resp.Usage.CompletionTokens
-	s.turnUsage.TotalTokens += resp.Usage.TotalTokens
-	s.turnUsage.ReasoningTokens += resp.Usage.ReasoningTokens
-	s.turnUsage.CacheCreationInputTokens += resp.Usage.CacheCreationInputTokens
-	s.turnUsage.CacheReadInputTokens += resp.Usage.CacheReadInputTokens
-	s.sessionUsage.PromptTokens += resp.Usage.PromptTokens
-	s.sessionUsage.CompletionTokens += resp.Usage.CompletionTokens
-	s.sessionUsage.TotalTokens += resp.Usage.TotalTokens
-	s.sessionUsage.ReasoningTokens += resp.Usage.ReasoningTokens
-	s.sessionUsage.CacheCreationInputTokens += resp.Usage.CacheCreationInputTokens
-	s.sessionUsage.CacheReadInputTokens += resp.Usage.CacheReadInputTokens
+	s.turnUsage.Add(resp.Usage)
+	s.sessionUsage.Add(resp.Usage)
 
 	s.hooks.Emit(ctx, hooks.Event{
 		Type: hooks.EventAfterLLMCall,
