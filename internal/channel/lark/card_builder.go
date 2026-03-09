@@ -2,6 +2,7 @@ package lark
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 )
 
@@ -91,10 +92,5 @@ func buildStructuredCard(text string) []byte {
 
 // isHorizontalRule checks if a trimmed line is a markdown horizontal rule.
 func isHorizontalRule(trimmed string) bool {
-	for _, pat := range hrPatterns {
-		if trimmed == pat {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(hrPatterns, trimmed)
 }

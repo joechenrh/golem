@@ -524,15 +524,12 @@ func (sm *SessionManager) findPredecessorSummary(channelID, currentTapePath stri
 
 // sanitizeForFilename replaces characters unsafe for filenames.
 func sanitizeForFilename(s string) string {
-	r := make([]byte, 0, len(s))
-	for i := range len(s) {
-		c := s[i]
-		switch c {
+	return strings.Map(func(r rune) rune {
+		switch r {
 		case ':', '/', '\\', ' ':
-			r = append(r, '_')
+			return '_'
 		default:
-			r = append(r, c)
+			return r
 		}
-	}
-	return string(r)
+	}, s)
 }

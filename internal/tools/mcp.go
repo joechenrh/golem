@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -118,6 +119,5 @@ func LoadMCPServers(dir string, logger *zap.Logger) ([]Tool, []*mcp.Client, erro
 }
 
 func isMCPManifest(name string) bool {
-	return len(name) > len(".mcp.json") &&
-		name[len(name)-len(".mcp.json"):] == ".mcp.json"
+	return strings.HasSuffix(name, ".mcp.json") && name != ".mcp.json"
 }

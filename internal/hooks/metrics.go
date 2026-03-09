@@ -130,19 +130,12 @@ func (h *MetricsHook) Summary() string {
 
 	if len(h.llmLatencyMs) > 0 {
 		var sum int64
-		var min, max int64 = h.llmLatencyMs[0], h.llmLatencyMs[0]
 		for _, ms := range h.llmLatencyMs {
 			sum += ms
-			if ms < min {
-				min = ms
-			}
-			if ms > max {
-				max = ms
-			}
 		}
 		avg := sum / int64(len(h.llmLatencyMs))
 		fmt.Fprintf(&b, "LLM latency (last %d): avg=%dms min=%dms max=%dms\n",
-			len(h.llmLatencyMs), avg, min, max)
+			len(h.llmLatencyMs), avg, slices.Min(h.llmLatencyMs), slices.Max(h.llmLatencyMs))
 	}
 
 	if len(h.toolCalls) > 0 {

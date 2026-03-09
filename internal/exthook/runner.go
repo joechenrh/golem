@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -135,10 +136,5 @@ func (r *Runner) executeHook(ctx context.Context, h *HookDef, stdinData []byte) 
 
 // subscribedTo checks if the hook is subscribed to the given event.
 func (h *HookDef) subscribedTo(event EventType) bool {
-	for _, e := range h.Events {
-		if e == event {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(h.Events, event)
 }

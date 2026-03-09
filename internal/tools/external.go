@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -282,6 +283,5 @@ func LoadExternalTools(dir string, logger *zap.Logger) ([]*ExternalTool, error) 
 }
 
 func isToolManifest(name string) bool {
-	return len(name) > len(".tool.json") &&
-		name[len(name)-len(".tool.json"):] == ".tool.json"
+	return strings.HasSuffix(name, ".tool.json") && name != ".tool.json"
 }

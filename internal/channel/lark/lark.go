@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -891,9 +892,7 @@ func (l *LarkChannel) ListMessages(
 	}
 
 	// Reverse to oldest-first order.
-	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
-		msgs[i], msgs[j] = msgs[j], msgs[i]
-	}
+	slices.Reverse(msgs)
 
 	return msgs, nil
 }
