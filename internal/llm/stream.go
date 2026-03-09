@@ -2,6 +2,8 @@ package llm
 
 import (
 	"bufio"
+	"context"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -65,4 +67,16 @@ func (s *sseReader) Next() (*sseEvent, error) {
 	}
 
 	return nil, io.EOF
+}
+
+// recoverStreamPanic catches panics in stream-reading goroutines and
+// surfaces them as StreamError events instead of crashing the process.
+// Must be called via defer before defer close(ch).
+func recoverStreamPanic(ctx context.Context, ch chan<- StreamEvent) {
+	if r := recover(); r != nil {
+		sendEvent(ctx, ch, StreamEvent{
+			Type:  StreamError,
+			Error: fmt.Errorf("stream panic: %v", r),
+		})
+	}
 }

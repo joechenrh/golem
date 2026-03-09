@@ -237,6 +237,7 @@ func (c *openaiClient) readStream(
 ) {
 	defer close(ch)
 	defer body.Close()
+	defer recoverStreamPanic(ctx, ch)
 
 	var usage *Usage
 	reader := newSSEReader(body)

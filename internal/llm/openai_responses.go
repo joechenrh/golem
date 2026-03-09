@@ -358,6 +358,7 @@ func (c *openaiClient) readResponsesStream(
 ) {
 	defer close(ch)
 	defer body.Close()
+	defer recoverStreamPanic(ctx, ch)
 
 	var responseID string
 	var usage *Usage
