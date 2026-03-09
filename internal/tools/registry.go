@@ -16,23 +16,19 @@ var compactParams = json.RawMessage(`{"type":"object","properties":{}}`)
 
 // Registry holds registered tools and manages progressive disclosure state.
 type Registry struct {
-	tools         map[string]Tool
-	expanded      map[string]bool
-	hidden        map[string]bool // tools not included in ToolDefinitions at all
-	defaultHidden map[string]bool // tools that should be re-hidden when stale
-	lastUsed      map[string]int  // iteration when tool was last expanded/called
-	order         []string        // insertion order for deterministic listing
-	middlewares   []middleware.Middleware
+	tools       map[string]Tool
+	expanded    map[string]bool
+	lastUsed    map[string]int // iteration when tool was last expanded/called
+	order       []string       // insertion order for deterministic listing
+	middlewares []middleware.Middleware
 }
 
 // NewRegistry creates an empty tool registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		tools:         make(map[string]Tool),
-		expanded:      make(map[string]bool),
-		hidden:        make(map[string]bool),
-		defaultHidden: make(map[string]bool),
-		lastUsed:      make(map[string]int),
+		tools:    make(map[string]Tool),
+		expanded: make(map[string]bool),
+		lastUsed: make(map[string]int),
 	}
 }
 
@@ -89,39 +85,12 @@ func (r *Registry) Execute(
 	return exec(ctx, args)
 }
 
-// Hide marks a tool as hidden so it is not included in ToolDefinitions output.
-// Hidden tools are still callable and will be unhidden when detected in text
-// via DetectToolHints or when explicitly expanded.
-func (r *Registry) Hide(name string) {
-	if _, ok := r.tools[name]; ok {
-		r.hidden[name] = true
-		r.defaultHidden[name] = true
-	}
-}
-
-// UnhideHints detects hidden tools referenced in text and makes them visible
-// (in compact mode, not expanded). Returns the names of newly-unhidden tools.
-func (r *Registry) UnhideHints(text string) []string {
-	hints := r.DetectToolHints(text)
-	var unhidden []string
-	for _, name := range hints {
-		if r.hidden[name] {
-			delete(r.hidden, name)
-			unhidden = append(unhidden, name)
-		}
-	}
-	return unhidden
-}
-
 // ToolDefinitions returns llm.ToolDefinition slice for passing to the LLM.
-// Respects progressive disclosure: hidden tools are omitted, unexpanded tools
-// get short descriptions and a minimal parameter schema to save tokens.
+// Respects progressive disclosure: unexpanded tools get short descriptions
+// and a minimal parameter schema to save tokens.
 func (r *Registry) ToolDefinitions() []llm.ToolDefinition {
 	defs := make([]llm.ToolDefinition, 0, len(r.tools))
 	for _, name := range r.order {
-		if r.hidden[name] {
-			continue
-		}
 		t := r.tools[name]
 		desc := t.Description()
 		params := compactParams
@@ -139,20 +108,17 @@ func (r *Registry) ToolDefinitions() []llm.ToolDefinition {
 }
 
 // Expand marks a tool for full description in subsequent ToolDefinitions() calls.
-// Also unhides the tool if it was hidden.
+// iter is optional — pass 0 if iteration tracking is not needed.
 func (r *Registry) Expand(name string) {
 	if _, ok := r.tools[name]; ok {
 		r.expanded[name] = true
-		delete(r.hidden, name)
 	}
 }
 
-// ExpandAt marks a tool as expanded, unhides it, and records the iteration
-// for shrink tracking.
+// ExpandAt marks a tool as expanded and records the iteration for shrink tracking.
 func (r *Registry) ExpandAt(name string, iter int) {
 	if _, ok := r.tools[name]; ok {
 		r.expanded[name] = true
-		delete(r.hidden, name)
 		r.lastUsed[name] = iter
 	}
 }
@@ -160,7 +126,6 @@ func (r *Registry) ExpandAt(name string, iter int) {
 // ShrinkUnused collapses tools that haven't been called in the last
 // staleAfter iterations, returning their schemas to compact mode.
 // Tools expanded via Expand (without iteration tracking) are never shrunk.
-// Tools originally registered as hidden are re-hidden when stale.
 func (r *Registry) ShrinkUnused(currentIter, staleAfter int) {
 	for name := range r.expanded {
 		lastUsed, tracked := r.lastUsed[name]
@@ -170,9 +135,6 @@ func (r *Registry) ShrinkUnused(currentIter, staleAfter int) {
 		if currentIter-lastUsed > staleAfter {
 			delete(r.expanded, name)
 			delete(r.lastUsed, name)
-			if r.defaultHidden[name] {
-				r.hidden[name] = true
-			}
 		}
 	}
 }
@@ -180,8 +142,6 @@ func (r *Registry) ShrinkUnused(currentIter, staleAfter int) {
 // DetectToolHints scans text for references to registered tool names.
 // Returns the names of tools that were mentioned but not yet expanded.
 // Uses word-boundary matching so "file" doesn't false-match "read_file".
-// For hidden tools, also matches individual name fragments (e.g., "web"
-// matches "web_search") to enable keyword-based unhiding.
 func (r *Registry) DetectToolHints(text string) []string {
 	lower := strings.ToLower(text)
 	var hints []string
@@ -194,17 +154,6 @@ func (r *Registry) DetectToolHints(text string) []string {
 		if containsWord(lower, lowerName) ||
 			containsWord(lower, strings.ReplaceAll(lowerName, "_", " ")) {
 			hints = append(hints, name)
-			continue
-		}
-		// For hidden tools, also try matching individual name fragments
-		// (e.g., "web" matches "web_search", "http" matches "http_request").
-		if r.hidden[name] {
-			for _, frag := range strings.Split(lowerName, "_") {
-				if len(frag) >= 4 && containsWord(lower, frag) {
-					hints = append(hints, name)
-					break
-				}
-			}
 		}
 	}
 	slices.Sort(hints)
