@@ -56,6 +56,11 @@ type Session struct {
 	// recovery hints). They are not persisted to the tape.
 	ephemeralMessages []llm.Message
 
+	// Responses API chain tracking (OpenAI only).
+	lastResponseID      string        // previous_response_id for chaining
+	chainValid          bool          // false when chain must be rebuilt (error, reset, etc.)
+	incrementalMessages []llm.Message // messages since last LLM call (for incremental input)
+
 	// Lifecycle fields (managed by SessionManager for remote chats;
 	// unused for the default CLI session).
 	ctx        context.Context
@@ -402,6 +407,12 @@ func (s *Session) executeLLMCall(
 		ReasoningEffort: s.config.ReasoningEffort,
 	}
 
+	// Responses API chaining: send only incremental input when we have a valid chain.
+	if s.config.UseResponsesAPI && s.lastResponseID != "" && s.chainValid {
+		req.PreviousResponseID = s.lastResponseID
+		req.IncrementalInput = s.incrementalMessages
+	}
+
 	var resp *llm.ChatResponse
 	if stream && tokenCh != nil {
 		resp, err = s.doStreamingCall(ctx, req, tokenCh)
@@ -409,11 +420,20 @@ func (s *Session) executeLLMCall(
 		resp, err = s.llm.Chat(ctx, req)
 	}
 	if err != nil {
+		// Invalidate chain on error; next call sends full context.
+		s.chainValid = false
 		s.hooks.Emit(ctx, hooks.Event{
 			Type:    hooks.EventError,
 			Payload: map[string]any{"error": err.Error()},
 		})
 		return nil, fmt.Errorf("LLM call: %w", err)
+	}
+
+	// Capture response ID for Responses API chaining.
+	if s.config.UseResponsesAPI && resp.ResponseID != "" {
+		s.lastResponseID = resp.ResponseID
+		s.chainValid = true
+		s.incrementalMessages = nil // reset; will accumulate new messages
 	}
 
 	// Accumulate token usage.
@@ -587,6 +607,9 @@ func (s *Session) doStreamingCall(
 		case llm.StreamDone:
 			if ev.Usage != nil {
 				resp.Usage = *ev.Usage
+			}
+			if ev.ResponseID != "" {
+				resp.ResponseID = ev.ResponseID
 			}
 		}
 	}
@@ -768,6 +791,21 @@ func (s *Session) appendMessage(
 		Kind:    tape.KindMessage,
 		Payload: tape.MarshalPayload(payload),
 	})
+
+	// Track for Responses API incremental input.
+	if s.config.UseResponsesAPI {
+		msg := llm.Message{
+			Role:    role,
+			Content: content,
+		}
+		if len(toolCalls) > 0 {
+			msg.ToolCalls = toolCalls
+		}
+		if len(images) > 0 {
+			msg.Images = images
+		}
+		s.incrementalMessages = append(s.incrementalMessages, msg)
+	}
 }
 
 // appendToolResult records a tool result to the tape with proper metadata.
@@ -783,6 +821,16 @@ func (s *Session) appendToolResult(
 			"name":         toolName,
 		}),
 	})
+
+	// Track for Responses API incremental input.
+	if s.config.UseResponsesAPI {
+		s.incrementalMessages = append(s.incrementalMessages, llm.Message{
+			Role:       llm.RoleTool,
+			Content:    result,
+			ToolCallID: toolCallID,
+			Name:       toolName,
+		})
+	}
 }
 
 // truncateForLog truncates a string to maxLen and appends "..." if truncated.

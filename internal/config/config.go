@@ -102,6 +102,7 @@ type Config struct {
 	MaxOutputTokens int           // max tokens in LLM response (default: 4096)
 	Temperature     *float64      // LLM sampling temperature (nil = provider default)
 	ReasoningEffort string        // reasoning effort for OpenAI models: "low", "medium", "high", "xhigh" (default: "")
+	UseResponsesAPI bool          // use OpenAI Responses API instead of Chat Completions (default: false)
 
 	ShellTimeout    time.Duration // shell command timeout (default: 30s)
 
@@ -194,6 +195,7 @@ func Load(
 		MaxOutputTokens:     a.integer("GOLEM_MAX_OUTPUT_TOKENS", 4096),
 		Temperature:         a.optFloat64("GOLEM_TEMPERATURE"),
 		ReasoningEffort:     a.str("GOLEM_REASONING_EFFORT", "high"),
+		UseResponsesAPI:     a.boolean("GOLEM_USE_RESPONSES_API", false),
 		ShellTimeout:        a.duration("GOLEM_SHELL_TIMEOUT", 30*time.Second),
 		ContextStrategy:     a.str("GOLEM_CONTEXT_STRATEGY", "masking"),
 		Executor:            a.str("GOLEM_EXECUTOR", "local"),
@@ -320,6 +322,16 @@ func (m envLookup) integer(key string, defaultVal int) int {
 	if v, ok := m.get(key); ok {
 		if i, err := strconv.Atoi(v); err == nil {
 			return i
+		}
+	}
+	return defaultVal
+}
+
+func (m envLookup) boolean(key string, defaultVal bool) bool {
+	if v, ok := m.get(key); ok {
+		b, err := strconv.ParseBool(v)
+		if err == nil {
+			return b
 		}
 	}
 	return defaultVal

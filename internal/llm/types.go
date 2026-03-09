@@ -68,6 +68,10 @@ type ChatRequest struct {
 	SystemPrompt   string           `json:"system_prompt,omitempty"` // separate field; Anthropic requires top-level system
 	ResponseFormat *ResponseFormat  `json:"response_format,omitempty"`
 	ReasoningEffort string          `json:"reasoning_effort,omitempty"` // "low", "medium", "high", "xhigh" (OpenAI reasoning models)
+
+	// Responses API fields (OpenAI only).
+	PreviousResponseID string    `json:"previous_response_id,omitempty"` // chain to a previous response
+	IncrementalInput   []Message `json:"incremental_input,omitempty"`    // new messages only (used with PreviousResponseID)
 }
 
 // ChatResponse holds a complete non-streaming response.
@@ -76,6 +80,7 @@ type ChatResponse struct {
 	ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
 	Usage        Usage      `json:"usage"`
 	FinishReason string     `json:"finish_reason"`
+	ResponseID   string     `json:"response_id,omitempty"` // Responses API: ID for chaining
 }
 
 // Usage tracks token consumption.
@@ -103,11 +108,12 @@ const (
 
 // StreamEvent represents a single event in a streaming response.
 type StreamEvent struct {
-	Type     StreamEventType
-	Content  string         // for content deltas
-	ToolCall *ToolCallDelta // for tool call deltas
-	Usage    *Usage         // for done events (final usage stats)
-	Error    error          // for error events
+	Type       StreamEventType
+	Content    string         // for content deltas
+	ToolCall   *ToolCallDelta // for tool call deltas
+	Usage      *Usage         // for done events (final usage stats)
+	Error      error          // for error events
+	ResponseID string         // for done events (Responses API chain ID)
 }
 
 // NormalizeArgs ensures tool call arguments are valid JSON.

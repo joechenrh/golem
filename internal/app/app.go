@@ -630,6 +630,9 @@ func BuildLLMClient(cfg *config.Config, logger *zap.Logger) (llm.Client, error) 
 	if logger != nil {
 		opts = append(opts, llm.WithLogger(logger))
 	}
+	if cfg.UseResponsesAPI && provider == llm.ProviderOpenAI {
+		opts = append(opts, llm.WithResponsesAPI())
+	}
 	client, err := llm.NewClient(provider, apiKey, opts...)
 	if err != nil {
 		return nil, err

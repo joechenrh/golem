@@ -1146,6 +1146,246 @@ func TestAnthropic_ConvertMessages_WithImages(t *testing.T) {
 	}
 }
 
+// ─── Responses API Tests ─────────────────────────────────────────
+
+func TestOpenAIResponsesAPI_Chat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify it hits /responses endpoint.
+		if r.URL.Path != "/responses" {
+			t.Errorf("path = %q, want /responses", r.URL.Path)
+		}
+
+		var req responsesRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		if req.Model != "gpt-4o" {
+			t.Errorf("model = %q, want gpt-4o", req.Model)
+		}
+		if req.Instructions != "Be helpful" {
+			t.Errorf("instructions = %q, want 'Be helpful'", req.Instructions)
+		}
+
+		resp := responsesResponse{
+			ID: "resp_abc123",
+			Output: []responsesOutputItem{{
+				Type: "message",
+				Content: []struct {
+					Type string `json:"type"`
+					Text string `json:"text,omitempty"`
+				}{{Type: "output_text", Text: "Hello!"}},
+			}},
+			Usage: responsesUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	client := newOpenAIClient("test-key", srv.URL)
+	client.responsesMode = true
+
+	resp, err := client.Chat(context.Background(), ChatRequest{
+		Model:        "gpt-4o",
+		SystemPrompt: "Be helpful",
+		Messages:     []Message{{Role: RoleUser, Content: "Hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat() error: %v", err)
+	}
+	if resp.Content != "Hello!" {
+		t.Errorf("Content = %q, want %q", resp.Content, "Hello!")
+	}
+	if resp.ResponseID != "resp_abc123" {
+		t.Errorf("ResponseID = %q, want %q", resp.ResponseID, "resp_abc123")
+	}
+	if resp.Usage.PromptTokens != 10 {
+		t.Errorf("PromptTokens = %d, want 10", resp.Usage.PromptTokens)
+	}
+}
+
+func TestOpenAIResponsesAPI_ToolCalls(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := responsesResponse{
+			ID: "resp_tools",
+			Output: []responsesOutputItem{{
+				Type:      "function_call",
+				CallID:    "call_xyz",
+				Name:      "search",
+				Arguments: `{"q":"test"}`,
+			}},
+			Usage: responsesUsage{InputTokens: 20, OutputTokens: 10, TotalTokens: 30},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	client := newOpenAIClient("test-key", srv.URL)
+	client.responsesMode = true
+
+	resp, err := client.Chat(context.Background(), ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: "search"}},
+	})
+	if err != nil {
+		t.Fatalf("Chat() error: %v", err)
+	}
+	if resp.FinishReason != "tool_calls" {
+		t.Errorf("FinishReason = %q, want tool_calls", resp.FinishReason)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1", len(resp.ToolCalls))
+	}
+	if resp.ToolCalls[0].Name != "search" || resp.ToolCalls[0].ID != "call_xyz" {
+		t.Errorf("ToolCall = %+v", resp.ToolCalls[0])
+	}
+}
+
+func TestOpenAIResponsesAPI_PreviousResponseID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req responsesRequest
+		json.NewDecoder(r.Body).Decode(&req)
+
+		if req.PreviousResponseID != "resp_prev" {
+			t.Errorf("previous_response_id = %q, want resp_prev", req.PreviousResponseID)
+		}
+
+		resp := responsesResponse{
+			ID: "resp_chain",
+			Output: []responsesOutputItem{{
+				Type: "message",
+				Content: []struct {
+					Type string `json:"type"`
+					Text string `json:"text,omitempty"`
+				}{{Type: "output_text", Text: "Chained!"}},
+			}},
+			Usage: responsesUsage{InputTokens: 5, OutputTokens: 3, TotalTokens: 8},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	client := newOpenAIClient("test-key", srv.URL)
+	client.responsesMode = true
+
+	resp, err := client.Chat(context.Background(), ChatRequest{
+		Model:              "gpt-4o",
+		PreviousResponseID: "resp_prev",
+		IncrementalInput: []Message{
+			{Role: RoleTool, ToolCallID: "call_1", Content: "result"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat() error: %v", err)
+	}
+	if resp.ResponseID != "resp_chain" {
+		t.Errorf("ResponseID = %q, want resp_chain", resp.ResponseID)
+	}
+}
+
+func TestOpenAIResponsesAPI_Stream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Errorf("path = %q, want /responses", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+
+		events := []struct{ event, data string }{
+			{"response.created", `{"response":{"id":"resp_stream1"}}`},
+			{"response.output_text.delta", `{"delta":"Hello "}`},
+			{"response.output_text.delta", `{"delta":"world"}`},
+			{"response.completed", `{"response":{"id":"resp_stream1","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}`},
+		}
+		for _, e := range events {
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.event, e.data)
+			flusher.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	client := newOpenAIClient("test-key", srv.URL)
+	client.responsesMode = true
+
+	ch, err := client.ChatStream(context.Background(), ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: "Hi"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatStream() error: %v", err)
+	}
+
+	var content string
+	var responseID string
+	var usage *Usage
+	for ev := range ch {
+		switch ev.Type {
+		case StreamContentDelta:
+			content += ev.Content
+		case StreamDone:
+			responseID = ev.ResponseID
+			usage = ev.Usage
+		case StreamError:
+			t.Fatalf("unexpected error: %v", ev.Error)
+		}
+	}
+
+	if content != "Hello world" {
+		t.Errorf("content = %q, want %q", content, "Hello world")
+	}
+	if responseID != "resp_stream1" {
+		t.Errorf("responseID = %q, want resp_stream1", responseID)
+	}
+	if usage == nil || usage.PromptTokens != 10 {
+		t.Errorf("usage = %+v, want PromptTokens=10", usage)
+	}
+}
+
+func TestWithResponsesAPI_Option(t *testing.T) {
+	client, err := NewClient(ProviderOpenAI, "test-key", WithResponsesAPI())
+	if err != nil {
+		t.Fatalf("NewClient error: %v", err)
+	}
+	oc, ok := client.(*openaiClient)
+	if !ok {
+		t.Fatalf("client type = %T, want *openaiClient", client)
+	}
+	if !oc.responsesMode {
+		t.Error("responsesMode = false, want true")
+	}
+}
+
+func TestConvertToResponsesInput(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleUser, Content: "Hello"},
+		{Role: RoleAssistant, Content: "Hi!", ToolCalls: []ToolCall{
+			{ID: "tc1", Name: "search", Arguments: `{"q":"test"}`},
+		}},
+		{Role: RoleTool, ToolCallID: "tc1", Content: "result"},
+	}
+
+	items := convertToResponsesInput(msgs)
+
+	if len(items) != 4 {
+		t.Fatalf("len(items) = %d, want 4", len(items))
+	}
+
+	// User message
+	if items[0].Type != "message" || items[0].Role != "user" {
+		t.Errorf("items[0] = %+v, want user message", items[0])
+	}
+	// Assistant text
+	if items[1].Type != "message" || items[1].Role != "assistant" {
+		t.Errorf("items[1] = %+v, want assistant message", items[1])
+	}
+	// Function call
+	if items[2].Type != "function_call" || items[2].Name != "search" {
+		t.Errorf("items[2] = %+v, want function_call", items[2])
+	}
+	// Function call output
+	if items[3].Type != "function_call_output" || items[3].CallID != "tc1" {
+		t.Errorf("items[3] = %+v, want function_call_output", items[3])
+	}
+}
+
 func TestAnthropic_ConvertMessages_NoImages(t *testing.T) {
 	msgs := []Message{{
 		Role:    RoleUser,

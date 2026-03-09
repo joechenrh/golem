@@ -90,12 +90,22 @@ func NewClient(
 			ls.setLogger(o.logger)
 		}
 	}
+	if o.responsesAPI {
+		if rc, ok := client.(responsesModer); ok {
+			rc.setResponsesMode(true)
+		}
+	}
 	return client, nil
 }
 
 // loggerSetter is implemented by clients that accept a logger.
 type loggerSetter interface {
 	setLogger(*zap.Logger)
+}
+
+// responsesModer is implemented by clients that support OpenAI Responses API mode.
+type responsesModer interface {
+	setResponsesMode(bool)
 }
 
 // ParseModelProvider splits a model string like "openai:gpt-4o" into (provider, model).
@@ -112,8 +122,9 @@ func ParseModelProvider(model string) (Provider, string) {
 type ClientOption func(*clientOptions)
 
 type clientOptions struct {
-	baseURL string
-	logger  *zap.Logger
+	baseURL      string
+	logger       *zap.Logger
+	responsesAPI bool
 }
 
 // WithBaseURL overrides the default API base URL.
@@ -127,6 +138,15 @@ func WithBaseURL(url string) ClientOption {
 func WithLogger(l *zap.Logger) ClientOption {
 	return func(o *clientOptions) {
 		o.logger = l
+	}
+}
+
+// WithResponsesAPI enables the OpenAI Responses API instead of Chat Completions.
+// This allows stateful conversation chaining via previous_response_id,
+// significantly reducing token usage in multi-turn sessions.
+func WithResponsesAPI() ClientOption {
+	return func(o *clientOptions) {
+		o.responsesAPI = true
 	}
 }
 

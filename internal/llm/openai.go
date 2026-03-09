@@ -121,11 +121,12 @@ type openaiStreamToolCall struct {
 // Client implementation.
 
 type openaiClient struct {
-	apiKey     string
-	baseURL    string
-	http       *http.Client
-	streamHTTP *http.Client
-	logger     *zap.Logger
+	apiKey        string
+	baseURL       string
+	http          *http.Client
+	streamHTTP    *http.Client
+	logger        *zap.Logger
+	responsesMode bool // use Responses API instead of Chat Completions
 }
 
 // NewOpenAICompatibleClient creates an OpenAI-compatible client.
@@ -145,7 +146,8 @@ func newOpenAIClient(apiKey, baseURL string) *openaiClient {
 	}
 }
 
-func (c *openaiClient) setLogger(l *zap.Logger) { c.logger = l }
+func (c *openaiClient) setLogger(l *zap.Logger)    { c.logger = l }
+func (c *openaiClient) setResponsesMode(v bool)    { c.responsesMode = v }
 
 func (c *openaiClient) Provider() Provider {
 	return ProviderOpenAI
@@ -154,6 +156,10 @@ func (c *openaiClient) Provider() Provider {
 func (c *openaiClient) Chat(
 	ctx context.Context, req ChatRequest,
 ) (*ChatResponse, error) {
+	if c.responsesMode {
+		return c.chatResponses(ctx, req)
+	}
+
 	wireReq := c.buildRequest(req, false)
 
 	body, err := json.Marshal(wireReq)
@@ -192,6 +198,10 @@ func (c *openaiClient) Chat(
 func (c *openaiClient) ChatStream(
 	ctx context.Context, req ChatRequest,
 ) (<-chan StreamEvent, error) {
+	if c.responsesMode {
+		return c.chatResponsesStream(ctx, req)
+	}
+
 	wireReq := c.buildRequest(req, true)
 
 	body, err := json.Marshal(wireReq)
