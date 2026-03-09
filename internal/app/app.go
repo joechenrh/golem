@@ -395,32 +395,7 @@ func BuildAgent(
 	// Build skill directories for periodic reload.
 	skillDirs := buildSkillDirs(cfg)
 
-	// Discover external hooks.
-	var extHookRunner agent.ExtHookRunner
-	if name != "" {
-		var allHooks []*exthook.HookDef
-		globalHookDir := filepath.Join(config.GolemHome(), "hooks")
-		if hks, err := exthook.Discover(globalHookDir); err == nil {
-			allHooks = append(allHooks, hks...)
-		} else if !os.IsNotExist(err) {
-			logger.Warn("failed to discover global hooks", zap.String("dir", globalHookDir), zap.Error(err))
-		}
-		agentHookDir := filepath.Join(config.GolemHome(), "agents", name, "hooks")
-		if hks, err := exthook.Discover(agentHookDir); err == nil {
-			allHooks = append(allHooks, hks...)
-		} else if !os.IsNotExist(err) {
-			logger.Warn("failed to discover agent hooks", zap.String("dir", agentHookDir), zap.Error(err))
-		}
-		for _, h := range allHooks {
-			logger.Info("loaded external hook",
-				zap.String("name", h.Name),
-				zap.String("command", h.Command),
-				zap.Any("events", h.Events))
-		}
-		if len(allHooks) > 0 {
-			extHookRunner = exthook.NewRunner(allHooks, logger)
-		}
-	}
+	extHookRunner := buildExtHookRunner(name, logger)
 
 	defaultSess := agent.NewSession(llmClient, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
 	defaultSess.MetricsSummary = metricsHook.Summary
@@ -512,6 +487,40 @@ func buildSkillDirs(cfg *config.Config) []string {
 		dirs = append(dirs, agentDir)
 	}
 	return dirs
+}
+
+// buildExtHookRunner discovers external hooks from global and agent-specific
+// directories and returns a runner, or nil if no hooks are found.
+func buildExtHookRunner(name string, logger *zap.Logger) agent.ExtHookRunner {
+	if name == "" {
+		return nil
+	}
+
+	var allHooks []*exthook.HookDef
+	for _, dir := range []string{
+		filepath.Join(config.GolemHome(), "hooks"),
+		filepath.Join(config.GolemHome(), "agents", name, "hooks"),
+	} {
+		hks, err := exthook.Discover(dir)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				logger.Warn("failed to discover hooks", zap.String("dir", dir), zap.Error(err))
+			}
+			continue
+		}
+		allHooks = append(allHooks, hks...)
+	}
+
+	for _, h := range allHooks {
+		logger.Info("loaded external hook",
+			zap.String("name", h.Name),
+			zap.String("command", h.Command),
+			zap.Any("events", h.Events))
+	}
+	if len(allHooks) > 0 {
+		return exthook.NewRunner(allHooks, logger)
+	}
+	return nil
 }
 
 // buildExecutorAndFS creates the command executor and sandboxed filesystem.

@@ -313,6 +313,45 @@ func (s *Session) executeLLMCall(
 	pendingMsg *channel.IncomingMessage,
 	skipHooks bool,
 ) (*llm.ChatResponse, error) {
+	messages, err := s.buildMessages(ctx, maxTokens, iter, pendingMsg, skipHooks)
+	if err != nil {
+		return nil, err
+	}
+
+	req := s.buildLLMRequest(modelName, messages)
+
+	s.hooks.Emit(ctx, hooks.Event{
+		Type:    hooks.EventBeforeLLMCall,
+		Payload: map[string]any{"iteration": iter, "message_count": len(messages)},
+	})
+
+	var resp *llm.ChatResponse
+	if stream && tokenCh != nil {
+		resp, err = s.doStreamingCall(ctx, req, tokenCh)
+	} else {
+		resp, err = s.llm.Chat(ctx, req)
+	}
+	if err != nil {
+		// Invalidate chain on error; next call sends full context.
+		s.chainValid = false
+		s.hooks.Emit(ctx, hooks.Event{
+			Type:    hooks.EventError,
+			Payload: map[string]any{"error": err.Error()},
+		})
+		return nil, fmt.Errorf("LLM call: %w", err)
+	}
+
+	s.processLLMResponse(ctx, resp)
+	return resp, nil
+}
+
+// buildMessages assembles the message context for an LLM call from tape
+// entries, pending user input, ephemeral messages, and external hooks.
+func (s *Session) buildMessages(
+	ctx context.Context, maxTokens, iter int,
+	pendingMsg *channel.IncomingMessage,
+	skipHooks bool,
+) ([]llm.Message, error) {
 	entries, err := s.tape.Entries()
 	if err != nil {
 		return nil, fmt.Errorf("reading tape: %w", err)
@@ -349,66 +388,74 @@ func (s *Session) executeLLMCall(
 
 	// Run external hooks for context injection (skipped during retries).
 	if s.extHooks != nil && !skipHooks {
-		var userText string
-		if pendingMsg != nil {
-			userText = pendingMsg.Text
-		} else {
-			for i := len(messages) - 1; i >= 0; i-- {
-				if messages[i].Role == llm.RoleUser {
-					userText = messages[i].Content
-					break
-				}
-			}
-		}
-
-		// Build recent_context from the last 3 user messages for richer recall.
-		var recentParts []string
-		count := 0
-		for i := len(messages) - 1; i >= 0 && count < 3; i-- {
-			if messages[i].Role == llm.RoleUser {
-				recentParts = append(recentParts, messages[i].Content)
-				count++
-			}
-		}
-		// Reverse so they're in chronological order.
-		slices.Reverse(recentParts)
-		recentContext := strings.Join(recentParts, "\n")
-
-		injected, err := s.extHooks.Run(ctx, "before_llm_call", s.config.AgentName, map[string]any{
-			"user_message":   userText,
-			"iteration":      iter,
-			"recent_context": recentContext,
-			"message_count":  len(messages),
-		})
-		if err != nil {
-			s.logger.Warn("external hook before_llm_call failed", zap.Error(err))
-		} else if injected != "" {
-			messages = append(messages, llm.Message{
-				Role:    llm.RoleUser,
-				Content: "[External context]\n" + injected,
-			})
-		}
+		messages = s.injectExtHookContext(ctx, messages, pendingMsg, iter)
 	}
 
-	systemPrompt := s.cachedSystemPrompt
-	toolDefs := s.tools.ToolDefinitions()
-
 	// Budget system prompt + tool schemas into the context window.
+	toolDefs := s.tools.ToolDefinitions()
 	if setter, ok := s.contextStrategy.(ctxmgr.OverheadSetter); ok {
-		overhead := ctxmgr.EstimateOverhead(systemPrompt, toolDefs)
+		overhead := ctxmgr.EstimateOverhead(s.cachedSystemPrompt, toolDefs)
 		setter.SetOverhead(overhead)
 	}
 
-	s.hooks.Emit(ctx, hooks.Event{
-		Type:    hooks.EventBeforeLLMCall,
-		Payload: map[string]any{"iteration": iter, "message_count": len(messages)},
-	})
+	return messages, nil
+}
 
+// injectExtHookContext runs the before_llm_call external hook and appends
+// any injected context to the message list.
+func (s *Session) injectExtHookContext(
+	ctx context.Context, messages []llm.Message,
+	pendingMsg *channel.IncomingMessage, iter int,
+) []llm.Message {
+	var userText string
+	if pendingMsg != nil {
+		userText = pendingMsg.Text
+	} else {
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == llm.RoleUser {
+				userText = messages[i].Content
+				break
+			}
+		}
+	}
+
+	// Build recent_context from the last 3 user messages for richer recall.
+	var recentParts []string
+	count := 0
+	for i := len(messages) - 1; i >= 0 && count < 3; i-- {
+		if messages[i].Role == llm.RoleUser {
+			recentParts = append(recentParts, messages[i].Content)
+			count++
+		}
+	}
+	// Reverse so they're in chronological order.
+	slices.Reverse(recentParts)
+	recentContext := strings.Join(recentParts, "\n")
+
+	injected, err := s.extHooks.Run(ctx, "before_llm_call", s.config.AgentName, map[string]any{
+		"user_message":   userText,
+		"iteration":      iter,
+		"recent_context": recentContext,
+		"message_count":  len(messages),
+	})
+	if err != nil {
+		s.logger.Warn("external hook before_llm_call failed", zap.Error(err))
+	} else if injected != "" {
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: "[External context]\n" + injected,
+		})
+	}
+	return messages
+}
+
+// buildLLMRequest constructs the ChatRequest from the current session state.
+func (s *Session) buildLLMRequest(modelName string, messages []llm.Message) llm.ChatRequest {
 	req := llm.ChatRequest{
 		Model:           modelName,
-		SystemPrompt:    systemPrompt,
+		SystemPrompt:    s.cachedSystemPrompt,
 		Messages:        messages,
-		Tools:           toolDefs,
+		Tools:           s.tools.ToolDefinitions(),
 		MaxTokens:       s.config.MaxOutputTokens,
 		Temperature:     s.config.Temperature,
 		ReasoningEffort: s.config.ReasoningEffort,
@@ -425,23 +472,12 @@ func (s *Session) executeLLMCall(
 			req.IncrementalInput = s.incrementalMessages
 		}
 	}
+	return req
+}
 
-	var resp *llm.ChatResponse
-	if stream && tokenCh != nil {
-		resp, err = s.doStreamingCall(ctx, req, tokenCh)
-	} else {
-		resp, err = s.llm.Chat(ctx, req)
-	}
-	if err != nil {
-		// Invalidate chain on error; next call sends full context.
-		s.chainValid = false
-		s.hooks.Emit(ctx, hooks.Event{
-			Type:    hooks.EventError,
-			Payload: map[string]any{"error": err.Error()},
-		})
-		return nil, fmt.Errorf("LLM call: %w", err)
-	}
-
+// processLLMResponse updates session state after a successful LLM call:
+// Responses API chain tracking, token usage, and hook emission.
+func (s *Session) processLLMResponse(ctx context.Context, resp *llm.ChatResponse) {
 	// Capture response ID for Responses API chaining.
 	// When Store is explicitly false, the server won't remember the response,
 	// so chaining via previous_response_id is not possible.
@@ -474,8 +510,6 @@ func (s *Session) executeLLMCall(
 			"completion_tokens": resp.Usage.CompletionTokens,
 		})
 	}
-
-	return resp, nil
 }
 
 // processToolCalls records the assistant message, expands tool schemas, and
