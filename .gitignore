@@ -19,3 +19,6 @@ coverage.out
 
 # Go vendor (if used)
 vendor/
+
+# MkDocs build output
+site/

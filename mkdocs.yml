@@ -1,0 +1,84 @@
+site_name: Golem
+site_description: An AI agent framework with a ReAct loop, built in Go
+site_url: https://joechenrh.github.io/golem/
+repo_url: https://github.com/joechenrh/golem
+repo_name: joechenrh/golem
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.code.select
+    - search.highlight
+    - search.share
+  icon:
+    repo: fontawesome/brands/github
+  logo: assets/logo.png
+  favicon: assets/logo.png
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quick Start: getting-started.md
+      - Configuration: configuration.md
+  - Architecture:
+      - Overview: design/01-architecture.md
+      - Agent Session: design/02-agent-session.md
+      - LLM Client: design/03-llm-client.md
+      - Tape: design/04-tape.md
+      - Context Manager: design/05-context-manager.md
+      - Tool System: design/06-tools.md
+      - Channels: design/07-channels.md
+      - Hooks: design/08-hooks.md
+      - Config & Persona: design/09-config-persona.md
+      - Memory: design/10-memory.md
+      - Scheduler: design/11-scheduler.md
+      - Safety & Sandbox: design/12-safety-sandbox.md
+      - Metrics: design/13-metrics.md
+  - Guides:
+      - Skills: guides/skills.md
+      - External Plugins: guides/plugins.md
+      - Lark Integration: design/lark-ux-enhancements.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - admonition
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/joechenrh/golem
