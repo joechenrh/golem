@@ -21,13 +21,13 @@ func TestCreateSkillTool(t *testing.T) {
 			name:      "basic create",
 			agentName: "test-agent",
 			args:      `{"name":"greet","description":"Say hello","body":"# Greet\nSay hello to the user."}`,
-			wantOK:    `Skill "greet" created and registered as skill_greet.`,
+			wantOK:    `Skill "greet" created and available via the skill tool.`,
 		},
 		{
 			name:      "update existing",
 			agentName: "test-agent",
 			args:      `{"name":"greet","description":"Say hi updated","body":"# Greet v2\nSay hi."}`,
-			wantOK:    `Skill "greet" created and registered as skill_greet.`,
+			wantOK:    `Skill "greet" created and available via the skill tool.`,
 		},
 		{
 			name:      "invalid name - starts with hyphen",
@@ -73,8 +73,8 @@ func TestCreateSkillTool(t *testing.T) {
 			tmpHome := t.TempDir()
 			t.Setenv("HOME", tmpHome)
 
-			registry := tools.NewRegistry()
-			tool := NewCreateSkillTool(tt.agentName, registry)
+			store := tools.NewSkillStore()
+			tool := NewCreateSkillTool(tt.agentName, store)
 
 			result, err := tool.Execute(nil, tt.args)
 			if err != nil {
@@ -102,9 +102,9 @@ func TestCreateSkillTool(t *testing.T) {
 				t.Error("skill file missing frontmatter")
 			}
 
-			// Verify the skill was registered.
-			if registry.Get("skill_greet") == nil {
-				t.Error("skill_greet not registered in registry")
+			// Verify the skill was registered in the store.
+			if store.Get("greet") == nil {
+				t.Error("greet not found in skill store")
 			}
 		})
 	}

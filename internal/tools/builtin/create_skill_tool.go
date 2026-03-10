@@ -12,18 +12,21 @@ import (
 	"github.com/joechenrh/golem/internal/tools"
 )
 
+// Ensure CreateSkillTool implements tools.Tool.
+var _ tools.Tool = (*CreateSkillTool)(nil)
+
 var validSkillName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 
 // CreateSkillTool lets an agent create or update skills on disk and register
-// them immediately in the tool registry.
+// them immediately in the skill store.
 type CreateSkillTool struct {
 	agentName string
-	registry  *tools.Registry
+	store     *tools.SkillStore
 }
 
 // NewCreateSkillTool creates a create_skill tool for the given named agent.
-func NewCreateSkillTool(agentName string, registry *tools.Registry) *CreateSkillTool {
-	return &CreateSkillTool{agentName: agentName, registry: registry}
+func NewCreateSkillTool(agentName string, store *tools.SkillStore) *CreateSkillTool {
+	return &CreateSkillTool{agentName: agentName, store: store}
 }
 
 func (t *CreateSkillTool) Name() string { return "create_skill" }
@@ -98,12 +101,7 @@ func (t *CreateSkillTool) Execute(_ context.Context, args string) (string, error
 		return fmt.Sprintf("Error: writing SKILL.md: %s", err), nil
 	}
 
-	parsed, err := tools.ParseSkill(skillPath)
-	if err != nil {
-		return fmt.Sprintf("Error: parsing created skill: %s", err), nil
-	}
+	t.store.Reload([]string{filepath.Dir(dir)})
 
-	t.registry.Register(parsed)
-
-	return fmt.Sprintf("Skill %q created and registered as %s.", params.Name, parsed.Name()), nil
+	return fmt.Sprintf("Skill %q created and available via the skill tool.", params.Name), nil
 }
