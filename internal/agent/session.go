@@ -448,6 +448,7 @@ func (s *Session) runReActLoop(
 
 		// Final answer — no tool calls.
 		content := s.processAssistantResponse(ctx, resp)
+		s.persistExpandedTools()
 		if stream && tokenCh != nil {
 			tokenCh <- content
 		}
@@ -1079,6 +1080,47 @@ func (s *Session) appendMessage(
 			msg.Images = images
 		}
 		s.incrementalMessages = append(s.incrementalMessages, msg)
+	}
+}
+
+// persistExpandedTools saves the current progressive disclosure state to the tape
+// so that restored sessions don't re-expand tools from scratch.
+func (s *Session) persistExpandedTools() {
+	names := s.tools.ExpandedNames()
+	if len(names) == 0 {
+		return
+	}
+	s.tape.Append(tape.TapeEntry{
+		Kind: tape.KindEvent,
+		Payload: tape.MarshalPayload(map[string]any{
+			"event":          "expanded_tools",
+			"expanded_tools": names,
+		}),
+	})
+}
+
+// RestoreExpandedTools reads the latest expanded_tools event from tape entries
+// and restores the progressive disclosure state in the tool registry.
+func (s *Session) RestoreExpandedTools() {
+	entries, err := s.tape.Entries()
+	if err != nil {
+		return
+	}
+	// Walk backwards to find the most recent expanded_tools event.
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind != tape.KindEvent {
+			continue
+		}
+		var payload struct {
+			Event         string   `json:"event"`
+			ExpandedTools []string `json:"expanded_tools"`
+		}
+		if json.Unmarshal(entries[i].Payload, &payload) == nil && payload.Event == "expanded_tools" {
+			s.tools.RestoreExpanded(payload.ExpandedTools)
+			s.logger.Debug("restored expanded tools from tape",
+				zap.Int("count", len(payload.ExpandedTools)))
+			return
+		}
 	}
 }
 

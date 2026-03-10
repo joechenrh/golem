@@ -205,6 +205,27 @@ func (r *Registry) GetSkillStore() *SkillStore {
 	return r.skillStore
 }
 
+// ExpandedNames returns the set of currently expanded tool names.
+// Used for persisting progressive disclosure state to the tape.
+func (r *Registry) ExpandedNames() []string {
+	names := make([]string, 0, len(r.expanded))
+	for name := range r.expanded {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// RestoreExpanded marks the given tools as expanded without iteration tracking.
+// Used to restore progressive disclosure state from a persisted tape event.
+func (r *Registry) RestoreExpanded(names []string) {
+	for _, name := range names {
+		if _, ok := r.tools[name]; ok {
+			r.expanded[name] = true
+		}
+	}
+}
+
 // List returns a formatted string listing all registered tools and skills.
 func (r *Registry) List() string {
 	hasTools := len(r.order) > 0

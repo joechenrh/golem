@@ -224,6 +224,7 @@ func (sm *SessionManager) createSessionFromTape(
 	sess.TapePath = tapePath
 	sess.SetSkillReload(sm.factory.SkillDirs, sm.factory.Config.SkillReloadInterval)
 	sess.SetExtHooks(sm.factory.ExtHookRunner)
+	sess.RestoreExpandedTools()
 
 	return sess, nil
 }
