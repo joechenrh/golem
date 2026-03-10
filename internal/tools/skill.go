@@ -1,8 +1,6 @@
 package tools
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -10,50 +8,139 @@ import (
 	"strings"
 )
 
-// skillParams is the fixed JSON Schema for skill tools — a single text input.
-var skillParams = json.RawMessage(`{"type":"object","properties":{"input":{"type":"string","description":"Input text for the skill"}},"required":["input"]}`)
-
-// skillTool wraps a parsed SKILL.md as a Tool.
-type skillTool struct {
-	name        string // "skill_<name>"
-	description string // from frontmatter
-	body        string // markdown body (full instructions)
+// SkillMetadata holds a parsed skill's data without implementing Tool.
+type SkillMetadata struct {
+	Name        string // skill name from frontmatter (e.g. "summarize-session")
+	Description string // short description from frontmatter
+	Body        string // markdown body (full instructions)
 }
 
-func (s *skillTool) Name() string { return s.name }
-func (s *skillTool) Description() string {
-	return fmt.Sprintf("Skill %s: %s. Call this to load step-by-step instructions, then execute them immediately using other tools.", s.name, s.description)
-}
-func (s *skillTool) FullDescription() string     { return s.body }
-func (s *skillTool) Parameters() json.RawMessage { return skillParams }
-
-// Execute returns the skill body as context for the LLM.
-// Skills are prompt injections, not executable code.
-func (s *skillTool) Execute(
-	_ context.Context, _ string,
-) (string, error) {
-	return s.body, nil
+// SkillStore discovers and holds skills separately from the tool registry.
+type SkillStore struct {
+	skills map[string]*SkillMetadata
+	order  []string // insertion order for deterministic listing
 }
 
-// ParseSkill reads a SKILL.md file and returns a Tool implementation.
-// The file must have YAML-like frontmatter delimited by "---" lines
-// containing at least "name:" and "description:" fields.
-func ParseSkill(path string) (Tool, error) {
+// NewSkillStore creates an empty skill store.
+func NewSkillStore() *SkillStore {
+	return &SkillStore{
+		skills: make(map[string]*SkillMetadata),
+	}
+}
+
+// Get returns a skill by name, or nil if not found.
+func (s *SkillStore) Get(name string) *SkillMetadata {
+	return s.skills[name]
+}
+
+// List returns all skills in discovery order.
+func (s *SkillStore) List() []*SkillMetadata {
+	result := make([]*SkillMetadata, 0, len(s.order))
+	for _, name := range s.order {
+		result = append(result, s.skills[name])
+	}
+	return result
+}
+
+// Discover scans dir for subdirectories containing SKILL.md files.
+// Pattern: <dir>/*/SKILL.md
+func (s *SkillStore) Discover(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read skills dir %s: %w", dir, err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skillPath := filepath.Join(dir, entry.Name(), "SKILL.md")
+		if _, err := os.Stat(skillPath); os.IsNotExist(err) {
+			continue
+		}
+		meta, err := parseSkillFile(skillPath)
+		if err != nil {
+			log.Printf("skipping invalid skill %s: %v", skillPath, err)
+			continue
+		}
+		if _, exists := s.skills[meta.Name]; !exists {
+			s.order = append(s.order, meta.Name)
+		}
+		s.skills[meta.Name] = meta
+	}
+
+	return nil
+}
+
+// Reload re-discovers skills from the given directories. Returns the count
+// of added/updated skills. Deleted skills are NOT removed to avoid breaking
+// mid-conversation references.
+func (s *SkillStore) Reload(dirs []string) int {
+	updated := 0
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			skillPath := filepath.Join(dir, entry.Name(), "SKILL.md")
+			if _, err := os.Stat(skillPath); os.IsNotExist(err) {
+				continue
+			}
+			meta, err := parseSkillFile(skillPath)
+			if err != nil {
+				continue
+			}
+			existing := s.skills[meta.Name]
+			if existing != nil && existing.Body == meta.Body {
+				continue
+			}
+			if _, exists := s.skills[meta.Name]; !exists {
+				s.order = append(s.order, meta.Name)
+			}
+			s.skills[meta.Name] = meta
+			updated++
+		}
+	}
+	return updated
+}
+
+// Summary returns a compact multi-line string listing all skills
+// (name + description), suitable for injection into the system prompt.
+func (s *SkillStore) Summary() string {
+	if len(s.order) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, name := range s.order {
+		meta := s.skills[name]
+		fmt.Fprintf(&b, "- %s: %s\n", meta.Name, meta.Description)
+	}
+	return b.String()
+}
+
+// parseSkillFile reads a SKILL.md file and returns SkillMetadata.
+func parseSkillFile(path string) (*SkillMetadata, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read skill %s: %w", path, err)
 	}
 
-	content := string(data)
-	name, description, body, err := parseFrontmatter(content)
+	name, description, body, err := parseFrontmatter(string(data))
 	if err != nil {
 		return nil, fmt.Errorf("parse skill %s: %w", path, err)
 	}
 
-	return &skillTool{
-		name:        "skill_" + name,
-		description: description,
-		body:        body,
+	return &SkillMetadata{
+		Name:        name,
+		Description: description,
+		Body:        body,
 	}, nil
 }
 
@@ -62,15 +149,13 @@ func ParseSkill(path string) (Tool, error) {
 func parseFrontmatter(
 	content string,
 ) (name, description, body string, err error) {
-	// Trim leading whitespace/newlines.
 	content = strings.TrimLeft(content, " \t\r\n")
 
 	if !strings.HasPrefix(content, "---") {
 		return "", "", "", fmt.Errorf("missing frontmatter delimiter '---'")
 	}
 
-	// Find the closing "---".
-	rest := content[3:] // skip opening "---"
+	rest := content[3:]
 	rest = strings.TrimLeft(rest, " \t\r")
 	if len(rest) > 0 && rest[0] == '\n' {
 		rest = rest[1:]
@@ -82,9 +167,8 @@ func parseFrontmatter(
 	}
 
 	frontmatter := rest[:endIdx]
-	body = strings.TrimLeft(rest[endIdx+4:], " \t\r\n") // skip "\n---"
+	body = strings.TrimLeft(rest[endIdx+4:], " \t\r\n")
 
-	// Parse simple YAML key-value pairs.
 	for _, line := range strings.Split(frontmatter, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -112,36 +196,4 @@ func parseFrontmatter(
 	}
 
 	return name, description, body, nil
-}
-
-// discoverSkills scans dir for subdirectories containing SKILL.md files.
-// Pattern: <dir>/*/SKILL.md
-func discoverSkills(dir string) ([]Tool, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil // no skills directory is fine
-		}
-		return nil, fmt.Errorf("read skills dir %s: %w", dir, err)
-	}
-
-	var skills []Tool
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		skillPath := filepath.Join(dir, entry.Name(), "SKILL.md")
-		if _, err := os.Stat(skillPath); os.IsNotExist(err) {
-			continue
-		}
-		t, err := ParseSkill(skillPath)
-		if err != nil {
-			// Skip invalid skills, but log so operators can diagnose.
-			log.Printf("skipping invalid skill %s: %v", skillPath, err)
-			continue
-		}
-		skills = append(skills, t)
-	}
-
-	return skills, nil
 }
