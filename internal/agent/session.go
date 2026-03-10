@@ -287,7 +287,7 @@ func (s *Session) runReActLoop(
 		emptyRetries = 0
 
 		// Phase 1: heuristic — obvious plan phrases or tool failure.
-		if lastToolFailed || looksLikePlan(resp.Content) {
+		if lastToolFailed || looksLikePlan(resp.Content) || looksLikeAck(resp.Content, s.tape) {
 			lastToolFailed = false
 			if nudges < maxNudges {
 				s.ephemeralMessages = append(s.ephemeralMessages,

@@ -966,6 +966,47 @@ func TestLooksLikeAck(t *testing.T) {
 	}
 }
 
+func TestHandleInput_AckNudge(t *testing.T) {
+	// First response is "好的" (ack) → should be nudged.
+	// Second response uses a tool → tool result.
+	// Third response triggers stuck escalation (nudges >= 1).
+	// Fourth response is the final answer.
+	client := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			{Content: "好的", FinishReason: "stop"},
+			{
+				FinishReason: "tool_calls",
+				ToolCalls:    []llm.ToolCall{{ID: "tc1", Name: "test_tool", Arguments: `{}`}},
+			},
+			{Content: "Here is a summary.", FinishReason: "stop"},
+			{Content: "Done! Here is the result.", FinishReason: "stop"},
+		},
+	}
+	agent := newTestAgent(t, client, &mockTool{name: "test_tool", result: "ok"})
+
+	// Seed tool history so looksLikeAck fires.
+	agent.tape.Append(tape.TapeEntry{
+		Kind:    tape.KindMessage,
+		Payload: json.RawMessage(`{"role":"tool","content":"prev","tool_call_id":"old","name":"test_tool"}`),
+	})
+
+	result, err := agent.HandleInput(context.Background(), cliMsg("帮我查一下"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	// The "好的" response should have been nudged away.
+	if strings.Contains(result, "好的") {
+		t.Errorf("result should not contain ack response, got %q", result)
+	}
+	if !strings.Contains(result, "Done!") {
+		t.Errorf("result = %q, want final answer", result)
+	}
+	// LLM called 4 times: ack → nudge → tool call → stuck escalation → final.
+	if client.callCount != 4 {
+		t.Errorf("callCount = %d, want 4", client.callCount)
+	}
+}
+
 func TestLooksLikeAck_NoToolHistory(t *testing.T) {
 	dir := t.TempDir()
 	resolved, _ := filepath.EvalSymlinks(dir)
