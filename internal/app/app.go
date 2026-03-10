@@ -897,6 +897,10 @@ func (f *appSessionFactory) HandleScheduledPrompt(
 }
 
 // buildEphemeralSession creates a short-lived session with its own tape,
+// subAgentMaxToolIter is the iteration limit for sub-agent sessions,
+// higher than the default to allow complex multi-step tasks.
+const subAgentMaxToolIter = 50
+
 // context strategy, hook bus, and tool registry. Used by spawn_agent and
 // the scheduler to avoid duplicating session setup logic.
 func buildEphemeralSession(
@@ -912,10 +916,15 @@ func buildEphemeralSession(
 		return nil, fmt.Errorf("tape: %w", err)
 	}
 
+	// Sub-agents get a higher iteration limit so they can handle
+	// complex multi-step tasks without hitting the cap.
+	subCfg := *cfg
+	subCfg.MaxToolIter = subAgentMaxToolIter
+
 	ctxStrategy, _ := ctxmgr.NewContextStrategy(cfg.ContextStrategy)
 	hookBus := hooks.NewBus(logger.Named(name))
 	hookBus.Register(hooks.NewLoggingHook(logger.Named(name)))
 
 	registry := toolFactory()
-	return agent.NewSession(llmClient, nil, registry, tapeStore, ctxStrategy, hookBus, cfg, logger.Named(name)), nil
+	return agent.NewSession(llmClient, nil, registry, tapeStore, ctxStrategy, hookBus, &subCfg, logger.Named(name)), nil
 }
