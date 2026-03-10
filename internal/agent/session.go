@@ -18,6 +18,7 @@ import (
 	"github.com/joechenrh/golem/internal/ctxmgr"
 	"github.com/joechenrh/golem/internal/hooks"
 	"github.com/joechenrh/golem/internal/llm"
+	"github.com/joechenrh/golem/internal/redact"
 	"github.com/joechenrh/golem/internal/router"
 	"github.com/joechenrh/golem/internal/stringutil"
 	"github.com/joechenrh/golem/internal/tape"
@@ -55,6 +56,9 @@ type Session struct {
 
 	// External hooks runner (nil if no hooks configured).
 	extHooks ExtHookRunner
+
+	// Redactor strips secrets from tool arguments before tape persistence.
+	redactor *redact.Redactor
 
 	// Ephemeral messages injected into the next LLM call only (nudges,
 	// recovery hints). They are not persisted to the tape.
@@ -206,6 +210,7 @@ func NewSession(
 		config:          cfg,
 		logger:          logger,
 		tasks:           NewTaskTracker(5),
+		redactor:        redact.New(),
 	}
 }
 
@@ -1036,7 +1041,13 @@ func (s *Session) appendMessage(
 		"content": content,
 	}
 	if len(toolCalls) > 0 {
-		payload["tool_calls"] = toolCalls
+		// Redact secrets from tool arguments before tape persistence.
+		redacted := make([]llm.ToolCall, len(toolCalls))
+		copy(redacted, toolCalls)
+		for i := range redacted {
+			redacted[i].Arguments = s.redactor.Redact(redacted[i].Arguments)
+		}
+		payload["tool_calls"] = redacted
 	}
 	if senderID != "" {
 		payload["sender_id"] = senderID
