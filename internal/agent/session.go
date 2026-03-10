@@ -243,6 +243,22 @@ func (s *Session) runReActLoop(
 ) (string, error) {
 	s.maybeReloadSkills()
 
+	// Fork tape for transactional writes — entries are buffered in memory
+	// until the turn completes. If the turn fails before any entries are
+	// written (e.g., first LLM call errors), pending entries are discarded,
+	// preventing partial entries from corrupting conversation context.
+	forked := tape.Fork(s.tape)
+	origTape := s.tape
+	s.tape = forked
+	defer func() {
+		s.tape = origTape
+		if forked.Pending() > 0 {
+			if err := forked.Commit(); err != nil {
+				s.logger.Error("tape commit failed", zap.Error(err))
+			}
+		}
+	}()
+
 	_, modelName := llm.ParseModelProvider(s.config.Model)
 	maxTokens := ctxmgr.ModelContextWindow(modelName)
 
