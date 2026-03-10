@@ -132,8 +132,10 @@ func (s *Session) maybeReloadSkills() {
 		return
 	}
 	s.lastSkillReload = time.Now()
-	if n := s.tools.ReloadSkills(s.skillDirs); n > 0 {
-		s.logger.Info("reloaded skills from disk", zap.Int("updated", n))
+	if store := s.tools.GetSkillStore(); store != nil {
+		if n := store.Reload(s.skillDirs); n > 0 {
+			s.logger.Info("reloaded skills from disk", zap.Int("updated", n))
+		}
 	}
 }
 
@@ -881,6 +883,15 @@ func (s *Session) buildPersonaPrompt() string {
 	b.WriteString("\n## Tool Use\n\n")
 	b.WriteString(toolUseInstruction)
 
+	// Skill summary — let the LLM know what skills are available.
+	if skillStore := s.tools.GetSkillStore(); skillStore != nil {
+		if summary := skillStore.Summary(); summary != "" {
+			b.WriteString("\n## Available Skills\n\n")
+			b.WriteString("Use the `skill` tool to load detailed instructions for any of these workflows:\n")
+			b.WriteString(summary)
+		}
+	}
+
 	// --- Layer 3: Knowledge ---
 	b.WriteString("\n# Knowledge\n\n")
 	b.WriteString("Use the persona_self tool to read/update your persona files: ")
@@ -912,6 +923,16 @@ func (s *Session) buildFlatPrompt() string {
 
 	b.WriteString(toolUseInstruction)
 	b.WriteByte('\n')
+
+	// Skill summary — let the LLM know what skills are available.
+	if skillStore := s.tools.GetSkillStore(); skillStore != nil {
+		if summary := skillStore.Summary(); summary != "" {
+			b.WriteString("## Available Skills\n\n")
+			b.WriteString("Use the `skill` tool to load detailed instructions for any of these workflows:\n")
+			b.WriteString(summary)
+			b.WriteByte('\n')
+		}
+	}
 
 	switch {
 	case s.config.SystemPrompt != "":
