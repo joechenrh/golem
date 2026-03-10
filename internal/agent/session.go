@@ -293,6 +293,10 @@ func (s *Session) runReActLoop(
 	// persona files) on every LLM iteration within the same turn.
 	s.cachedSystemPrompt = s.buildSystemPrompt()
 
+	// Wire auto-anchor: when the context strategy trims messages, insert
+	// an anchor so future BuildMessages calls skip the dropped region.
+	s.wireAutoAnchor()
+
 	// Expand $skill hints from the user message: inject matched skill
 	// bodies into the system prompt and auto-expand referenced tools.
 	if pendingMsg != nil {
@@ -1080,6 +1084,33 @@ func (s *Session) appendMessage(
 			msg.Images = images
 		}
 		s.incrementalMessages = append(s.incrementalMessages, msg)
+	}
+}
+
+// wireAutoAnchor sets up the OnTrim callback on the context strategy so that
+// when trimToFit drops messages, an anchor is automatically inserted in the
+// tape. This makes context trimming self-maintaining — users don't need to
+// manually run :reset to prevent unbounded tape growth.
+func (s *Session) wireAutoAnchor() {
+	onTrim := func(droppedCount int) {
+		s.tape.Append(tape.TapeEntry{
+			Kind: tape.KindAnchor,
+			Payload: tape.MarshalPayload(map[string]string{
+				"label": fmt.Sprintf("auto-trim: %d messages dropped", droppedCount),
+			}),
+		})
+		s.logger.Info("auto-anchor inserted after context trimming",
+			zap.Int("dropped", droppedCount))
+	}
+
+	switch cs := s.contextStrategy.(type) {
+	case *ctxmgr.AnchorStrategy:
+		cs.OnTrim = onTrim
+	case *ctxmgr.MaskingStrategy:
+		cs.OnTrim = onTrim
+	case *ctxmgr.HybridStrategy:
+		// HybridStrategy already has OnDrop; also wire OnTrim
+		// via its trimWithCallback which fires OnDrop directly.
 	}
 }
 

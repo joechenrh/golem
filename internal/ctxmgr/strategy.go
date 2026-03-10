@@ -62,6 +62,9 @@ func NewContextStrategy(name string) (ContextStrategy, error) {
 // If context exceeds maxTokens, oldest messages are dropped.
 type AnchorStrategy struct {
 	Overhead int // tokens consumed by system prompt + tool schemas
+
+	// OnTrim is called when trimToFit drops messages.
+	OnTrim func(droppedCount int)
 }
 
 func (s *AnchorStrategy) Name() string           { return "anchor" }
@@ -73,7 +76,12 @@ func (s *AnchorStrategy) BuildContext(
 ) ([]llm.Message, error) {
 	effectiveMax := maxTokens - s.Overhead
 	msgs := tape.BuildMessages(entries)
-	return trimToFit(msgs, effectiveMax), nil
+	before := len(msgs)
+	msgs = trimToFit(msgs, effectiveMax)
+	if dropped := before - len(msgs); dropped > 0 && s.OnTrim != nil {
+		s.OnTrim(dropped)
+	}
+	return msgs, nil
 }
 
 // MaskingStrategy extends AnchorStrategy by truncating large tool outputs
@@ -82,6 +90,10 @@ type MaskingStrategy struct {
 	MaskThreshold  float64 // fraction of maxTokens before masking kicks in (default: 0.5)
 	MaxOutputChars int     // max chars per tool output before truncation (default: 2000)
 	Overhead       int     // tokens consumed by system prompt + tool schemas
+
+	// OnTrim is called when trimToFit drops messages. The callback receives
+	// the count of dropped messages so the caller can insert an anchor.
+	OnTrim func(droppedCount int)
 }
 
 func (s *MaskingStrategy) Name() string           { return "masking" }
@@ -99,7 +111,12 @@ func (s *MaskingStrategy) BuildContext(
 		msgs = MaskObservations(msgs, s.MaxOutputChars)
 	}
 
-	return trimToFit(msgs, effectiveMax), nil
+	before := len(msgs)
+	msgs = trimToFit(msgs, effectiveMax)
+	if dropped := before - len(msgs); dropped > 0 && s.OnTrim != nil {
+		s.OnTrim(dropped)
+	}
+	return msgs, nil
 }
 
 // HybridStrategy combines LLM-powered summarization with adaptive masking.
