@@ -26,6 +26,10 @@ Target **Go 1.22+**. Use modern idioms:
 - Prefer table-driven tests with `t.Run` subtests.
 - Run `go vet ./...` and `go test -race ./...` before merging.
 
+## Git Workflow
+
+- **Commit each separate change** — when implementing multi-phase plans or touching multiple subsystems, commit each logical change separately with a clear message. Do not bundle unrelated changes into one commit.
+
 ## Documentation
 
 - Design documents live in `design/` (13 files covering all major subsystems).

@@ -15,6 +15,7 @@ Key source files:
 | `internal/tools/builtin/skill_tool.go` | `SkillTool` — single tool for on-demand skill loading |
 | `internal/tools/external.go` | `ExternalTool` — JSON-RPC 2.0 plugin host |
 | `internal/middleware/middleware.go` | `Middleware` type |
+| `internal/tools/tasktracker.go` | `BackgroundTaskTracker` interface + context helpers |
 | `internal/tools/builtin/` | All built-in tool implementations |
 | `internal/app/app.go` | Wiring — creates the registry and registers everything |
 
@@ -51,7 +52,7 @@ Middlewares wrap `Execute` in registration order (outermost first). The app curr
 3. Lark tools (if `LarkChannel` is configured) — pre-expanded
 4. Persona memory tool (if persona is configured)
 5. Schedule tools (added later, on the default registry)
-6. Spawn agent tool
+6. Spawn agent tool + check_tasks tool
 7. Skill tool (single `skill` tool, always expanded; `SkillStore` discovers from `~/.golem/skills/` then `~/.golem/agents/<name>/skills/`)
 8. External plugins (from `~/.golem/plugins/*.tool.json`, e.g. mem9 memory tools)
 
@@ -148,7 +149,8 @@ Source: `internal/tools/external.go`
 | `schedule_add` | Create a cron-scheduled task; supports standard cron, `@daily`, `@every 30m`, `CRON_TZ=` | `cron_expr`, `prompt`, `channel_name`, `channel_id`, `description` |
 | `schedule_list` | List all scheduled tasks | (none) |
 | `schedule_remove` | Remove a scheduled task by ID | `id` |
-| `spawn_agent` | Delegate a task to an independent sub-agent (cannot spawn further agents) | `prompt`, `context` (optional) |
+| `spawn_agent` | Launch an async background sub-agent; returns a task ID immediately (sub-agents cannot spawn further agents) | `prompt`, `context` (optional) |
+| `check_tasks` | Check status and results of background tasks launched by `spawn_agent` | (none) |
 
 File tools skip binary files (detected by extension) and ignore directories like `.git`, `node_modules`, `vendor`, `__pycache__`, `.venv`, and `target` during listing and searching. All Lark tools are pre-expanded in the registry. Both doc tools auto-extract the document token from full Feishu/Lark URLs. Schedules fire prompts into isolated agent sessions at cron times.
 
