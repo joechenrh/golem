@@ -922,8 +922,8 @@ func buildEphemeralSession(
 	subCfg.MaxToolIter = subAgentMaxToolIter
 
 	ctxStrategy, _ := ctxmgr.NewContextStrategy(cfg.ContextStrategy)
-	hookBus := hooks.NewBus(logger.Named(name))
-	hookBus.Register(hooks.NewLoggingHook(logger.Named(name)))
+	auditPath := filepath.Join(filepath.Dir(tapePath), fmt.Sprintf("audit-ephemeral-%s.jsonl", time.Now().Format("20060102-150405")))
+	hookBus, _ := hooks.BuildDefaultBus(logger.Named(name), nil, auditPath)
 
 	registry := toolFactory()
 	return agent.NewSession(llmClient, nil, registry, tapeStore, ctxStrategy, hookBus, &subCfg, logger.Named(name)), nil
