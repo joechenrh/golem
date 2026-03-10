@@ -234,7 +234,7 @@ func (s *Session) runReActLoop(
 		// save context window space in long multi-step chains.
 		s.tools.ShrinkUnused(iter, shrinkAfterIters)
 
-		resp, err := s.executeLLMCall(ctx, modelName, maxTokens, iter, stream, tokenCh, pendingMsg, emptyRetries > 0)
+		resp, err := s.executeLLMCall(ctx, modelName, maxTokens, iter, stream, nil, pendingMsg, emptyRetries > 0)
 		if err != nil {
 			return "", err
 		}
@@ -373,10 +373,17 @@ func (s *Session) runReActLoop(
 
 		// Final answer — no tool calls.
 		content := s.processAssistantResponse(ctx, resp)
+		if stream && tokenCh != nil {
+			tokenCh <- content
+		}
 		return content, nil
 	}
 
-	return "Tool calling limit reached. Please try a simpler request.", nil
+	fallback := "Tool calling limit reached. Please try a simpler request."
+	if stream && tokenCh != nil {
+		tokenCh <- fallback
+	}
+	return fallback, nil
 }
 
 // lastUserMessage returns the most recent user message text from the tape.
@@ -426,7 +433,7 @@ func (s *Session) executeLLMCall(
 	})
 
 	var resp *llm.ChatResponse
-	if stream && tokenCh != nil {
+	if stream {
 		resp, err = s.doStreamingCall(ctx, req, tokenCh)
 	} else {
 		resp, err = s.llm.Chat(ctx, req)

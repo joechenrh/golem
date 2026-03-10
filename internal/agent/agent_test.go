@@ -1007,6 +1007,81 @@ func TestHandleInput_AckNudge(t *testing.T) {
 	}
 }
 
+func TestHandleInputStream_NudgeDoesNotLeak(t *testing.T) {
+	// LLM returns a plan-like response first, then the real answer.
+	// Three responses: nudged plan, stuck-escalated reply, final answer.
+	client := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			{Content: "I'll read the file now.", FinishReason: "stop"},
+			{Content: "The file contains hello world.", FinishReason: "stop"},
+			{Content: "The file contains hello world.", FinishReason: "stop"},
+		},
+	}
+	agent := newTestAgent(t, client)
+
+	tokenCh := make(chan string, 100)
+	var tokens []string
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for tok := range tokenCh {
+			tokens = append(tokens, tok)
+		}
+	}()
+
+	err := agent.HandleInputStream(context.Background(), cliMsg("Read the file"), tokenCh)
+	close(tokenCh)
+	<-done
+
+	if err != nil {
+		t.Fatalf("HandleInputStream: %v", err)
+	}
+	joined := strings.Join(tokens, "")
+	// The nudged "I'll read the file now." should NOT appear in the output.
+	if strings.Contains(joined, "I'll read the file") {
+		t.Errorf("nudged response leaked to stream: %q", joined)
+	}
+	if !strings.Contains(joined, "hello world") {
+		t.Errorf("final response missing from stream: %q", joined)
+	}
+}
+
+func TestHandleInputStream_ToolCallsThenFinalAnswer(t *testing.T) {
+	// Tool call iteration (no content) then final answer — should stream normally.
+	client := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			{
+				FinishReason: "tool_calls",
+				ToolCalls:    []llm.ToolCall{{ID: "tc1", Name: "test_tool", Arguments: `{}`}},
+			},
+			{Content: "Tool returned: mock output", FinishReason: "stop"},
+		},
+	}
+	agent := newTestAgent(t, client, &mockTool{name: "test_tool", result: "mock output"})
+
+	tokenCh := make(chan string, 100)
+	var tokens []string
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for tok := range tokenCh {
+			tokens = append(tokens, tok)
+		}
+	}()
+
+	err := agent.HandleInputStream(context.Background(), cliMsg("Use tool"), tokenCh)
+	close(tokenCh)
+	<-done
+
+	if err != nil {
+		t.Fatalf("HandleInputStream: %v", err)
+	}
+	joined := strings.Join(tokens, "")
+	if !strings.Contains(joined, "mock output") {
+		t.Errorf("final response missing: %q", joined)
+	}
+}
+
 func TestLooksLikeAck_NoToolHistory(t *testing.T) {
 	dir := t.TempDir()
 	resolved, _ := filepath.EvalSymlinks(dir)
