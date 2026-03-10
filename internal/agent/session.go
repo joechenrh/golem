@@ -296,7 +296,8 @@ func (s *Session) runReActLoop(
 				)
 				nudges++
 				s.logger.Debug("nudging LLM to use tools (heuristic)",
-					zap.Int("nudge", nudges), zap.Int("iter", iter))
+					zap.Int("nudge", nudges), zap.Int("iter", iter),
+					zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
 				continue
 			}
 			// Nudge budget exhausted — fall through to accept.
@@ -322,7 +323,8 @@ func (s *Session) runReActLoop(
 				nudges++
 				s.logger.Debug("injecting task reminder (stuck escalation)",
 					zap.Int("nudge", nudges), zap.Int("iter", iter),
-					zap.String("task_summary", summary))
+					zap.String("task_summary", summary),
+					zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
 				continue
 			}
 		}
@@ -350,6 +352,9 @@ func (s *Session) runReActLoop(
 						llm.Message{Role: llm.RoleUser, Content: nudgeMessage(resp.Content)},
 					)
 					nudges++
+					s.logger.Debug("classifier nudge",
+						zap.Int("iter", iter),
+						zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
 					continue
 				case "stuck":
 					s.lastTaskSummary = taskSummary
@@ -358,6 +363,10 @@ func (s *Session) runReActLoop(
 						llm.Message{Role: llm.RoleUser, Content: taskReminderMessage(taskSummary, resp.Content)},
 					)
 					nudges++
+					s.logger.Debug("classifier stuck",
+						zap.Int("iter", iter),
+						zap.String("task_summary", taskSummary),
+						zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
 					continue
 				case "accept":
 					s.logger.Debug("classifier accepted response as final answer",
