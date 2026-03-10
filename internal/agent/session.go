@@ -72,6 +72,9 @@ type Session struct {
 	chainValid          bool          // false when chain must be rebuilt (error, reset, etc.)
 	incrementalMessages []llm.Message // messages since last LLM call (for incremental input)
 
+	// Background task tracker for async subagent orchestration.
+	tasks *TaskTracker
+
 	// Lifecycle fields (managed by SessionManager for remote chats;
 	// unused for the default CLI session).
 	ctx        context.Context
@@ -104,7 +107,13 @@ const (
 const toolUseInstruction = "When you have enough information to act, call tools directly — " +
 	"don't describe what you plan to do. If the user's request is ambiguous or " +
 	"missing key details, ask a brief clarifying question first. " +
-	"Keep narration brief; default to action over explanation.\n"
+	"Keep narration brief; default to action over explanation.\n" +
+	"For code-related tasks (writing code, debugging, file analysis, multi-step investigations), " +
+	"always use spawn_agent to delegate the work to background sub-agents instead of doing it " +
+	"directly in the main session. This keeps you responsive to the user while sub-agents work. " +
+	"Spawn multiple sub-agents in one response for parallel execution. " +
+	"Use check_tasks to monitor progress. After collecting results, decide whether " +
+	"to spawn follow-up agents, retry failures, or deliver the final answer.\n"
 
 // ExtHookRunner is satisfied by exthook.Runner.
 // Defined here as an interface to avoid a circular import.
@@ -121,6 +130,14 @@ func (s *Session) SetSkillReload(dirs []string, interval time.Duration) {
 // SetExtHooks sets the external hook runner for this session.
 func (s *Session) SetExtHooks(runner ExtHookRunner) {
 	s.extHooks = runner
+}
+
+// Close cancels all background tasks and waits for goroutines to finish.
+// Must be called before cancelling the session context.
+func (s *Session) Close() {
+	if s.tasks != nil {
+		s.tasks.Close()
+	}
 }
 
 // maybeReloadSkills re-discovers skills from disk if enough time has elapsed.
@@ -188,6 +205,7 @@ func NewSession(
 		hooks:           hookBus,
 		config:          cfg,
 		logger:          logger,
+		tasks:           NewTaskTracker(5),
 	}
 }
 
@@ -282,6 +300,9 @@ func (s *Session) runReActLoop(
 	emptyRetries := 0
 
 	for iter := range s.config.MaxToolIter {
+		// Inject completed background task results as ephemeral messages.
+		s.injectCompletedTasks()
+
 		// Shrink tool schemas not used in the last few iterations to
 		// save context window space in long multi-step chains.
 		s.tools.ShrinkUnused(iter, shrinkAfterIters)
@@ -732,6 +753,24 @@ func (s *Session) processToolCalls(
 	}
 }
 
+// injectCompletedTasks drains finished background tasks and appends their
+// results as ephemeral user messages so the LLM can see them on the next call.
+func (s *Session) injectCompletedTasks() {
+	completed := s.tasks.DrainCompleted()
+	for _, t := range completed {
+		var msg string
+		if t.Status == TaskCompleted {
+			msg = fmt.Sprintf("[Background task #%d completed] %q\nResult:\n%s", t.ID, t.Description, t.Result)
+		} else {
+			msg = fmt.Sprintf("[Background task #%d failed] %q\nError: %s", t.ID, t.Description, t.Error)
+		}
+		s.ephemeralMessages = append(s.ephemeralMessages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: msg,
+		})
+	}
+}
+
 // processAssistantResponse handles the final answer: runs any embedded colon-
 // commands, records the response to the tape, and returns the content.
 func (s *Session) processAssistantResponse(
@@ -849,6 +888,8 @@ func (s *Session) executeTool(
 	}); err != nil {
 		return "Tool execution blocked: " + err.Error()
 	}
+
+	ctx = tools.WithTaskTracker(ctx, s.tasks)
 
 	start := time.Now()
 	result, err := s.tools.Execute(ctx, tc.Name, tc.Arguments)

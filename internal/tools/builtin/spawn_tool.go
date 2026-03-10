@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/joechenrh/golem/internal/tools"
 )
@@ -29,14 +30,16 @@ func NewSpawnAgentTool(
 func (t *SpawnAgentTool) Name() string        { return "spawn_agent" }
 func (t *SpawnAgentTool) Description() string { return "Delegate a task to an independent sub-agent" }
 func (t *SpawnAgentTool) FullDescription() string {
-	return "Spawn an independent sub-agent to handle a delegated task. " +
+	return "Spawn a background sub-agent to handle a task asynchronously. " +
+		"Returns immediately with a task ID — the sub-agent works in the background.\n\n" +
+		"PREFER spawning sub-agents over doing complex work in the main session. " +
+		"For any task involving code changes, debugging, file analysis, or multi-step " +
+		"investigations, delegate to a sub-agent so you can report progress to the user " +
+		"and coordinate multiple tasks in parallel.\n\n" +
 		"The sub-agent has its own conversation context and access to standard tools " +
-		"(shell, file I/O, web) but cannot spawn further agents. " +
-		"Use this for self-contained subtasks that benefit from a clean context.\n\n" +
+		"(shell, file I/O, web) but cannot spawn further agents.\n\n" +
 		"You can call this tool multiple times in a single response to run several " +
-		"sub-agents in parallel. Each sub-agent works independently with its own context. " +
-		"Use this to decompose complex tasks: spawn workers for each subtask, then " +
-		"synthesize their results into a final answer."
+		"sub-agents in parallel. Use check_tasks to monitor progress and retrieve results."
 }
 
 var spawnAgentParams = json.RawMessage(`{
@@ -75,9 +78,35 @@ func (t *SpawnAgentTool) Execute(
 		prompt = "[Context from parent agent]\n" + params.Context + "\n\n[Task]\n" + params.Prompt
 	}
 
-	result, err := t.runner(ctx, prompt)
-	if err != nil {
-		return "Sub-agent error: " + err.Error(), nil
+	tracker := tools.GetTaskTracker(ctx)
+	if tracker == nil {
+		// Sync fallback for sub-sessions (which have no tracker).
+		result, err := t.runner(ctx, prompt)
+		if err != nil {
+			return "Sub-agent error: " + err.Error(), nil
+		}
+		return result, nil
 	}
-	return result, nil
+
+	// Async: Launch manages context, errgroup, and lifecycle.
+	desc := truncateDesc(params.Prompt, 100)
+	capturedPrompt := prompt
+	taskID := tracker.Launch(desc, func(taskCtx context.Context, id int) {
+		result, err := t.runner(taskCtx, capturedPrompt)
+		if err != nil {
+			tracker.Fail(id, err.Error())
+		} else {
+			tracker.Complete(id, result)
+		}
+	})
+
+	return fmt.Sprintf("Task #%d started: %s\nUse check_tasks to monitor.", taskID, desc), nil
+}
+
+// truncateDesc truncates s to maxLen characters, appending "…" if truncated.
+func truncateDesc(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…"
 }

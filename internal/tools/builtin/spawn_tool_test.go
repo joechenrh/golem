@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/joechenrh/golem/internal/tools"
 )
 
-func TestSpawnAgentTool_Execute(t *testing.T) {
+func TestSpawnAgentTool_SyncFallback(t *testing.T) {
 	runner := func(_ context.Context, prompt string) (string, error) {
 		return "sub-agent response to: " + prompt, nil
 	}
@@ -17,6 +19,7 @@ func TestSpawnAgentTool_Execute(t *testing.T) {
 		t.Errorf("Name() = %q, want %q", tool.Name(), "spawn_agent")
 	}
 
+	// No tracker in context → sync fallback.
 	args, _ := json.Marshal(map[string]string{"prompt": "Hello sub-agent"})
 	result, err := tool.Execute(context.Background(), string(args))
 	if err != nil {
@@ -24,6 +27,46 @@ func TestSpawnAgentTool_Execute(t *testing.T) {
 	}
 	if !strings.Contains(result, "Hello sub-agent") {
 		t.Errorf("result = %q, want to contain prompt", result)
+	}
+}
+
+func TestSpawnAgentTool_AsyncWithTracker(t *testing.T) {
+	var capturedPrompt string
+	runner := func(_ context.Context, prompt string) (string, error) {
+		capturedPrompt = prompt
+		return "done", nil
+	}
+	tool := NewSpawnAgentTool(runner)
+
+	// Create a mock tracker to verify async path.
+	tracker := &mockTracker{}
+	ctx := tools.WithTaskTracker(context.Background(), tracker)
+
+	args, _ := json.Marshal(map[string]string{"prompt": "Fix the bug"})
+	result, err := tool.Execute(ctx, string(args))
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+
+	// Should return immediately with task ID.
+	if !strings.Contains(result, "Task #") {
+		t.Errorf("result = %q, want task ID", result)
+	}
+	if !strings.Contains(result, "check_tasks") {
+		t.Errorf("result = %q, want check_tasks mention", result)
+	}
+
+	// Verify Launch was called.
+	if tracker.launchCount != 1 {
+		t.Errorf("Launch called %d times, want 1", tracker.launchCount)
+	}
+
+	// Execute the captured function to verify it calls the runner.
+	if tracker.lastFn != nil {
+		tracker.lastFn(context.Background(), 1)
+		if capturedPrompt != "Fix the bug" {
+			t.Errorf("runner got prompt %q, want %q", capturedPrompt, "Fix the bug")
+		}
 	}
 }
 
@@ -64,3 +107,19 @@ func TestSpawnAgentTool_Parameters(t *testing.T) {
 		t.Error("schema missing 'prompt' property")
 	}
 }
+
+// mockTracker implements tools.BackgroundTaskTracker for testing.
+type mockTracker struct {
+	launchCount int
+	lastFn      func(ctx context.Context, id int)
+}
+
+func (m *mockTracker) Launch(desc string, fn func(ctx context.Context, id int)) int {
+	m.launchCount++
+	m.lastFn = fn
+	return m.launchCount
+}
+
+func (m *mockTracker) Complete(int, string) {}
+func (m *mockTracker) Fail(int, string)     {}
+func (m *mockTracker) Summary() string      { return "" }

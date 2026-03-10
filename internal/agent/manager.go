@@ -310,6 +310,7 @@ func (sm *SessionManager) Reset(channelID string) {
 			})
 		}
 	}
+	s.Close()
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -360,6 +361,7 @@ func (sm *SessionManager) summarizeAndHook(channelID string, sess *Session) {
 			"summary": summary,
 		})
 	}
+	sess.Close()
 	if sess.cancel != nil {
 		sess.cancel()
 	}
@@ -472,6 +474,7 @@ func (sm *SessionManager) Shutdown() {
 					})
 				}
 			}
+			e.sess.Close()
 			if e.sess.cancel != nil {
 				e.sess.cancel()
 			}

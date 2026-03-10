@@ -391,6 +391,7 @@ func BuildAgent(
 			Text:        prompt,
 		})
 	}))
+	registry.Register(builtin.NewCheckTasksTool())
 
 	// Register create_skill tool for named agents.
 	if name != "" {
