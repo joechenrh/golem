@@ -803,6 +803,9 @@ func BuildToolRegistry(
 		"read_file", "list_directory", "search_files", "web_search", "web_fetch",
 	}, []string{
 		"write_file", "edit_file", "shell_exec",
+		"lark_send", "lark_write_doc",
+		"create_skill", "schedule_add", "schedule_remove",
+		"persona_self",
 	})
 	registry.Use(cache.Middleware())
 

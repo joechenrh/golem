@@ -49,13 +49,11 @@ func NewCacheMiddleware(ttl time.Duration, cacheable, invalidators []string) *Ca
 // Middleware returns a Registry Middleware function.
 func (c *CacheMiddleware) Middleware() Middleware {
 	return func(ctx context.Context, toolName string, args string, next func(context.Context, string) (string, error)) (string, error) {
-		// Mutating tools invalidate the entire cache before executing.
+		// Mutating tools invalidate the entire cache before executing
+		// so that subsequent reads never return stale data.
 		if c.invalidators[toolName] {
-			result, err := next(ctx, args)
-			if err == nil {
-				c.Invalidate()
-			}
-			return result, err
+			c.Invalidate()
+			return next(ctx, args)
 		}
 
 		if !c.cacheable[toolName] {
