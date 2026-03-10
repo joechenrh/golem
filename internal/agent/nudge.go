@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/joechenrh/golem/internal/ctxmgr"
 	"github.com/joechenrh/golem/internal/llm"
@@ -20,8 +19,6 @@ const maxTaskSummaryLen = 200
 
 // urlPattern matches http/https URLs for stripping from task summaries.
 var urlPattern = regexp.MustCompile(`https?://\S+`)
-
-const ambiguousMaxLen = 100
 
 const classifierSystemPrompt = `You are a response classifier for an AI agent that has tools available.
 Given the agent's response and the user's last message, classify the situation.
@@ -39,89 +36,6 @@ task_summary is only required when decision is "stuck".`
 type classifierResult struct {
 	Decision    string `json:"decision"`
 	TaskSummary string `json:"task_summary"`
-}
-
-// planCheckPrefixLen is the number of characters at the start of a response
-// to check for intent phrases. Plans open with intent; greetings or
-// answers that happen to contain intent words deeper in the text should
-// not trigger a nudge.
-const planCheckPrefixLen = 400
-
-// shouldNudge returns true if the response looks like a plan description
-// or a short acknowledgment rather than a real action or final answer.
-// It combines two heuristics:
-//   - Plan detection: intent phrases ("I'll", "让我") in the opening text.
-//   - Ack detection: short responses ("好的", "Sure") when tool history exists.
-func shouldNudge(content string, tapeStore tape.Store) bool {
-	return looksLikePlan(content) || looksLikeAck(content, tapeStore)
-}
-
-// looksLikePlan returns true if the opening of the content appears to
-// describe intended actions rather than providing a final answer.
-func looksLikePlan(content string) bool {
-	prefix := content
-	if len(prefix) > planCheckPrefixLen {
-		prefix = prefix[:planCheckPrefixLen]
-	}
-
-	lower := strings.ToLower(prefix)
-	for _, phrase := range []string{
-		"i'll ", "i will ", "let me ", "i'm going to ",
-		"i'll\n", "i will\n", "let me\n",
-		"first, i'll", "first, let me",
-		"i can help", "i can do",
-	} {
-		if strings.Contains(lower, phrase) {
-			return true
-		}
-	}
-	// Chinese intent phrases must appear at a sentence boundary:
-	// start of text, or after a newline / period / comma / exclamation.
-	for _, phrase := range []string{
-		"我来", "让我", "我会", "我将",
-		"首先", "接下来我",
-		"马上", "正在", "稍等",
-		"给我", "我现在就",
-	} {
-		if startsWithPhrase(prefix, phrase) {
-			return true
-		}
-	}
-	return false
-}
-
-// startsWithPhrase checks if phrase appears at the start of text or
-// immediately after a sentence boundary (newline or CJK punctuation).
-func startsWithPhrase(text, phrase string) bool {
-	idx := strings.Index(text, phrase)
-	if idx < 0 {
-		return false
-	}
-	if idx == 0 {
-		return true
-	}
-	// Scan backwards by rune (not byte) to find the preceding character.
-	pos := idx
-	for pos > 0 {
-		r, size := utf8.DecodeLastRuneInString(text[:pos])
-		pos -= size
-		// Skip whitespace.
-		if r == ' ' || r == '\t' {
-			continue
-		}
-		// Sentence boundaries.
-		switch r {
-		case '\n', '.', ',', '!', '?',
-			'\u3002', // fullwidth period
-			'\uff0c', // fullwidth comma
-			'\uff01', // fullwidth exclamation
-			'\uff1f': // fullwidth question mark
-			return true
-		}
-		// Part of a larger word/phrase — not a boundary.
-		return false
-	}
-	return true
 }
 
 // nudgeMessage returns a nudge prompt in the same language as the content.
@@ -205,10 +119,11 @@ func parseClassifierResponse(body string) (decision string, taskSummary string, 
 	}
 }
 
-// isAmbiguousResponse returns true if the response is short enough and the
-// session has tool history, making it worth asking the classifier.
+// isAmbiguousResponse returns true when the classifier should evaluate the
+// response. Any non-empty response is worth classifying when the session
+// has tool history (the classifier understands clarification questions).
 func isAmbiguousResponse(content string, tapeStore tape.Store) bool {
-	if len(content) >= ambiguousMaxLen {
+	if strings.TrimSpace(content) == "" {
 		return false
 	}
 	return hasToolHistory(tapeStore)
@@ -243,40 +158,6 @@ func sanitizeTaskSummary(s string) string {
 		s = s[:maxTaskSummaryLen] + "..."
 	}
 	return s
-}
-
-// ackMaxLen is the maximum response length considered for acknowledgment detection.
-// Responses longer than this are unlikely to be bare acknowledgments.
-const ackMaxLen = 150
-
-// ackPhrases are short acknowledgment phrases that indicate the agent agreed
-// but did not act. Checked case-insensitively against the full response.
-var ackPhrases = []string{
-	// Chinese
-	"好的", "收到", "明白", "了解", "没问题", "可以",
-	"好呀", "好哒", "知道了", "行",
-	// English
-	"ok", "okay", "sure", "got it", "understood",
-	"alright", "no problem", "will do",
-}
-
-// looksLikeAck returns true if the response is a short acknowledgment
-// (e.g. "好的", "Sure") in a session that has tool history. Without
-// tool history, the agent may legitimately give a short conversational reply.
-func looksLikeAck(content string, tapeStore tape.Store) bool {
-	if len(content) > ackMaxLen || len(strings.TrimSpace(content)) == 0 {
-		return false
-	}
-	if !hasToolHistory(tapeStore) {
-		return false
-	}
-	lower := strings.ToLower(strings.TrimSpace(content))
-	for _, phrase := range ackPhrases {
-		if strings.HasPrefix(lower, phrase) {
-			return true
-		}
-	}
-	return false
 }
 
 // taskReminderMessage returns a language-aware stuck-recovery message

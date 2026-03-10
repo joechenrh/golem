@@ -111,6 +111,35 @@ func newTestAgent(t *testing.T, client *mockLLMClient, extraTools ...tools.Tool)
 	return NewSession(client, nil, registry, store, strategy, bus, cfg, logger)
 }
 
+func newTestAgentWithClassifier(t *testing.T, client, classifierClient *mockLLMClient, extraTools ...tools.Tool) *Session {
+	t.Helper()
+
+	dir := t.TempDir()
+	resolved, _ := filepath.EvalSymlinks(dir)
+	tapePath := filepath.Join(resolved, "tape.jsonl")
+	store, err := tape.NewFileStore(tapePath)
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+
+	strategy, _ := ctxmgr.NewContextStrategy("anchor")
+	registry := tools.NewRegistry()
+	for _, tool := range extraTools {
+		registry.Register(tool)
+	}
+
+	logger := zap.NewNop()
+	bus := hooks.NewBus(logger)
+
+	cfg := &config.Config{
+		Model:           "openai:gpt-4o",
+		ClassifierModel: "openai:gpt-4o-mini",
+		MaxToolIter:     15,
+	}
+
+	return NewSession(client, classifierClient, registry, store, strategy, bus, cfg, logger)
+}
+
 func cliMsg(text string) channel.IncomingMessage {
 	return channel.IncomingMessage{
 		ChannelID:   "cli",
@@ -506,8 +535,7 @@ func TestHandleInput_ShellCommand(t *testing.T) {
 	}
 }
 
-func TestShouldNudge(t *testing.T) {
-	// Build a tape with tool history for ack detection.
+func TestIsAmbiguousResponse(t *testing.T) {
 	dir := t.TempDir()
 	resolved, _ := filepath.EvalSymlinks(dir)
 	storeWithTools, err := tape.NewFileStore(filepath.Join(resolved, "tape-tools.jsonl"))
@@ -518,7 +546,6 @@ func TestShouldNudge(t *testing.T) {
 		Kind:    tape.KindMessage,
 		Payload: json.RawMessage(`{"role":"tool","content":"ok","tool_call_id":"tc1","name":"test"}`),
 	})
-	// Empty tape (no tool history).
 	storeEmpty, err := tape.NewFileStore(filepath.Join(resolved, "tape-empty.jsonl"))
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
@@ -530,39 +557,16 @@ func TestShouldNudge(t *testing.T) {
 		store   tape.Store
 		want    bool
 	}{
-		// Plan detection (works regardless of tool history).
-		{"english plan", "I'll read the file and check for errors.", storeEmpty, true},
-		{"english let me", "Let me look into this.", storeEmpty, true},
-		{"english answer", "The answer is 42.", storeEmpty, false},
-		{"chinese plan", "我来看一下这个文件。", storeEmpty, true},
-		{"chinese plan rang", "让我检查一下。", storeEmpty, true},
-		{"chinese greeting", "你好！我是 Golem，你的助手。你现在想让我帮你做什么？", storeEmpty, false},
-		{"chinese answer", "这个问题的答案是42。", storeEmpty, false},
-		{"intent at char 300", strings.Repeat("x", 300) + "I'll do it now", storeEmpty, true},
-		{"intent at char 450", strings.Repeat("x", 450) + "I'll do it now", storeEmpty, false},
-		{"intent buried deep", strings.Repeat("正常内容。", 50) + "让我看看", storeEmpty, false},
-		{"empty", "", storeEmpty, false},
-
-		// Ack detection (requires tool history).
-		{"chinese ok", "好的", storeWithTools, true},
-		{"chinese received", "收到", storeWithTools, true},
-		{"chinese understood", "明白", storeWithTools, true},
-		{"chinese no problem", "没问题", storeWithTools, true},
-		{"chinese ok with filler", "好的，我知道了", storeWithTools, true},
-		{"english got it", "Got it", storeWithTools, true},
-		{"english sure", "Sure", storeWithTools, true},
-		{"english okay", "Okay, understood", storeWithTools, true},
-		{"long response not ack", strings.Repeat("This is a detailed answer. ", 10), storeWithTools, false},
-		{"real answer with tools", "The answer is 42.", storeWithTools, false},
-
-		// Ack without tool history — should NOT nudge.
-		{"ack no tool history", "好的", storeEmpty, false},
-		{"收到 no tool history", "收到，我明白了。", storeEmpty, false},
+		{"non-empty with tool history", "可以。你想查哪方面的新闻？", storeWithTools, true},
+		{"long response with tool history", "I'll read the file and check for errors.", storeWithTools, true},
+		{"empty content", "", storeEmpty, false},
+		{"whitespace only", "   ", storeWithTools, false},
+		{"no tool history", "好的", storeEmpty, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldNudge(tt.content, tt.store); got != tt.want {
-				t.Errorf("shouldNudge(%q) = %v, want %v", tt.content, got, tt.want)
+			if got := isAmbiguousResponse(tt.content, tt.store); got != tt.want {
+				t.Errorf("isAmbiguousResponse(%q) = %v, want %v", tt.content, got, tt.want)
 			}
 		})
 	}
@@ -751,7 +755,7 @@ func TestBuildSystemPromptPersona(t *testing.T) {
 	if !strings.Contains(prompt, "Always cite sources.") {
 		t.Errorf("prompt missing AGENTS.md content")
 	}
-	if !strings.Contains(prompt, "use the available tools immediately") {
+	if !strings.Contains(prompt, "call tools directly") {
 		t.Errorf("prompt missing built-in tool-use instructions")
 	}
 
@@ -959,11 +963,10 @@ func TestSessionManager_GetOrCreate_ConcurrentStress(t *testing.T) {
 	}
 }
 
-func TestHandleInput_AckNudge(t *testing.T) {
-	// First response is "好的" (ack) → should be nudged.
-	// Second response uses a tool → tool result.
-	// Third response triggers stuck escalation (nudges >= 1).
-	// Fourth response is the final answer.
+func TestHandleInput_ClassifierNudge(t *testing.T) {
+	// First response is "好的" → classifier says "nudge" → nudge injected.
+	// Second response calls a tool.
+	// Third response is the final answer.
 	client := &mockLLMClient{
 		responses: []*llm.ChatResponse{
 			{Content: "好的", FinishReason: "stop"},
@@ -971,13 +974,18 @@ func TestHandleInput_AckNudge(t *testing.T) {
 				FinishReason: "tool_calls",
 				ToolCalls:    []llm.ToolCall{{ID: "tc1", Name: "test_tool", Arguments: `{}`}},
 			},
-			{Content: "Here is a summary.", FinishReason: "stop"},
 			{Content: "Done! Here is the result.", FinishReason: "stop"},
 		},
 	}
-	agent := newTestAgent(t, client, &mockTool{name: "test_tool", result: "ok"})
+	classifierClient := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			{Content: `{"decision":"nudge"}`, FinishReason: "stop"},
+			{Content: `{"decision":"accept"}`, FinishReason: "stop"},
+		},
+	}
+	agent := newTestAgentWithClassifier(t, client, classifierClient, &mockTool{name: "test_tool", result: "ok"})
 
-	// Seed tool history so shouldNudge detects the ack.
+	// Seed tool history so isAmbiguousResponse returns true.
 	agent.tape.Append(tape.TapeEntry{
 		Kind:    tape.KindMessage,
 		Payload: json.RawMessage(`{"role":"tool","content":"prev","tool_call_id":"old","name":"test_tool"}`),
@@ -987,30 +995,93 @@ func TestHandleInput_AckNudge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleInput: %v", err)
 	}
-	// The "好的" response should have been nudged away.
 	if strings.Contains(result, "好的") {
-		t.Errorf("result should not contain ack response, got %q", result)
+		t.Errorf("result should not contain nudged response, got %q", result)
 	}
 	if !strings.Contains(result, "Done!") {
 		t.Errorf("result = %q, want final answer", result)
 	}
-	// LLM called 4 times: ack → nudge → tool call → stuck escalation → final.
-	if client.callCount != 4 {
-		t.Errorf("callCount = %d, want 4", client.callCount)
+	// LLM called 3 times: ack → (classifier nudge) → tool call → final.
+	if client.callCount != 3 {
+		t.Errorf("callCount = %d, want 3", client.callCount)
+	}
+}
+
+func TestHandleInput_NoClassifier_AcceptsDirectly(t *testing.T) {
+	// Without classifier, plan-like responses are accepted as-is.
+	client := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			{Content: "I'll read the file now.", FinishReason: "stop"},
+		},
+	}
+	agent := newTestAgent(t, client) // no classifier
+
+	result, err := agent.HandleInput(context.Background(), cliMsg("Read the file"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if result != "I'll read the file now." {
+		t.Errorf("result = %q, want plan-like response accepted as-is", result)
+	}
+	if client.callCount != 1 {
+		t.Errorf("callCount = %d, want 1 (no nudging without classifier)", client.callCount)
+	}
+}
+
+func TestHandleInput_ClassifierAcceptsClarification(t *testing.T) {
+	// Classifier correctly accepts a clarifying question as a final answer.
+	client := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			{Content: "可以。你想查哪方面的新闻？", FinishReason: "stop"},
+		},
+	}
+	classifierClient := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			{Content: `{"decision":"accept"}`, FinishReason: "stop"},
+		},
+	}
+	agent := newTestAgentWithClassifier(t, client, classifierClient)
+
+	// Seed tool history so classifier is invoked.
+	agent.tape.Append(tape.TapeEntry{
+		Kind:    tape.KindMessage,
+		Payload: json.RawMessage(`{"role":"tool","content":"prev","tool_call_id":"old","name":"test_tool"}`),
+	})
+
+	result, err := agent.HandleInput(context.Background(), cliMsg("你能查新闻吗"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+	if result != "可以。你想查哪方面的新闻？" {
+		t.Errorf("result = %q, want clarifying question accepted", result)
+	}
+	if client.callCount != 1 {
+		t.Errorf("callCount = %d, want 1", client.callCount)
 	}
 }
 
 func TestHandleInputStream_NudgeDoesNotLeak(t *testing.T) {
-	// LLM returns a plan-like response first, then the real answer.
-	// Three responses: nudged plan, stuck-escalated reply, final answer.
+	// LLM returns a plan-like response first, classifier says "nudge",
+	// then the real answer.
 	client := &mockLLMClient{
 		responses: []*llm.ChatResponse{
 			{Content: "I'll read the file now.", FinishReason: "stop"},
 			{Content: "The file contains hello world.", FinishReason: "stop"},
-			{Content: "The file contains hello world.", FinishReason: "stop"},
 		},
 	}
-	agent := newTestAgent(t, client)
+	classifierClient := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			{Content: `{"decision":"nudge"}`, FinishReason: "stop"},
+			{Content: `{"decision":"accept"}`, FinishReason: "stop"},
+		},
+	}
+	agent := newTestAgentWithClassifier(t, client, classifierClient)
+
+	// Seed tool history so classifier is invoked.
+	agent.tape.Append(tape.TapeEntry{
+		Kind:    tape.KindMessage,
+		Payload: json.RawMessage(`{"role":"tool","content":"prev","tool_call_id":"old","name":"test_tool"}`),
+	})
 
 	tokenCh := make(chan string, 100)
 	var tokens []string
@@ -1030,7 +1101,6 @@ func TestHandleInputStream_NudgeDoesNotLeak(t *testing.T) {
 		t.Fatalf("HandleInputStream: %v", err)
 	}
 	joined := strings.Join(tokens, "")
-	// The nudged "I'll read the file now." should NOT appear in the output.
 	if strings.Contains(joined, "I'll read the file") {
 		t.Errorf("nudged response leaked to stream: %q", joined)
 	}

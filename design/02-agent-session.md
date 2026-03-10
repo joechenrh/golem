@@ -30,48 +30,37 @@ The assistant message (with tool calls) is first recorded to tape. Progressive d
 
 `router.RouteAssistant()` scans the final answer for embedded colon commands at line starts, skipping lines inside code fences. Detected commands are executed and their output appended; command lines are stripped from the clean text.
 
-## 3. Auto-Nudge (Hybrid Three-Tier System)
+## 3. Auto-Nudge (Classifier-Based)
 
-When the LLM returns text but no tool calls, a three-tier decision flow determines whether to nudge, escalate, or accept the response.
+When the LLM returns text but no tool calls, a two-phase decision flow determines whether to nudge, escalate, or accept the response. The system relies on an LLM classifier rather than heuristic phrase matching, avoiding false positives on legitimate clarifying questions (e.g. "可以。你想查哪方面的新闻？" was previously caught by ack detection matching "可以").
 
-### Phase 1: Heuristic Detection
+### Phase 1: Classifier (primary)
 
-`looksLikePlan()` scans the first 400 characters for intent phrases:
+When configured via `GOLEM_CLASSIFIER_MODEL`, a lightweight LLM classifies all non-empty text-only responses in sessions that have used tools before. The classifier returns one of:
 
-| Language | Phrases checked |
-|---|---|
-| English | `"i'll "`, `"i will "`, `"let me "`, `"i'm going to "`, `"i can help"`, `"i can do"`, `"first, i'll"`, `"first, let me"` |
-| Chinese | `"我来"`, `"让我"`, `"我会"`, `"我将"`, `"首先"`, `"接下来我"`, `"马上"`, `"正在"`, `"稍等"`, `"给我"`, `"我现在就"` (must appear at sentence boundary via `startsWithPhrase`) |
+- **"nudge"**: The agent is describing a plan instead of acting. Inject a generic nudge.
+- **"accept"**: The response is a valid final answer (including clarification questions). Accept it.
+- **"stuck"**: The agent is lost. Inject a task-specific reminder with the classifier's summary.
 
-When a plan phrase is detected (or the previous tool call failed), a generic nudge prompt is injected, up to `maxNudges` (2) per turn.
+Up to `maxNudges` (2) classifier nudges are allowed per turn. When no classifier is configured, all text-only responses are accepted as-is.
 
 ### Phase 2: Stuck Escalation
 
-If a nudge already fired and the LLM still responds with text-only (no tool calls), the system assumes the LLM is stuck rather than lazy. Instead of another generic nudge, it injects a **task-specific reminder** using either the classifier's task summary (if available) or the last user message as context. This gets one additional attempt beyond `maxNudges`.
-
-### Phase 3: Classifier (optional)
-
-When configured via `GOLEM_CLASSIFIER_MODEL`, a lightweight LLM classifies ambiguous responses -- short (<100 chars) text-only responses in sessions that have used tools before, where no heuristic phrase was matched. The classifier returns one of:
-
-- **"nudge"**: The agent is planning instead of acting. Inject a generic nudge.
-- **"accept"**: The response is a valid final answer. Accept it.
-- **"stuck"**: The agent is lost. Inject a task-specific reminder with the classifier's summary.
-
-The classifier fires at most once per turn, only on the first nudge opportunity (`nudges == 0`), and only when `classifierLLM` is configured.
+If the classifier nudged at least once and the LLM still responds with text-only (no tool calls), the system injects a **task-specific reminder** using either the classifier's task summary or the last user message as context. This gets one additional attempt. Stuck escalation is skipped when the classifier explicitly accepted the current response.
 
 ### Escalation Flow
 
 ```
 Iteration N: LLM responds with text (no tool calls)
-  → Phase 1: plan phrase detected? → generic nudge (nudges=1)
-  → Phase 3: ambiguous & classifier configured? → classifier decides
-Iteration N+1: still text-only
-  → Phase 2: assume stuck → task reminder (nudges=2 or 3)
+  → Classifier configured? → classifier decides (nudge/accept/stuck)
+  → No classifier? → accept as final answer
+Iteration N+1: still text-only (after classifier nudge)
+  → Stuck escalation → task reminder
 Iteration N+2: still text-only
   → Accept as final answer
 ```
 
-Source: `internal/agent/nudge.go`, `internal/agent/session.go` (lines 286-358)
+Source: `internal/agent/nudge.go`, `internal/agent/session.go`
 
 ## 4. Self-Correction
 

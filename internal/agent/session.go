@@ -101,10 +101,10 @@ const (
 )
 
 // toolUseInstruction is the shared tool-use guidance included in all system prompts.
-const toolUseInstruction = "When you need to perform actions, use the available tools immediately. " +
-	"You may briefly explain your reasoning alongside tool calls, but always " +
-	"include the tool calls in the same response — never respond with only a " +
-	"plan or description of what you intend to do.\n"
+const toolUseInstruction = "When you have enough information to act, call tools directly — " +
+	"don't describe what you plan to do. If the user's request is ambiguous or " +
+	"missing key details, ask a brief clarifying question first. " +
+	"Keep narration brief; default to action over explanation.\n"
 
 // ExtHookRunner is satisfied by exthook.Runner.
 // Defined here as an interface to avoid a circular import.
@@ -280,7 +280,6 @@ func (s *Session) runReActLoop(
 	stuckEscalated := false
 	s.lastTaskSummary = ""
 	emptyRetries := 0
-	lastToolFailed := false // previous iteration had a tool failure
 
 	for iter := range s.config.MaxToolIter {
 		// Shrink tool schemas not used in the last few iterations to
@@ -318,7 +317,7 @@ func (s *Session) runReActLoop(
 
 		// Tool calls present — execute them and continue the loop.
 		if len(resp.ToolCalls) > 0 {
-			lastToolFailed = s.processToolCalls(ctx, resp, iter)
+			s.processToolCalls(ctx, resp, iter)
 			continue
 		}
 
@@ -331,7 +330,7 @@ func (s *Session) runReActLoop(
 			if emptyRetries >= maxEmptyRetries {
 				s.ephemeralMessages = append(s.ephemeralMessages,
 					llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-					llm.Message{Role: llm.RoleUser, Content: emptyResponseHint(lastToolFailed)},
+					llm.Message{Role: llm.RoleUser, Content: emptyResponseHint(false)},
 				)
 				emptyRetries = 0
 			}
@@ -339,33 +338,72 @@ func (s *Session) runReActLoop(
 		}
 		emptyRetries = 0
 
-		// Phase 1: heuristic — obvious plan phrases, acknowledgments, or tool failure.
-		if lastToolFailed || shouldNudge(resp.Content, s.tape) {
-			lastToolFailed = false
+		// Classifier-only nudge: when a classifier LLM is configured, ask it
+		// to decide whether this response is a valid final answer, a plan that
+		// should be nudged, or a stuck state. Without a classifier, responses
+		// are accepted as-is.
+		classifierAccepted := false
+		if s.classifierLLM != nil && isAmbiguousResponse(resp.Content, s.tape) {
 			if nudges < maxNudges {
-				s.ephemeralMessages = append(s.ephemeralMessages,
-					llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-					llm.Message{Role: llm.RoleUser, Content: nudgeMessage(resp.Content)},
+				lastUserMsg := s.lastUserMessage()
+				toolNames := s.tools.Names()
+				s.logger.Debug("invoking classifier",
+					zap.Int("resp_len", len(resp.Content)),
+					zap.Int("iter", iter))
+				decision, taskSummary, rawBody, ok := classifyResponse(
+					ctx, s.classifierLLM, s.config.ClassifierModel,
+					lastUserMsg, resp.Content, toolNames,
 				)
-				nudges++
-				s.logger.Debug("nudging LLM to use tools (heuristic)",
-					zap.Int("nudge", nudges), zap.Int("iter", iter),
-					zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
-				continue
+				if ok {
+					s.logger.Debug("classifier decision",
+						zap.String("decision", decision),
+						zap.String("task_summary", taskSummary),
+						zap.Int("iter", iter))
+					switch decision {
+					case "nudge":
+						s.ephemeralMessages = append(s.ephemeralMessages,
+							llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
+							llm.Message{Role: llm.RoleUser, Content: nudgeMessage(resp.Content)},
+						)
+						nudges++
+						s.logger.Debug("classifier nudge",
+							zap.Int("iter", iter),
+							zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
+						continue
+					case "stuck":
+						s.lastTaskSummary = taskSummary
+						s.ephemeralMessages = append(s.ephemeralMessages,
+							llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
+							llm.Message{Role: llm.RoleUser, Content: taskReminderMessage(taskSummary, resp.Content)},
+						)
+						nudges++
+						s.logger.Debug("classifier stuck",
+							zap.Int("iter", iter),
+							zap.String("task_summary", taskSummary),
+							zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
+						continue
+					case "accept":
+						classifierAccepted = true
+						s.logger.Debug("classifier accepted response",
+							zap.Int("iter", iter))
+						// Fall through to accept.
+					}
+				} else {
+					s.logger.Warn("classifier returned unparseable response, accepting",
+						zap.Int("iter", iter),
+						zap.String("raw_body", stringutil.Truncate(rawBody, 200)))
+				}
 			}
 			// Nudge budget exhausted — fall through to accept.
 		}
-		lastToolFailed = false
 
-		// Phase 2: stuck escalation — if we already nudged and still no tool call,
-		// inject a task-specific reminder instead of another generic nudge.
-		// Gets exactly one attempt beyond the heuristic nudges.
-		if nudges >= 1 && !stuckEscalated {
+		// Stuck escalation: if classifier nudged at least once and the
+		// LLM still returned text-only, inject a task-specific reminder.
+		// Skip if the classifier already accepted this response.
+		if !classifierAccepted && nudges >= 1 && !stuckEscalated {
 			stuckEscalated = true
 			summary := s.lastTaskSummary
 			if summary == "" {
-				// No classifier summary available (e.g., Phase 1 heuristic fired
-				// first). Fall back to a sanitized version of the last user message.
 				summary = sanitizeTaskSummary(s.lastUserMessage())
 			}
 			if summary != "" {
@@ -379,57 +417,6 @@ func (s *Session) runReActLoop(
 					zap.String("task_summary", summary),
 					zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
 				continue
-			}
-		}
-
-		// Phase 3: classifier for ambiguous short responses.
-		if nudges == 0 && s.classifierLLM != nil && isAmbiguousResponse(resp.Content, s.tape) {
-			lastUserMsg := s.lastUserMessage()
-			toolNames := s.tools.Names()
-			s.logger.Debug("invoking classifier for ambiguous response",
-				zap.Int("resp_len", len(resp.Content)),
-				zap.Int("iter", iter))
-			decision, taskSummary, rawBody, ok := classifyResponse(
-				ctx, s.classifierLLM, s.config.ClassifierModel,
-				lastUserMsg, resp.Content, toolNames,
-			)
-			if ok {
-				s.logger.Debug("classifier decision",
-					zap.String("decision", decision),
-					zap.String("task_summary", taskSummary),
-					zap.Int("iter", iter))
-				switch decision {
-				case "nudge":
-					s.ephemeralMessages = append(s.ephemeralMessages,
-						llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-						llm.Message{Role: llm.RoleUser, Content: nudgeMessage(resp.Content)},
-					)
-					nudges++
-					s.logger.Debug("classifier nudge",
-						zap.Int("iter", iter),
-						zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
-					continue
-				case "stuck":
-					s.lastTaskSummary = taskSummary
-					s.ephemeralMessages = append(s.ephemeralMessages,
-						llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-						llm.Message{Role: llm.RoleUser, Content: taskReminderMessage(taskSummary, resp.Content)},
-					)
-					nudges++
-					s.logger.Debug("classifier stuck",
-						zap.Int("iter", iter),
-						zap.String("task_summary", taskSummary),
-						zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
-					continue
-				case "accept":
-					s.logger.Debug("classifier accepted response as final answer",
-						zap.Int("iter", iter))
-					// Fall through to accept.
-				}
-			} else {
-				s.logger.Warn("classifier returned unparseable response, falling back to accept",
-					zap.Int("iter", iter),
-					zap.String("raw_body", stringutil.Truncate(rawBody, 200)))
 			}
 		}
 
@@ -695,10 +682,9 @@ func (s *Session) processLLMResponse(ctx context.Context, resp *llm.ChatResponse
 
 // processToolCalls records the assistant message, expands tool schemas, and
 // executes each tool call in parallel, recording results to the tape in order.
-// Returns true if any tool call failed.
 func (s *Session) processToolCalls(
 	ctx context.Context, resp *llm.ChatResponse, iter int,
-) bool {
+) {
 	s.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "", nil)
 
 	// Auto-expand any tool the model calls, so the next iteration
@@ -730,14 +716,12 @@ func (s *Session) processToolCalls(
 	// Append results in original tool call order and track failures.
 	// For skill results, expand any tools mentioned in the skill body so
 	// the LLM has full parameter schemas when acting on the instructions.
-	hadFailure := false
 	for i := range resp.ToolCalls {
 		v, _ := results.Load(i)
 		r := v.(toolResultEntry)
 		s.appendToolResult(r.id, r.name, r.result)
 
 		if strings.HasPrefix(r.result, "Error:") {
-			hadFailure = true
 			s.toolFailures[r.name]++
 			if s.toolFailures[r.name] >= maxToolFailures {
 				s.appendMessage(llm.RoleUser,
@@ -746,7 +730,6 @@ func (s *Session) processToolCalls(
 			}
 		}
 	}
-	return hadFailure
 }
 
 // processAssistantResponse handles the final answer: runs any embedded colon-

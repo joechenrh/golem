@@ -480,14 +480,32 @@ func TestIntegration_EmptyResponseRetry(t *testing.T) {
 
 func TestIntegration_NudgeBehavior(t *testing.T) {
 	h := newTestHarness(t, []mockResponse{
-		// First response: plan-like text that should trigger a nudge.
+		// First response: plan-like text.
 		{content: "I'll read the directory and then check the files."},
-		// After nudge, LLM uses a tool.
+		// After classifier nudge, LLM uses a tool.
 		{toolCalls: []mockToolCall{
 			{id: "tc1", name: "list_directory", args: `{"path":"."}`},
 		}},
 		// Final answer after tool result.
 		{content: "The workspace is empty."},
+	})
+
+	// Set up a separate classifier mock that returns "nudge" then "accept".
+	classifierSrv, _ := newMockOpenAIServer(t, []mockResponse{
+		{content: `{"decision":"nudge"}`},
+		{content: `{"decision":"accept"}`},
+	})
+	classifierClient, err := llm.NewClient(llm.ProviderOpenAI, "test-key", llm.WithBaseURL(classifierSrv.URL))
+	if err != nil {
+		t.Fatalf("NewClient (classifier): %v", err)
+	}
+	h.agent.classifierLLM = classifierClient
+	h.agent.config.ClassifierModel = "openai:gpt-4o-mini"
+
+	// Seed tool history so classifier fires.
+	h.tape.Append(tape.TapeEntry{
+		Kind:    tape.KindMessage,
+		Payload: json.RawMessage(`{"role":"tool","content":"prev","tool_call_id":"old","name":"test_tool"}`),
 	})
 
 	result, err := h.agent.HandleInput(context.Background(), msg("Check the workspace"))
@@ -497,7 +515,7 @@ func TestIntegration_NudgeBehavior(t *testing.T) {
 	if result != "The workspace is empty." {
 		t.Errorf("result = %q", result)
 	}
-	// 3 LLM calls: plan → (nudge) → tool call → final answer.
+	// 3 LLM calls: plan → (classifier nudge) → tool call → final answer.
 	if h.mock.callCount() != 3 {
 		t.Errorf("LLM called %d times, want 3", h.mock.callCount())
 	}
@@ -507,7 +525,7 @@ func TestIntegration_NudgeBehavior(t *testing.T) {
 	for _, e := range entries {
 		pm := e.PayloadMap()
 		content, _ := pm["content"].(string)
-		if strings.Contains(content, "Call the appropriate tool") {
+		if strings.Contains(content, "Call the appropriate tool") || strings.Contains(content, "调用工具") {
 			t.Error("nudge message should not be persisted to tape")
 			break
 		}
