@@ -11,7 +11,8 @@ Key source files:
 | `internal/tools/tool.go` | `Tool` interface |
 | `internal/tools/registry.go` | `Registry` — registration, lookup, execution, progressive disclosure |
 | `internal/tools/progressive.go` | `ExpandHints` convenience wrapper |
-| `internal/tools/skill.go` | `skillTool` + `SKILL.md` parser and discovery |
+| `internal/tools/skill.go` | `SkillStore` + `SkillMetadata` + `SKILL.md` parser and discovery |
+| `internal/tools/builtin/skill_tool.go` | `SkillTool` — single tool for on-demand skill loading |
 | `internal/tools/external.go` | `ExternalTool` — JSON-RPC 2.0 plugin host |
 | `internal/middleware/middleware.go` | `Middleware` type |
 | `internal/tools/builtin/` | All built-in tool implementations |
@@ -27,7 +28,7 @@ Source: `internal/tools/tool.go`
 
 ## 3. Registry
 
-`Registry` is the central catalog. It provides methods to register tools (individually or in batch, preserving insertion order), look up a tool by name, and execute a tool through the middleware chain. It builds the `ToolDefinitions` slice sent to the LLM on each turn. For progressive disclosure it can expand a tool by name, detect tool-name references in arbitrary text via word-boundary matching, and combine both steps in a single `ExpandHints` call. It discovers skills from the filesystem, lists all registered tools in a human-readable format (split into "Built-in" and "Skills"), and accepts middleware via `Use`.
+`Registry` is the central catalog. It provides methods to register tools (individually or in batch, preserving insertion order), look up a tool by name, and execute a tool through the middleware chain. It builds the `ToolDefinitions` slice sent to the LLM on each turn. For progressive disclosure it can expand a tool by name, detect tool-name references in arbitrary text via word-boundary matching, and combine both steps in a single `ExpandHints` call. It lists all registered tools in a human-readable format (split into "Built-in" and "Skills") and accepts middleware via `Use`. Skills are held in a separate `SkillStore` associated via `SetSkillStore`/`GetSkillStore`.
 
 Source: `internal/tools/registry.go`
 
@@ -51,7 +52,7 @@ Middlewares wrap `Execute` in registration order (outermost first). The app curr
 4. Persona memory tool (if persona is configured)
 5. Schedule tools (added later, on the default registry)
 6. Spawn agent tool
-7. Skills (global from `~/.golem/skills/`, then per-agent from `~/.golem/agents/<name>/skills/`)
+7. Skill tool (single `skill` tool, always expanded; `SkillStore` discovers from `~/.golem/skills/` then `~/.golem/agents/<name>/skills/`)
 8. External plugins (from `~/.golem/plugins/*.tool.json`, e.g. mem9 memory tools)
 
 ## 4. Progressive Disclosure
@@ -62,7 +63,7 @@ Detection uses word-boundary matching so that e.g. "file" does not false-match "
 
 ## 5. Skills
 
-Skills are markdown-based prompt injections discovered from the filesystem. They are loaded from two scopes:
+Skills are markdown-based prompt injections discovered from the filesystem and held in a **`SkillStore`** (separate from the tool `Registry`). They are loaded from two scopes:
 
 1. **Global**: `~/.golem/skills/<skill-name>/SKILL.md` — shared by all agents
 2. **Per-agent**: `~/.golem/agents/<name>/skills/<skill-name>/SKILL.md` — agent-specific, overrides global on name collision
@@ -75,14 +76,23 @@ name: summarize-session
 description: Summarize the current session
 ---
 
-(markdown body — full instructions injected as the tool result)
+(markdown body — full instructions returned by the skill tool)
 ```
 
-Frontmatter is delimited by `---` lines and must contain `name` and `description` fields. The tool is registered as `skill_<name>`. Skills accept a single `input` string parameter but their `Execute` simply returns the markdown body — they are context injections, not executable code.
+Frontmatter is delimited by `---` lines and must contain `name` and `description` fields.
 
-`Registry.DiscoverSkills(dir)` walks immediate subdirectories of `dir`, looking for `SKILL.md` in each. Invalid files are silently skipped. `BuildToolRegistry` calls it twice — first for the global scope, then for the agent scope — so agent skills override global ones on name collision.
+### Architecture
 
-Source: `internal/tools/skill.go`
+Skills are **not** registered as individual tools in the `Registry`. Instead:
+
+1. A `SkillStore` discovers and holds `SkillMetadata` (Name, Description, Body) from the filesystem.
+2. A single **`skill`** builtin tool (always expanded) accepts a `name` parameter and returns the skill's markdown body. Its `FullDescription` dynamically includes the list of available skills.
+3. A compact **skill summary** is injected into the system prompt (both persona and flat modes) so the LLM knows which skills exist without consuming tool-definition tokens.
+4. When the `skill` tool loads a skill, it calls `Registry.ExpandHints(body)` to auto-expand any tools mentioned in the skill's markdown, ensuring the LLM has full parameter schemas for referenced tools.
+
+`SkillStore.Discover(dir)` walks immediate subdirectories of `dir`, looking for `SKILL.md` in each. Invalid files are silently skipped. `BuildToolRegistry` calls it twice — first for the global scope, then for the agent scope — so agent skills override global ones on name collision. `SkillStore.Reload(dirs)` re-discovers skills periodically without removing deleted ones.
+
+Source: `internal/tools/skill.go`, `internal/tools/builtin/skill_tool.go`
 
 ## 6. External Plugins
 
@@ -192,7 +202,7 @@ MCP servers are started during registry setup in `app.go`, after external plugin
 
 4. **External plugin protocol is synchronous and single-threaded.** The `ExternalTool.Execute` method holds a mutex for the entire request-response cycle, serializing all calls to a given plugin. There is no support for concurrent requests or async notifications.
 
-5. **Skill tools are read-only prompt injections.** The `input` parameter is accepted but ignored — `Execute` always returns the static markdown body regardless of what the LLM passes. Skills cannot perform dynamic computation.
+5. **Skills are static prompt injections.** The `skill` tool returns the markdown body as-is. Skills cannot perform dynamic computation — they guide the LLM on which tools to use, but do not execute code themselves.
 
 6. **No tool-result size limits at the middleware layer.** Individual tools enforce their own truncation (e.g. `read_file` at 50K chars, `web_fetch` at 5K), but there is no unified guard against a tool returning an unexpectedly large result that blows up the context window.
 
