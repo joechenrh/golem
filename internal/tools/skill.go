@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -123,6 +124,33 @@ func (s *SkillStore) Summary() string {
 		fmt.Fprintf(&b, "- %s: %s\n", meta.Name, meta.Description)
 	}
 	return b.String()
+}
+
+// skillHintRe matches $skill-name references in user text.
+var skillHintRe = regexp.MustCompile(`\$([A-Za-z0-9_.-]+)`)
+
+// ExpandSkillHints scans text for $skillname patterns and returns
+// the matching SkillMetadata objects. Does not modify the text.
+func (s *SkillStore) ExpandSkillHints(text string) []*SkillMetadata {
+	matches := skillHintRe.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	// Deduplicate matches while preserving order.
+	seen := make(map[string]bool)
+	var result []*SkillMetadata
+	for _, m := range matches {
+		name := m[1]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if skill := s.skills[name]; skill != nil {
+			result = append(result, skill)
+		}
+	}
+	return result
 }
 
 // parseSkillFile reads a SKILL.md file and returns SkillMetadata.

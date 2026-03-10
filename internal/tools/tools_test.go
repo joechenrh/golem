@@ -456,6 +456,51 @@ func TestRegistry_List_WithSkillStore(t *testing.T) {
 	}
 }
 
+// ─── ExpandSkillHints Tests ───────────────────────────────────────
+
+func TestSkillStore_ExpandSkillHints(t *testing.T) {
+	store := NewSkillStore()
+	store.Discover(filepath.Join("testdata", "skills"))
+
+	hints := store.ExpandSkillHints("Please use $my-skill to help")
+	if len(hints) != 1 {
+		t.Fatalf("got %d hints, want 1", len(hints))
+	}
+	if hints[0].Name != "my-skill" {
+		t.Errorf("Name = %q, want %q", hints[0].Name, "my-skill")
+	}
+}
+
+func TestSkillStore_ExpandSkillHints_NoMatch(t *testing.T) {
+	store := NewSkillStore()
+	store.Discover(filepath.Join("testdata", "skills"))
+
+	hints := store.ExpandSkillHints("no skill references here")
+	if len(hints) != 0 {
+		t.Errorf("got %d hints, want 0", len(hints))
+	}
+}
+
+func TestSkillStore_ExpandSkillHints_UnknownSkill(t *testing.T) {
+	store := NewSkillStore()
+	store.Discover(filepath.Join("testdata", "skills"))
+
+	hints := store.ExpandSkillHints("try $nonexistent-skill please")
+	if len(hints) != 0 {
+		t.Errorf("got %d hints, want 0 for unknown skill", len(hints))
+	}
+}
+
+func TestSkillStore_ExpandSkillHints_Deduplicates(t *testing.T) {
+	store := NewSkillStore()
+	store.Discover(filepath.Join("testdata", "skills"))
+
+	hints := store.ExpandSkillHints("use $my-skill then $my-skill again")
+	if len(hints) != 1 {
+		t.Fatalf("got %d hints, want 1 (deduplicated)", len(hints))
+	}
+}
+
 func TestRegistry_List_Empty(t *testing.T) {
 	r := NewRegistry()
 	list := r.List()

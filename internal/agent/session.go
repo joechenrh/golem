@@ -139,6 +139,35 @@ func (s *Session) maybeReloadSkills() {
 	}
 }
 
+// expandSkillHints scans text for $skill-name references, appends matched
+// skill bodies to the cached system prompt, and auto-expands any tools
+// mentioned in the skill body via ExpandHints.
+func (s *Session) expandSkillHints(text string) {
+	store := s.tools.GetSkillStore()
+	if store == nil {
+		return
+	}
+	skills := store.ExpandSkillHints(text)
+	if len(skills) == 0 {
+		return
+	}
+	var b strings.Builder
+	b.WriteString(s.cachedSystemPrompt)
+	for _, skill := range skills {
+		b.WriteString("\n## Skill: ")
+		b.WriteString(skill.Name)
+		b.WriteString("\n\n")
+		b.WriteString(skill.Body)
+		b.WriteByte('\n')
+
+		// Auto-expand any tools referenced in the skill body.
+		s.tools.ExpandHints(skill.Body)
+	}
+	s.cachedSystemPrompt = b.String()
+	s.logger.Debug("expanded skill hints into system prompt",
+		zap.Int("skill_count", len(skills)))
+}
+
 // NewSession creates a Session with all dependencies wired in.
 func NewSession(
 	llmClient llm.Client,
@@ -224,6 +253,12 @@ func (s *Session) runReActLoop(
 	// Cache system prompt once per turn to avoid rebuilding (and re-reading
 	// persona files) on every LLM iteration within the same turn.
 	s.cachedSystemPrompt = s.buildSystemPrompt()
+
+	// Expand $skill hints from the user message: inject matched skill
+	// bodies into the system prompt and auto-expand referenced tools.
+	if pendingMsg != nil {
+		s.expandSkillHints(pendingMsg.Text)
+	}
 
 	nudges := 0
 	stuckEscalated := false
