@@ -10,6 +10,7 @@ type CommandKind int
 const (
 	CommandInternal CommandKind = iota // :help, :tape.info, :tools, :quit, :model
 	CommandShell                       // :git status, :ls -la
+	CommandToolExec                    // ,read_file path=test.txt
 )
 
 // internalCommands is the set of recognized internal command names.
@@ -35,9 +36,26 @@ type RouteResult struct {
 }
 
 // RouteUser classifies user input.
-// Lines starting with ":" are commands; everything else goes to the LLM.
+// Lines starting with ":" are colon-commands; lines starting with ","
+// are comma-commands (direct tool execution); everything else goes to the LLM.
 func RouteUser(input string) RouteResult {
 	input = strings.TrimSpace(input)
+
+	// Comma-command: direct tool execution bypassing the LLM.
+	if strings.HasPrefix(input, ",") {
+		rest := input[1:]
+		if rest == "" {
+			return RouteResult{}
+		}
+		toolName, rawArgs, _ := strings.Cut(rest, " ")
+		return RouteResult{
+			IsCommand: true,
+			Command:   toolName,
+			Args:      strings.TrimSpace(rawArgs),
+			Kind:      CommandToolExec,
+		}
+	}
+
 	if !strings.HasPrefix(input, ":") {
 		return RouteResult{}
 	}

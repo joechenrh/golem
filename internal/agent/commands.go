@@ -15,7 +15,7 @@ import (
 // ErrQuit signals that the user wants to quit.
 var ErrQuit = errors.New("quit")
 
-// handleCommand dispatches an internal or shell colon-command.
+// handleCommand dispatches an internal, shell, or tool-exec command.
 func (s *Session) handleCommand(
 	ctx context.Context, route router.RouteResult,
 ) (string, error) {
@@ -30,8 +30,27 @@ func (s *Session) handleCommand(
 			return "Error: " + err.Error(), nil
 		}
 		return result, nil
+	case router.CommandToolExec:
+		return s.handleToolExec(ctx, route.Command, route.Args)
 	}
 	return "", nil
+}
+
+// handleToolExec executes a tool directly by name, bypassing the LLM.
+// Used by comma-commands (e.g. ,read_file path=test.txt).
+func (s *Session) handleToolExec(
+	ctx context.Context, toolName, rawArgs string,
+) (string, error) {
+	if s.tools.Get(toolName) == nil {
+		return fmt.Sprintf("Unknown tool: %q. Available: %s",
+			toolName, strings.Join(s.tools.Names(), ", ")), nil
+	}
+	argsJSON := router.ParseToolArgs(rawArgs)
+	result, err := s.tools.Execute(ctx, toolName, argsJSON)
+	if err != nil {
+		return "Error: " + err.Error(), nil
+	}
+	return result, nil
 }
 
 // handleInternalCommand processes built-in colon-commands.
@@ -124,5 +143,8 @@ func (s *Session) helpText() string {
   :skills            List discovered skills
   :model [name]      Show or change current model
   :reset [label]     Add a tape anchor (context boundary)
-  :<command>         Execute a shell command (e.g., :ls -la)`
+  :<command>         Execute a shell command (e.g., :ls -la)
+
+Direct tool execution (bypasses LLM):
+  ,<tool> [key=val]  Execute a tool directly (e.g., ,read_file path=test.txt)`
 }

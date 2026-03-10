@@ -68,6 +68,45 @@ func TestRouteUser_ShellCommands(t *testing.T) {
 	}
 }
 
+func TestRouteUser_CommaCommands(t *testing.T) {
+	tests := []struct {
+		input       string
+		wantCommand string
+		wantArgs    string
+	}{
+		{",read_file path=test.txt", "read_file", "path=test.txt"},
+		{`,shell_exec command="ls -la"`, "shell_exec", `command="ls -la"`},
+		{",list_directory", "list_directory", ""},
+		{",skill name=summarize-session", "skill", "name=summarize-session"},
+		{"  ,read_file path=foo  ", "read_file", "path=foo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := RouteUser(tt.input)
+			if !result.IsCommand {
+				t.Fatal("expected IsCommand=true")
+			}
+			if result.Kind != CommandToolExec {
+				t.Errorf("Kind = %d, want CommandToolExec", result.Kind)
+			}
+			if result.Command != tt.wantCommand {
+				t.Errorf("Command = %q, want %q", result.Command, tt.wantCommand)
+			}
+			if result.Args != tt.wantArgs {
+				t.Errorf("Args = %q, want %q", result.Args, tt.wantArgs)
+			}
+		})
+	}
+}
+
+func TestRouteUser_BareComma(t *testing.T) {
+	result := RouteUser(",")
+	if result.IsCommand {
+		t.Error("bare comma should not be a command")
+	}
+}
+
 func TestRouteUser_NotCommand(t *testing.T) {
 	tests := []string{
 		"What is Go?",
