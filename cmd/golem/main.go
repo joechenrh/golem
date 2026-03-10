@@ -27,6 +27,12 @@ import (
 const version = "0.1.0"
 
 func main() {
+	// Handle subcommands before flag parsing.
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		runInit()
+		return
+	}
+
 	// 1. Parse CLI flags.
 	flags := parseFlags()
 	if flags == nil {
