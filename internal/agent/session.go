@@ -1,17 +1,16 @@
+// Package agent implements the ReAct loop for autonomous tool-using AI assistants.
+// session.go contains the Session type definition, constructor, public API
+// (HandleInput/HandleInputStream), tape operations, and lifecycle methods.
+// The ReAct loop logic is in react.go and LLM call assembly is in llm_call.go.
 package agent
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"slices"
-	"strings"
-	"sync"
 	"time"
 
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/joechenrh/golem/internal/channel"
 	"github.com/joechenrh/golem/internal/config"
@@ -20,10 +19,12 @@ import (
 	"github.com/joechenrh/golem/internal/llm"
 	"github.com/joechenrh/golem/internal/redact"
 	"github.com/joechenrh/golem/internal/router"
-	"github.com/joechenrh/golem/internal/stringutil"
 	"github.com/joechenrh/golem/internal/tape"
 	"github.com/joechenrh/golem/internal/tools"
 )
+
+// IncomingMessage is an alias for channel.IncomingMessage used within this package.
+type IncomingMessage = channel.IncomingMessage
 
 // Session orchestrates the ReAct loop for a single conversation: LLM calls,
 // tool execution, tape recording, command routing, and token tracking.
@@ -125,70 +126,6 @@ type ExtHookRunner interface {
 	Run(ctx context.Context, event string, agentName string, data map[string]any) (string, error)
 }
 
-// SetSkillReload configures periodic skill reload from the given directories.
-func (s *Session) SetSkillReload(dirs []string, interval time.Duration) {
-	s.skillDirs = dirs
-	s.skillReloadInterval = interval
-}
-
-// SetExtHooks sets the external hook runner for this session.
-func (s *Session) SetExtHooks(runner ExtHookRunner) {
-	s.extHooks = runner
-}
-
-// Close cancels all background tasks and waits for goroutines to finish.
-// Must be called before cancelling the session context.
-func (s *Session) Close() {
-	if s.tasks != nil {
-		s.tasks.Close()
-	}
-}
-
-// maybeReloadSkills re-discovers skills from disk if enough time has elapsed.
-func (s *Session) maybeReloadSkills() {
-	if s.skillReloadInterval <= 0 || len(s.skillDirs) == 0 {
-		return
-	}
-	if time.Since(s.lastSkillReload) < s.skillReloadInterval {
-		return
-	}
-	s.lastSkillReload = time.Now()
-	if store := s.tools.GetSkillStore(); store != nil {
-		if n := store.Reload(s.skillDirs); n > 0 {
-			s.logger.Info("reloaded skills from disk", zap.Int("updated", n))
-		}
-	}
-}
-
-// expandSkillHints scans text for $skill-name references, appends matched
-// skill bodies to the cached system prompt, and auto-expands any tools
-// mentioned in the skill body via ExpandHints.
-func (s *Session) expandSkillHints(text string) {
-	store := s.tools.GetSkillStore()
-	if store == nil {
-		return
-	}
-	skills := store.ExpandSkillHints(text)
-	if len(skills) == 0 {
-		return
-	}
-	var b strings.Builder
-	b.WriteString(s.cachedSystemPrompt)
-	for _, skill := range skills {
-		b.WriteString("\n## Skill: ")
-		b.WriteString(skill.Name)
-		b.WriteString("\n\n")
-		b.WriteString(skill.Body)
-		b.WriteByte('\n')
-
-		// Auto-expand any tools referenced in the skill body.
-		s.tools.ExpandHints(skill.Body)
-	}
-	s.cachedSystemPrompt = b.String()
-	s.logger.Debug("expanded skill hints into system prompt",
-		zap.Int("skill_count", len(skills)))
-}
-
 // NewSession creates a Session with all dependencies wired in.
 func NewSession(
 	llmClient llm.Client,
@@ -214,15 +151,32 @@ func NewSession(
 	}
 }
 
+// SetSkillReload configures periodic skill reload from the given directories.
+func (s *Session) SetSkillReload(dirs []string, interval time.Duration) {
+	s.skillDirs = dirs
+	s.skillReloadInterval = interval
+}
+
+// SetExtHooks sets the external hook runner for this session.
+func (s *Session) SetExtHooks(runner ExtHookRunner) {
+	s.extHooks = runner
+}
+
+// Close cancels all background tasks and waits for goroutines to finish.
+// Must be called before cancelling the session context.
+func (s *Session) Close() {
+	if s.tasks != nil {
+		s.tasks.Close()
+	}
+}
+
 // HandleInput processes a user message and returns the final response.
 // Used by non-streaming channels.
 func (s *Session) HandleInput(
 	ctx context.Context, msg channel.IncomingMessage,
 ) (string, error) {
-	// Inject channel ID so tools (e.g. chat_history) can access it.
 	ctx = channel.WithChannelID(ctx, msg.ChannelID)
 
-	// Route user input.
 	route := router.RouteUser(msg.Text)
 	if route.IsCommand {
 		return s.handleCommand(ctx, route)
@@ -237,10 +191,8 @@ func (s *Session) HandleInputStream(
 	ctx context.Context, msg channel.IncomingMessage,
 	tokenCh chan<- string,
 ) error {
-	// Inject channel ID so tools (e.g. chat_history) can access it.
 	ctx = channel.WithChannelID(ctx, msg.ChannelID)
 
-	// Route user input.
 	route := router.RouteUser(msg.Text)
 	if route.IsCommand {
 		result, err := s.handleCommand(ctx, route)
@@ -255,783 +207,7 @@ func (s *Session) HandleInputStream(
 	return err
 }
 
-// runReActLoop executes the tool-calling loop until the LLM produces a final answer
-// or the iteration limit is reached. If pendingMsg is non-nil, the user message
-// is included in context but only persisted to the tape after the first
-// successful LLM call, so a failed API request doesn't leave a dangling entry.
-func (s *Session) runReActLoop(
-	ctx context.Context, stream bool,
-	tokenCh chan<- string,
-	pendingMsg *channel.IncomingMessage,
-) (string, error) {
-	s.maybeReloadSkills()
-
-	// Fork tape for transactional writes — entries are buffered in memory
-	// until the turn completes. If the turn fails before any entries are
-	// written (e.g., first LLM call errors), pending entries are discarded,
-	// preventing partial entries from corrupting conversation context.
-	forked := tape.Fork(s.tape)
-	origTape := s.tape
-	s.tape = forked
-	defer func() {
-		s.tape = origTape
-		if forked.Pending() > 0 {
-			if err := forked.Commit(); err != nil {
-				s.logger.Error("tape commit failed", zap.Error(err))
-			}
-		}
-	}()
-
-	_, modelName := llm.ParseModelProvider(s.config.Model)
-	maxTokens := ctxmgr.ModelContextWindow(modelName)
-
-	// Reset per-turn tracking.
-	s.turnUsage = llm.Usage{}
-	s.toolFailures = make(map[string]int)
-
-	// Cache system prompt once per turn to avoid rebuilding (and re-reading
-	// persona files) on every LLM iteration within the same turn.
-	s.cachedSystemPrompt = s.buildSystemPrompt()
-
-	// Wire auto-anchor: when the context strategy trims messages, insert
-	// an anchor so future BuildMessages calls skip the dropped region.
-	s.wireAutoAnchor()
-
-	// Expand $skill hints from the user message: inject matched skill
-	// bodies into the system prompt and auto-expand referenced tools.
-	if pendingMsg != nil {
-		s.expandSkillHints(pendingMsg.Text)
-	}
-
-	nudges := 0
-	stuckEscalated := false
-	s.lastTaskSummary = ""
-	emptyRetries := 0
-
-	for iter := range s.config.MaxToolIter {
-		// Inject completed background task results as ephemeral messages.
-		s.injectCompletedTasks()
-
-		// Shrink tool schemas not used in the last few iterations to
-		// save context window space in long multi-step chains.
-		s.tools.ShrinkUnused(iter, shrinkAfterIters)
-
-		resp, err := s.executeLLMCall(ctx, modelName, maxTokens, iter, stream, nil, pendingMsg, emptyRetries > 0)
-		if err != nil {
-			return "", err
-		}
-
-		// First successful LLM call — persist the pending user message.
-		if pendingMsg != nil {
-			var msgImages []llm.ImageContent
-			for _, img := range pendingMsg.Images {
-				msgImages = append(msgImages, llm.ImageContent{
-					Base64:    img.Base64,
-					MediaType: img.MediaType,
-				})
-			}
-			s.appendMessage(llm.RoleUser, pendingMsg.Text, nil, pendingMsg.SenderID, msgImages)
-			s.hooks.Emit(ctx, hooks.Event{
-				Type:    hooks.EventUserMessage,
-				Payload: map[string]any{"text": pendingMsg.Text, "channel_id": pendingMsg.ChannelID},
-			})
-			if s.extHooks != nil {
-				// TODO: consider making fire-and-forget hooks async (goroutine) to avoid blocking the agent loop.
-				s.extHooks.Run(ctx, "user_message", s.config.AgentName, map[string]any{
-					"text":       pendingMsg.Text,
-					"channel_id": pendingMsg.ChannelID,
-				})
-			}
-			pendingMsg = nil
-		}
-
-		// Tool calls present — execute them and continue the loop.
-		if len(resp.ToolCalls) > 0 {
-			s.processToolCalls(ctx, resp, iter)
-			continue
-		}
-
-		// Empty response with no tool calls — retry up to maxEmptyRetries,
-		// then inject an ephemeral recovery hint to break the loop.
-		if strings.TrimSpace(resp.Content) == "" {
-			emptyRetries++
-			s.logger.Warn("LLM returned empty response, retrying",
-				zap.Int("iter", iter), zap.Int("empty_retries", emptyRetries))
-			if emptyRetries >= maxEmptyRetries {
-				s.ephemeralMessages = append(s.ephemeralMessages,
-					llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-					llm.Message{Role: llm.RoleUser, Content: emptyResponseHint(false)},
-				)
-				emptyRetries = 0
-			}
-			continue
-		}
-		emptyRetries = 0
-
-		// Classifier-only nudge: when a classifier LLM is configured, ask it
-		// to decide whether this response is a valid final answer, a plan that
-		// should be nudged, or a stuck state. Without a classifier, responses
-		// are accepted as-is.
-		classifierAccepted := false
-		if s.classifierLLM != nil && isAmbiguousResponse(resp.Content, s.tape) {
-			if nudges < maxNudges {
-				lastUserMsg := s.lastUserMessage()
-				toolNames := s.tools.Names()
-				s.logger.Debug("invoking classifier",
-					zap.Int("resp_len", len(resp.Content)),
-					zap.Int("iter", iter))
-				decision, taskSummary, rawBody, ok := classifyResponse(
-					ctx, s.classifierLLM, s.config.ClassifierModel,
-					lastUserMsg, resp.Content, toolNames,
-				)
-				if ok {
-					s.logger.Debug("classifier decision",
-						zap.String("decision", decision),
-						zap.String("task_summary", taskSummary),
-						zap.Int("iter", iter))
-					switch decision {
-					case "nudge":
-						s.ephemeralMessages = append(s.ephemeralMessages,
-							llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-							llm.Message{Role: llm.RoleUser, Content: nudgeMessage(resp.Content)},
-						)
-						nudges++
-						s.logger.Debug("classifier nudge",
-							zap.Int("iter", iter),
-							zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
-						continue
-					case "stuck":
-						s.lastTaskSummary = taskSummary
-						s.ephemeralMessages = append(s.ephemeralMessages,
-							llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-							llm.Message{Role: llm.RoleUser, Content: taskReminderMessage(taskSummary, resp.Content)},
-						)
-						nudges++
-						s.logger.Debug("classifier stuck",
-							zap.Int("iter", iter),
-							zap.String("task_summary", taskSummary),
-							zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
-						continue
-					case "accept":
-						classifierAccepted = true
-						s.logger.Debug("classifier accepted response",
-							zap.Int("iter", iter))
-						// Fall through to accept.
-					}
-				} else {
-					s.logger.Warn("classifier returned unparseable response, accepting",
-						zap.Int("iter", iter),
-						zap.String("raw_body", stringutil.Truncate(rawBody, 200)))
-				}
-			}
-			// Nudge budget exhausted — fall through to accept.
-		}
-
-		// Stuck escalation: if classifier nudged at least once and the
-		// LLM still returned text-only, inject a task-specific reminder.
-		// Skip if the classifier already accepted this response.
-		if !classifierAccepted && nudges >= 1 && !stuckEscalated {
-			stuckEscalated = true
-			summary := s.lastTaskSummary
-			if summary == "" {
-				summary = sanitizeTaskSummary(s.lastUserMessage())
-			}
-			if summary != "" {
-				s.ephemeralMessages = append(s.ephemeralMessages,
-					llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
-					llm.Message{Role: llm.RoleUser, Content: taskReminderMessage(summary, resp.Content)},
-				)
-				nudges++
-				s.logger.Debug("injecting task reminder (stuck escalation)",
-					zap.Int("nudge", nudges), zap.Int("iter", iter),
-					zap.String("task_summary", summary),
-					zap.String("discarded", stringutil.Truncate(resp.Content, 200)))
-				continue
-			}
-		}
-
-		// Final answer — no tool calls.
-		content := s.processAssistantResponse(ctx, resp)
-		s.persistExpandedTools()
-		if stream && tokenCh != nil {
-			tokenCh <- content
-		}
-		return content, nil
-	}
-
-	fallback := "Tool calling limit reached. Please try a simpler request."
-	if stream && tokenCh != nil {
-		tokenCh <- fallback
-	}
-	return fallback, nil
-}
-
-// lastUserMessage returns the most recent user message text from the tape.
-func (s *Session) lastUserMessage() string {
-	entries, err := s.tape.Entries()
-	if err != nil {
-		return ""
-	}
-	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].Kind != tape.KindMessage {
-			continue
-		}
-		var msg struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}
-		if json.Unmarshal(entries[i].Payload, &msg) == nil && msg.Role == "user" {
-			return msg.Content
-		}
-	}
-	return ""
-}
-
-// executeLLMCall builds context, calls the LLM (streaming or not), and emits hooks.
-// If pendingMsg is non-nil, its text is appended to the context as a user
-// message without persisting to the tape, so that a failed API call
-// does not leave a dangling tape entry.
-// When skipHooks is true, external before_llm_call hooks are skipped
-// (used during empty-response retries where the context hasn't changed).
-func (s *Session) executeLLMCall(
-	ctx context.Context, modelName string,
-	maxTokens, iter int, stream bool,
-	tokenCh chan<- string,
-	pendingMsg *channel.IncomingMessage,
-	skipHooks bool,
-) (*llm.ChatResponse, error) {
-	messages, err := s.buildMessages(ctx, maxTokens, iter, pendingMsg, skipHooks)
-	if err != nil {
-		return nil, err
-	}
-
-	req := s.buildLLMRequest(modelName, messages)
-
-	s.hooks.Emit(ctx, hooks.Event{
-		Type:    hooks.EventBeforeLLMCall,
-		Payload: map[string]any{"iteration": iter, "message_count": len(messages)},
-	})
-
-	var resp *llm.ChatResponse
-	if stream {
-		resp, err = s.doStreamingCall(ctx, req, tokenCh)
-	} else {
-		resp, err = s.llm.Chat(ctx, req)
-	}
-	if err != nil {
-		// Invalidate chain on error; next call sends full context.
-		s.chainValid = false
-		s.hooks.Emit(ctx, hooks.Event{
-			Type:    hooks.EventError,
-			Payload: map[string]any{"error": err.Error()},
-		})
-		return nil, fmt.Errorf("LLM call: %w", err)
-	}
-
-	s.processLLMResponse(ctx, resp)
-	return resp, nil
-}
-
-// buildMessages assembles the message context for an LLM call from tape
-// entries, pending user input, ephemeral messages, and external hooks.
-func (s *Session) buildMessages(
-	ctx context.Context, maxTokens, iter int,
-	pendingMsg *channel.IncomingMessage,
-	skipHooks bool,
-) ([]llm.Message, error) {
-	entries, err := s.tape.Entries()
-	if err != nil {
-		return nil, fmt.Errorf("reading tape: %w", err)
-	}
-	messages, err := s.contextStrategy.BuildContext(ctx, entries, maxTokens)
-	if err != nil {
-		return nil, fmt.Errorf("building context: %w", err)
-	}
-
-	// Include the not-yet-persisted user message in the context.
-	if pendingMsg != nil {
-		content := pendingMsg.Text
-		if pendingMsg.SenderID != "" {
-			content = "[sender:" + pendingMsg.SenderID + "] " + content
-		}
-		userMsg := llm.Message{
-			Role:    llm.RoleUser,
-			Content: content,
-		}
-		for _, img := range pendingMsg.Images {
-			userMsg.Images = append(userMsg.Images, llm.ImageContent{
-				Base64:    img.Base64,
-				MediaType: img.MediaType,
-			})
-		}
-		messages = append(messages, userMsg)
-	}
-
-	// Inject ephemeral messages (nudges, recovery hints) then clear them.
-	if len(s.ephemeralMessages) > 0 {
-		messages = append(messages, s.ephemeralMessages...)
-		s.ephemeralMessages = nil
-	}
-
-	// Run external hooks for context injection (skipped during retries).
-	if s.extHooks != nil && !skipHooks {
-		messages = s.injectExtHookContext(ctx, messages, pendingMsg, iter)
-	}
-
-	// Budget system prompt + tool schemas into the context window.
-	toolDefs := s.tools.ToolDefinitions()
-	if setter, ok := s.contextStrategy.(ctxmgr.OverheadSetter); ok {
-		overhead := ctxmgr.EstimateOverhead(s.cachedSystemPrompt, toolDefs)
-		setter.SetOverhead(overhead)
-	}
-
-	return messages, nil
-}
-
-// injectExtHookContext runs the before_llm_call external hook and appends
-// any injected context to the message list.
-func (s *Session) injectExtHookContext(
-	ctx context.Context, messages []llm.Message,
-	pendingMsg *channel.IncomingMessage, iter int,
-) []llm.Message {
-	var userText string
-	if pendingMsg != nil {
-		userText = pendingMsg.Text
-	} else {
-		for i := len(messages) - 1; i >= 0; i-- {
-			if messages[i].Role == llm.RoleUser {
-				userText = messages[i].Content
-				break
-			}
-		}
-	}
-
-	// Build recent_context from the last 3 user messages for richer recall.
-	var recentParts []string
-	count := 0
-	for i := len(messages) - 1; i >= 0 && count < 3; i-- {
-		if messages[i].Role == llm.RoleUser {
-			recentParts = append(recentParts, messages[i].Content)
-			count++
-		}
-	}
-	// Reverse so they're in chronological order.
-	slices.Reverse(recentParts)
-	recentContext := strings.Join(recentParts, "\n")
-
-	hookData := map[string]any{
-		"user_message":   userText,
-		"iteration":      iter,
-		"recent_context": recentContext,
-		"message_count":  len(messages),
-	}
-	s.logger.Debug("before_llm_call hook input",
-		zap.String("user_message", userText),
-		zap.Int("iteration", iter),
-		zap.Int("message_count", len(messages)),
-		zap.Int("recent_context_len", len(recentContext)))
-
-	injected, err := s.extHooks.Run(ctx, "before_llm_call", s.config.AgentName, hookData)
-	if err != nil {
-		s.logger.Warn("external hook before_llm_call failed", zap.Error(err))
-	} else if injected != "" {
-		s.logger.Debug("before_llm_call hook injected context",
-			zap.Int("injected_len", len(injected)),
-			zap.String("injected_preview", stringutil.Truncate(injected, 200)))
-		messages = append(messages, llm.Message{
-			Role:    llm.RoleUser,
-			Content: "[External context]\n" + injected,
-		})
-	} else {
-		s.logger.Debug("before_llm_call hook returned empty content")
-	}
-	return messages
-}
-
-// buildLLMRequest constructs the ChatRequest from the current session state.
-func (s *Session) buildLLMRequest(modelName string, messages []llm.Message) llm.ChatRequest {
-	req := llm.ChatRequest{
-		Model:           modelName,
-		SystemPrompt:    s.cachedSystemPrompt,
-		Messages:        messages,
-		Tools:           s.tools.ToolDefinitions(),
-		MaxTokens:       s.config.MaxOutputTokens,
-		Temperature:     s.config.Temperature,
-		ReasoningEffort: s.config.ReasoningEffort,
-	}
-
-	// Responses API: truncation, store, native web search, and chaining.
-	if s.config.UseResponsesAPI {
-		req.Truncation = "auto"
-		req.Store = s.config.ResponsesStore
-		req.UseNativeWebSearch = s.config.UseNativeWebSearch
-
-		if s.lastResponseID != "" && s.chainValid {
-			req.PreviousResponseID = s.lastResponseID
-			req.IncrementalInput = s.incrementalMessages
-		}
-	}
-	return req
-}
-
-// processLLMResponse updates session state after a successful LLM call:
-// Responses API chain tracking, token usage, and hook emission.
-func (s *Session) processLLMResponse(ctx context.Context, resp *llm.ChatResponse) {
-	// Capture response ID for Responses API chaining.
-	// When Store is explicitly false, the server won't remember the response,
-	// so chaining via previous_response_id is not possible.
-	if s.config.UseResponsesAPI && resp.ResponseID != "" {
-		s.lastResponseID = resp.ResponseID
-		s.chainValid = s.config.ResponsesStore == nil || *s.config.ResponsesStore
-		s.incrementalMessages = nil // reset; will accumulate new messages
-	}
-
-	// Accumulate token usage.
-	s.turnUsage.Add(resp.Usage)
-	s.sessionUsage.Add(resp.Usage)
-
-	s.hooks.Emit(ctx, hooks.Event{
-		Type: hooks.EventAfterLLMCall,
-		Payload: map[string]any{
-			"finish_reason":     resp.FinishReason,
-			"tool_call_count":   len(resp.ToolCalls),
-			"prompt_tokens":     resp.Usage.PromptTokens,
-			"completion_tokens": resp.Usage.CompletionTokens,
-			"turn_total_tokens": s.turnUsage.TotalTokens,
-		},
-	})
-	if s.extHooks != nil {
-		// TODO: consider making fire-and-forget hooks async (goroutine) to avoid blocking the agent loop.
-		s.extHooks.Run(ctx, "after_llm_call", s.config.AgentName, map[string]any{
-			"finish_reason":     resp.FinishReason,
-			"tool_call_count":   len(resp.ToolCalls),
-			"prompt_tokens":     resp.Usage.PromptTokens,
-			"completion_tokens": resp.Usage.CompletionTokens,
-		})
-	}
-}
-
-// processToolCalls records the assistant message, expands tool schemas, and
-// executes each tool call in parallel, recording results to the tape in order.
-func (s *Session) processToolCalls(
-	ctx context.Context, resp *llm.ChatResponse, iter int,
-) {
-	s.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "", nil)
-
-	// Auto-expand any tool the model calls, so the next iteration
-	// sends the full parameter schema (progressive disclosure).
-	for _, tc := range resp.ToolCalls {
-		s.tools.ExpandAt(tc.Name, iter)
-	}
-	if resp.Content != "" {
-		s.tools.ExpandHints(resp.Content)
-	}
-
-	// Execute tool calls in parallel and collect results keyed by index.
-	type toolResultEntry struct {
-		id     string
-		name   string
-		result string
-	}
-	var results sync.Map
-	g, gctx := errgroup.WithContext(ctx)
-	for i, tc := range resp.ToolCalls {
-		g.Go(func() error {
-			res := s.executeTool(gctx, tc)
-			results.Store(i, toolResultEntry{id: tc.ID, name: tc.Name, result: res})
-			return nil
-		})
-	}
-	g.Wait()
-
-	// Append results in original tool call order and track failures.
-	// For skill results, expand any tools mentioned in the skill body so
-	// the LLM has full parameter schemas when acting on the instructions.
-	for i := range resp.ToolCalls {
-		v, _ := results.Load(i)
-		r := v.(toolResultEntry)
-		s.appendToolResult(r.id, r.name, r.result)
-
-		if strings.HasPrefix(r.result, "Error:") {
-			s.toolFailures[r.name]++
-			if s.toolFailures[r.name] >= maxToolFailures {
-				s.appendMessage(llm.RoleUser,
-					fmt.Sprintf("Tool %q has failed %d times this turn. Reconsider your approach — try a different tool or method.",
-						r.name, s.toolFailures[r.name]), nil, "", nil)
-			}
-		}
-	}
-}
-
-// injectCompletedTasks drains finished background tasks and appends their
-// results as ephemeral user messages so the LLM can see them on the next call.
-func (s *Session) injectCompletedTasks() {
-	completed := s.tasks.DrainCompleted()
-	for _, t := range completed {
-		var msg string
-		if t.Status == TaskCompleted {
-			msg = fmt.Sprintf("[Background task #%d completed] %q\nResult:\n%s", t.ID, t.Description, t.Result)
-		} else {
-			msg = fmt.Sprintf("[Background task #%d failed] %q\nError: %s", t.ID, t.Description, t.Error)
-		}
-		s.ephemeralMessages = append(s.ephemeralMessages, llm.Message{
-			Role:    llm.RoleUser,
-			Content: msg,
-		})
-	}
-}
-
-// processAssistantResponse handles the final answer: runs any embedded colon-
-// commands, records the response to the tape, and returns the content.
-func (s *Session) processAssistantResponse(
-	ctx context.Context, resp *llm.ChatResponse,
-) string {
-	content := resp.Content
-
-	commands, cleanText := router.RouteAssistant(content)
-	if len(commands) > 0 {
-		content = cleanText
-		for _, cmd := range commands {
-			route := router.RouteResult{
-				IsCommand: true,
-				Command:   cmd.Command,
-				Args:      cmd.Args,
-				Kind:      cmd.Kind,
-			}
-			cmdResult, _ := s.handleCommand(ctx, route)
-			content += "\n" + cmdResult
-		}
-	}
-
-	s.appendMessage(llm.RoleAssistant, content, nil, "", nil)
-	return content
-}
-
-// doStreamingCall performs a streaming LLM call, sending content tokens to tokenCh,
-// and returns the assembled full response.
-func (s *Session) doStreamingCall(
-	ctx context.Context, req llm.ChatRequest,
-	tokenCh chan<- string,
-) (*llm.ChatResponse, error) {
-	eventCh, err := s.llm.ChatStream(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	resp := &llm.ChatResponse{}
-	var contentBuf strings.Builder
-	// Track in-progress tool calls by index.
-	toolCallMap := make(map[string]*llm.ToolCall) // keyed by ID
-	var toolCallOrder []string
-
-	for ev := range eventCh {
-		switch ev.Type {
-		case llm.StreamContentDelta:
-			contentBuf.WriteString(ev.Content)
-			if tokenCh != nil {
-				select {
-				case tokenCh <- ev.Content:
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-			}
-
-		case llm.StreamToolCallDelta:
-			if ev.ToolCall == nil {
-				continue
-			}
-			tc := ev.ToolCall
-			if tc.ID != "" {
-				// New tool call starting (first delta may also carry arguments).
-				toolCallMap[tc.ID] = &llm.ToolCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments}
-				toolCallOrder = append(toolCallOrder, tc.ID)
-			} else if tc.Arguments != "" && len(toolCallOrder) > 0 {
-				// Append arguments to the most recent tool call.
-				lastID := toolCallOrder[len(toolCallOrder)-1]
-				if existing, ok := toolCallMap[lastID]; ok {
-					existing.Arguments += tc.Arguments
-				}
-			}
-
-		case llm.StreamError:
-			return nil, ev.Error
-
-		case llm.StreamDone:
-			if ev.Usage != nil {
-				resp.Usage = *ev.Usage
-			}
-			if ev.ResponseID != "" {
-				resp.ResponseID = ev.ResponseID
-			}
-		}
-	}
-
-	resp.Content = contentBuf.String()
-	for _, id := range toolCallOrder {
-		if tc, ok := toolCallMap[id]; ok {
-			tc.Arguments = llm.NormalizeArgs(tc.Arguments)
-			resp.ToolCalls = append(resp.ToolCalls, *tc)
-		}
-	}
-
-	if len(resp.ToolCalls) > 0 {
-		resp.FinishReason = "tool_calls"
-	} else {
-		resp.FinishReason = "stop"
-	}
-
-	return resp, nil
-}
-
-// executeTool runs a single tool call with hook emission.
-func (s *Session) executeTool(
-	ctx context.Context, tc llm.ToolCall,
-) string {
-	// Before tool exec hook — can block execution.
-	if err := s.hooks.Emit(ctx, hooks.Event{
-		Type: hooks.EventBeforeToolExec,
-		Payload: map[string]any{
-			"tool_name": tc.Name,
-			"tool_id":   tc.ID,
-			"arguments": tc.Arguments,
-		},
-	}); err != nil {
-		return "Tool execution blocked: " + err.Error()
-	}
-
-	ctx = tools.WithTaskTracker(ctx, s.tasks)
-
-	start := time.Now()
-	result, err := s.tools.Execute(ctx, tc.Name, tc.Arguments)
-	duration := time.Since(start)
-	if err != nil {
-		result = "Error: " + err.Error()
-	}
-
-	s.logger.Debug("tool executed",
-		zap.String("tool", tc.Name),
-		zap.Duration("duration", duration),
-		zap.Bool("error", err != nil))
-
-	s.hooks.Emit(ctx, hooks.Event{
-		Type: hooks.EventAfterToolExec,
-		Payload: map[string]any{
-			"tool_name": tc.Name,
-			"tool_id":   tc.ID,
-			"result":    stringutil.Truncate(result, maxLogTruncateLen),
-		},
-	})
-
-	return result
-}
-
-// buildSystemPrompt constructs the system prompt for LLM calls.
-// When persona files are configured, the prompt is assembled in three layers:
-//
-//	Layer 1 (Identity): SOUL.md, USER.md
-//	Layer 2 (Operations): AGENTS.md + built-in tool-use instructions
-//	Layer 3 (Knowledge): memory system description + MEMORY.md
-//
-// Falls back to the flat system-prompt.md approach when no persona exists.
-func (s *Session) buildSystemPrompt() string {
-	if s.config.Persona.HasPersona() {
-		return s.buildPersonaPrompt()
-	}
-	return s.buildFlatPrompt()
-}
-
-// buildPersonaPrompt assembles the three-layer persona system prompt.
-func (s *Session) buildPersonaPrompt() string {
-	p := s.config.Persona
-	var b strings.Builder
-
-	soul := p.GetSoul()
-	agents := p.GetAgents()
-	memory := p.GetMemory()
-
-	// --- Layer 1: Identity ---
-	b.WriteString("# Identity\n\n")
-	b.WriteString(soul)
-	b.WriteByte('\n')
-	if p.User != "" {
-		b.WriteString("\n## User Profile\n\n")
-		b.WriteString(p.User)
-		b.WriteByte('\n')
-	}
-
-	// --- Layer 2: Operations ---
-	b.WriteString("\n# Operations\n\n")
-	if agents != "" {
-		b.WriteString(agents)
-		b.WriteByte('\n')
-	}
-	b.WriteString("\n## Tool Use\n\n")
-	b.WriteString(toolUseInstruction)
-
-	// Skill summary — let the LLM know what skills are available.
-	if skillStore := s.tools.GetSkillStore(); skillStore != nil {
-		if summary := skillStore.Summary(); summary != "" {
-			b.WriteString("\n## Available Skills\n\n")
-			b.WriteString("Use the `skill` tool to load detailed instructions for any of these workflows:\n")
-			b.WriteString(summary)
-		}
-	}
-
-	// --- Layer 3: Knowledge ---
-	b.WriteString("\n# Knowledge\n\n")
-	b.WriteString("Use the persona_self tool to read/update your persona files: ")
-	b.WriteString("SOUL.md (identity), AGENTS.md (rules), MEMORY.md (knowledge & preferences). ")
-	b.WriteString("Update MEMORY.md regularly for learned patterns and user preferences.\n")
-
-	if memory != "" {
-		b.WriteString("\n## Current Memory\n\n")
-		b.WriteString(memory)
-		b.WriteByte('\n')
-	}
-
-	// --- Environment ---
-	b.WriteString("\n# Environment\n\n")
-	fmt.Fprintf(&b, "Working directory: %s\n", s.config.WorkspaceDir)
-	fmt.Fprintf(&b, "Current time: %s\n", time.Now().Format(time.RFC3339))
-
-	return b.String()
-}
-
-// buildFlatPrompt is the legacy system prompt assembly (no persona files).
-func (s *Session) buildFlatPrompt() string {
-	var b strings.Builder
-
-	b.WriteString("You are golem, a helpful coding assistant.\n\n")
-
-	fmt.Fprintf(&b, "Working directory: %s\n", s.config.WorkspaceDir)
-	fmt.Fprintf(&b, "Current time: %s\n\n", time.Now().Format(time.RFC3339))
-
-	b.WriteString(toolUseInstruction)
-	b.WriteByte('\n')
-
-	// Skill summary — let the LLM know what skills are available.
-	if skillStore := s.tools.GetSkillStore(); skillStore != nil {
-		if summary := skillStore.Summary(); summary != "" {
-			b.WriteString("## Available Skills\n\n")
-			b.WriteString("Use the `skill` tool to load detailed instructions for any of these workflows:\n")
-			b.WriteString(summary)
-			b.WriteByte('\n')
-		}
-	}
-
-	switch {
-	case s.config.SystemPrompt != "":
-		b.WriteString(s.config.SystemPrompt)
-		b.WriteByte('\n')
-	default:
-		if data, err := os.ReadFile(".agent/system-prompt.md"); err == nil {
-			b.WriteString(strings.TrimSpace(string(data)))
-			b.WriteByte('\n')
-		}
-	}
-
-	return b.String()
-}
+// --- Tape operations ---
 
 // appendMessage records a message to the tape.
 // senderID is optional and only set for user messages in group chats.
@@ -1084,6 +260,31 @@ func (s *Session) appendMessage(
 			msg.Images = images
 		}
 		s.incrementalMessages = append(s.incrementalMessages, msg)
+	}
+}
+
+// appendToolResult records a tool result to the tape with proper metadata.
+func (s *Session) appendToolResult(
+	toolCallID, toolName, result string,
+) {
+	s.tape.Append(tape.TapeEntry{
+		Kind: tape.KindMessage,
+		Payload: tape.MarshalPayload(map[string]any{
+			"role":         string(llm.RoleTool),
+			"content":      result,
+			"tool_call_id": toolCallID,
+			"name":         toolName,
+		}),
+	})
+
+	// Track for Responses API incremental input.
+	if s.config.UseResponsesAPI {
+		s.incrementalMessages = append(s.incrementalMessages, llm.Message{
+			Role:       llm.RoleTool,
+			Content:    result,
+			ToolCallID: toolCallID,
+			Name:       toolName,
+		})
 	}
 }
 
@@ -1155,32 +356,6 @@ func (s *Session) RestoreExpandedTools() {
 	}
 }
 
-// appendToolResult records a tool result to the tape with proper metadata.
-func (s *Session) appendToolResult(
-	toolCallID, toolName, result string,
-) {
-	s.tape.Append(tape.TapeEntry{
-		Kind: tape.KindMessage,
-		Payload: tape.MarshalPayload(map[string]any{
-			"role":         string(llm.RoleTool),
-			"content":      result,
-			"tool_call_id": toolCallID,
-			"name":         toolName,
-		}),
-	})
-
-	// Track for Responses API incremental input.
-	if s.config.UseResponsesAPI {
-		s.incrementalMessages = append(s.incrementalMessages, llm.Message{
-			Role:       llm.RoleTool,
-			Content:    result,
-			ToolCallID: toolCallID,
-			Name:       toolName,
-		})
-	}
-}
-
-// truncateForLog truncates a string to maxLen and appends "..." if truncated.
 // RecordFeedback appends a KindFeedback entry to the tape.
 func (s *Session) RecordFeedback(chatID, value string) {
 	s.tape.Append(tape.TapeEntry{
