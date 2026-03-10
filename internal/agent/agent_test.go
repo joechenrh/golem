@@ -506,29 +506,63 @@ func TestHandleInput_ShellCommand(t *testing.T) {
 	}
 }
 
-func TestLooksLikePlan(t *testing.T) {
+func TestShouldNudge(t *testing.T) {
+	// Build a tape with tool history for ack detection.
+	dir := t.TempDir()
+	resolved, _ := filepath.EvalSymlinks(dir)
+	storeWithTools, err := tape.NewFileStore(filepath.Join(resolved, "tape-tools.jsonl"))
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	storeWithTools.Append(tape.TapeEntry{
+		Kind:    tape.KindMessage,
+		Payload: json.RawMessage(`{"role":"tool","content":"ok","tool_call_id":"tc1","name":"test"}`),
+	})
+	// Empty tape (no tool history).
+	storeEmpty, err := tape.NewFileStore(filepath.Join(resolved, "tape-empty.jsonl"))
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+
 	tests := []struct {
 		name    string
 		content string
+		store   tape.Store
 		want    bool
 	}{
-		{"english plan", "I'll read the file and check for errors.", true},
-		{"english let me", "Let me look into this.", true},
-		{"english answer", "The answer is 42.", false},
-		{"chinese plan", "我来看一下这个文件。", true},
-		{"chinese plan rang", "让我检查一下。", true},
-		{"chinese greeting", "你好！我是 Golem，你的助手。你现在想让我帮你做什么？", false},
-		{"chinese answer", "这个问题的答案是42。", false},
-		{"chinese shoudao not plan", "收到，我明白了。", false},
-		{"intent at char 300", strings.Repeat("x", 300) + "I'll do it now", true},
-		{"intent at char 450", strings.Repeat("x", 450) + "I'll do it now", false},
-		{"intent buried deep", strings.Repeat("正常内容。", 50) + "让我看看", false},
-		{"empty", "", false},
+		// Plan detection (works regardless of tool history).
+		{"english plan", "I'll read the file and check for errors.", storeEmpty, true},
+		{"english let me", "Let me look into this.", storeEmpty, true},
+		{"english answer", "The answer is 42.", storeEmpty, false},
+		{"chinese plan", "我来看一下这个文件。", storeEmpty, true},
+		{"chinese plan rang", "让我检查一下。", storeEmpty, true},
+		{"chinese greeting", "你好！我是 Golem，你的助手。你现在想让我帮你做什么？", storeEmpty, false},
+		{"chinese answer", "这个问题的答案是42。", storeEmpty, false},
+		{"intent at char 300", strings.Repeat("x", 300) + "I'll do it now", storeEmpty, true},
+		{"intent at char 450", strings.Repeat("x", 450) + "I'll do it now", storeEmpty, false},
+		{"intent buried deep", strings.Repeat("正常内容。", 50) + "让我看看", storeEmpty, false},
+		{"empty", "", storeEmpty, false},
+
+		// Ack detection (requires tool history).
+		{"chinese ok", "好的", storeWithTools, true},
+		{"chinese received", "收到", storeWithTools, true},
+		{"chinese understood", "明白", storeWithTools, true},
+		{"chinese no problem", "没问题", storeWithTools, true},
+		{"chinese ok with filler", "好的，我知道了", storeWithTools, true},
+		{"english got it", "Got it", storeWithTools, true},
+		{"english sure", "Sure", storeWithTools, true},
+		{"english okay", "Okay, understood", storeWithTools, true},
+		{"long response not ack", strings.Repeat("This is a detailed answer. ", 10), storeWithTools, false},
+		{"real answer with tools", "The answer is 42.", storeWithTools, false},
+
+		// Ack without tool history — should NOT nudge.
+		{"ack no tool history", "好的", storeEmpty, false},
+		{"收到 no tool history", "收到，我明白了。", storeEmpty, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := looksLikePlan(tt.content); got != tt.want {
-				t.Errorf("looksLikePlan() = %v, want %v", got, tt.want)
+			if got := shouldNudge(tt.content, tt.store); got != tt.want {
+				t.Errorf("shouldNudge(%q) = %v, want %v", tt.content, got, tt.want)
 			}
 		})
 	}
@@ -925,47 +959,6 @@ func TestSessionManager_GetOrCreate_ConcurrentStress(t *testing.T) {
 	}
 }
 
-func TestLooksLikeAck(t *testing.T) {
-	// Build a tape with tool history so hasToolHistory returns true.
-	dir := t.TempDir()
-	resolved, _ := filepath.EvalSymlinks(dir)
-	store, err := tape.NewFileStore(filepath.Join(resolved, "tape.jsonl"))
-	if err != nil {
-		t.Fatalf("NewFileStore: %v", err)
-	}
-	// Seed a tool-role message.
-	store.Append(tape.TapeEntry{
-		Kind:    tape.KindMessage,
-		Payload: json.RawMessage(`{"role":"tool","content":"ok","tool_call_id":"tc1","name":"test"}`),
-	})
-
-	tests := []struct {
-		name    string
-		content string
-		want    bool
-	}{
-		{"chinese ok", "好的", true},
-		{"chinese received", "收到", true},
-		{"chinese understood", "明白", true},
-		{"chinese no problem", "没问题", true},
-		{"chinese ok with filler", "好的，我知道了", true},
-		{"english got it", "Got it", true},
-		{"english sure", "Sure", true},
-		{"english okay", "Okay, understood", true},
-		{"long response not ack", strings.Repeat("This is a detailed answer. ", 10), false},
-		{"plan not ack", "I'll read the file now and check for errors in the configuration.", false},
-		{"real answer", "The answer is 42.", false},
-		{"empty", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := looksLikeAck(tt.content, store); got != tt.want {
-				t.Errorf("looksLikeAck(%q) = %v, want %v", tt.content, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestHandleInput_AckNudge(t *testing.T) {
 	// First response is "好的" (ack) → should be nudged.
 	// Second response uses a tool → tool result.
@@ -984,7 +977,7 @@ func TestHandleInput_AckNudge(t *testing.T) {
 	}
 	agent := newTestAgent(t, client, &mockTool{name: "test_tool", result: "ok"})
 
-	// Seed tool history so looksLikeAck fires.
+	// Seed tool history so shouldNudge detects the ack.
 	agent.tape.Append(tape.TapeEntry{
 		Kind:    tape.KindMessage,
 		Payload: json.RawMessage(`{"role":"tool","content":"prev","tool_call_id":"old","name":"test_tool"}`),
@@ -1079,18 +1072,5 @@ func TestHandleInputStream_ToolCallsThenFinalAnswer(t *testing.T) {
 	joined := strings.Join(tokens, "")
 	if !strings.Contains(joined, "mock output") {
 		t.Errorf("final response missing: %q", joined)
-	}
-}
-
-func TestLooksLikeAck_NoToolHistory(t *testing.T) {
-	dir := t.TempDir()
-	resolved, _ := filepath.EvalSymlinks(dir)
-	store, err := tape.NewFileStore(filepath.Join(resolved, "tape.jsonl"))
-	if err != nil {
-		t.Fatalf("NewFileStore: %v", err)
-	}
-	// No tool history — ack detection should return false even for "好的".
-	if looksLikeAck("好的", store) {
-		t.Error("looksLikeAck should be false when no tool history exists")
 	}
 }

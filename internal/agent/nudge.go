@@ -47,6 +47,15 @@ type classifierResult struct {
 // not trigger a nudge.
 const planCheckPrefixLen = 400
 
+// shouldNudge returns true if the response looks like a plan description
+// or a short acknowledgment rather than a real action or final answer.
+// It combines two heuristics:
+//   - Plan detection: intent phrases ("I'll", "让我") in the opening text.
+//   - Ack detection: short responses ("好的", "Sure") when tool history exists.
+func shouldNudge(content string, tapeStore tape.Store) bool {
+	return looksLikePlan(content) || looksLikeAck(content, tapeStore)
+}
+
 // looksLikePlan returns true if the opening of the content appears to
 // describe intended actions rather than providing a final answer.
 func looksLikePlan(content string) bool {
