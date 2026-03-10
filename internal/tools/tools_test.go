@@ -320,42 +320,26 @@ func TestRegistry_ShrinkUnused(t *testing.T) {
 
 // ─── Skill Tests ─────────────────────────────────────────────────
 
-func TestParseSkill(t *testing.T) {
+func TestParseSkillFile(t *testing.T) {
 	path := filepath.Join("testdata", "skills", "my-skill", "SKILL.md")
-	tool, err := ParseSkill(path)
+	meta, err := parseSkillFile(path)
 	if err != nil {
-		t.Fatalf("ParseSkill() error: %v", err)
+		t.Fatalf("parseSkillFile() error: %v", err)
 	}
 
-	if tool.Name() != "skill_my-skill" {
-		t.Errorf("Name() = %q, want %q", tool.Name(), "skill_my-skill")
+	if meta.Name != "my-skill" {
+		t.Errorf("Name = %q, want %q", meta.Name, "my-skill")
 	}
-	wantDesc := "Skill skill_my-skill: A test skill for unit tests. Call this to load step-by-step instructions, then execute them immediately using other tools."
-	if tool.Description() != wantDesc {
-		t.Errorf("Description() = %q", tool.Description())
+	if meta.Description == "" {
+		t.Error("Description should not be empty")
 	}
-	if !strings.Contains(tool.FullDescription(), "My Skill Instructions") {
-		t.Errorf("FullDescription() doesn't contain expected body content")
-	}
-
-	// Parameters should be the standard skill schema.
-	var params map[string]any
-	if err := json.Unmarshal(tool.Parameters(), &params); err != nil {
-		t.Fatalf("Parameters() invalid JSON: %v", err)
-	}
-
-	// Execute returns the body.
-	result, err := tool.Execute(context.Background(), `{"input":"test"}`)
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	if !strings.Contains(result, "My Skill Instructions") {
-		t.Error("Execute() should return the skill body")
+	if !strings.Contains(meta.Body, "My Skill Instructions") {
+		t.Error("Body should contain skill content")
 	}
 }
 
-func TestParseSkill_MissingFile(t *testing.T) {
-	_, err := ParseSkill("nonexistent/SKILL.md")
+func TestParseSkillFile_MissingFile(t *testing.T) {
+	_, err := parseSkillFile("nonexistent/SKILL.md")
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -384,25 +368,55 @@ func TestParseFrontmatter_MissingDescription(t *testing.T) {
 	}
 }
 
-// ─── Skill Discovery Tests ──────────────────────────────────────
+// ─── SkillStore Tests ────────────────────────────────────────────
 
-func TestDiscoverSkills(t *testing.T) {
-	r := NewRegistry()
-	err := r.DiscoverSkills(filepath.Join("testdata", "skills"))
+func TestSkillStore_DiscoverAndGet(t *testing.T) {
+	store := NewSkillStore()
+	err := store.Discover(filepath.Join("testdata", "skills"))
 	if err != nil {
-		t.Fatalf("DiscoverSkills() error: %v", err)
+		t.Fatalf("Discover() error: %v", err)
 	}
 
-	if r.Get("skill_my-skill") == nil {
-		t.Error("skill_my-skill not discovered")
+	skill := store.Get("my-skill")
+	if skill == nil {
+		t.Fatal("expected to find my-skill")
+	}
+	if skill.Name != "my-skill" {
+		t.Errorf("Name = %q, want %q", skill.Name, "my-skill")
+	}
+	if skill.Description == "" {
+		t.Error("Description should not be empty")
+	}
+	if !strings.Contains(skill.Body, "My Skill Instructions") {
+		t.Error("Body should contain skill content")
 	}
 }
 
-func TestDiscoverSkills_MissingDir(t *testing.T) {
-	r := NewRegistry()
-	err := r.DiscoverSkills("nonexistent-dir")
+func TestSkillStore_List(t *testing.T) {
+	store := NewSkillStore()
+	store.Discover(filepath.Join("testdata", "skills"))
+
+	skills := store.List()
+	if len(skills) != 1 {
+		t.Fatalf("List() returned %d skills, want 1", len(skills))
+	}
+	if skills[0].Name != "my-skill" {
+		t.Errorf("skills[0].Name = %q, want %q", skills[0].Name, "my-skill")
+	}
+}
+
+func TestSkillStore_Get_NotFound(t *testing.T) {
+	store := NewSkillStore()
+	if store.Get("nonexistent") != nil {
+		t.Error("expected nil for nonexistent skill")
+	}
+}
+
+func TestSkillStore_Discover_MissingDir(t *testing.T) {
+	store := NewSkillStore()
+	err := store.Discover("nonexistent-dir")
 	if err != nil {
-		t.Fatalf("DiscoverSkills() should silently handle missing dir, got: %v", err)
+		t.Fatalf("Discover() should silently handle missing dir, got: %v", err)
 	}
 }
 
@@ -422,10 +436,13 @@ func TestRegistry_List(t *testing.T) {
 	}
 }
 
-func TestRegistry_List_WithSkills(t *testing.T) {
+func TestRegistry_List_WithSkillStore(t *testing.T) {
 	r := NewRegistry()
 	r.Register(newMockTool("read_file", "Read a file", "Read full"))
-	r.DiscoverSkills(filepath.Join("testdata", "skills"))
+
+	store := NewSkillStore()
+	store.Discover(filepath.Join("testdata", "skills"))
+	r.SetSkillStore(store)
 
 	list := r.List()
 	if !strings.Contains(list, "Built-in tools (1)") {
@@ -433,6 +450,9 @@ func TestRegistry_List_WithSkills(t *testing.T) {
 	}
 	if !strings.Contains(list, "Skills (1)") {
 		t.Errorf("List() missing skills header: %s", list)
+	}
+	if !strings.Contains(list, "my-skill") {
+		t.Errorf("List() missing skill name: %s", list)
 	}
 }
 
