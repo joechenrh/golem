@@ -8,12 +8,17 @@ import (
 )
 
 // TelegramChannel is a stub for future Telegram bot integration.
-type TelegramChannel struct{}
+// Embeds BaseChannel for default no-op methods.
+type TelegramChannel struct {
+	channel.BaseChannel
+}
 
 // New creates a TelegramChannel stub.
-func New() *TelegramChannel { return &TelegramChannel{} }
-
-func (t *TelegramChannel) Name() string { return "telegram" }
+func New() *TelegramChannel {
+	return &TelegramChannel{
+		BaseChannel: channel.BaseChannel{ChannelName: "telegram"},
+	}
+}
 
 func (t *TelegramChannel) Start(
 	_ context.Context,
@@ -29,13 +34,3 @@ func (t *TelegramChannel) Send(
 }
 
 func (t *TelegramChannel) SendDirect(_ context.Context, _, _ string) error { return nil }
-func (t *TelegramChannel) SendError(_ context.Context, _, _ string) error  { return nil }
-func (t *TelegramChannel) SendTyping(_ context.Context, _ string) error    { return nil }
-
-func (t *TelegramChannel) SupportsStreaming() bool { return false }
-
-func (t *TelegramChannel) SendStream(
-	_ context.Context, _ string, _ <-chan string,
-) error {
-	return nil
-}

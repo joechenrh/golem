@@ -2,6 +2,8 @@ package channel
 
 import (
 	"context"
+	"strings"
+	"time"
 )
 
 // ImageData holds a downloaded image for multimodal messages.
@@ -76,4 +78,102 @@ func ChannelIDFromContext(ctx context.Context) string {
 		return v
 	}
 	return ""
+}
+
+// BaseChannel provides no-op defaults for optional Channel methods.
+// Embed this in channel implementations to reduce boilerplate — only
+// override Start, Send, and SendDirect (the essentials).
+type BaseChannel struct {
+	ChannelName string
+}
+
+func (b *BaseChannel) Name() string                                   { return b.ChannelName }
+func (b *BaseChannel) SendTyping(_ context.Context, _ string) error   { return nil }
+func (b *BaseChannel) SendError(_ context.Context, _, _ string) error { return nil }
+func (b *BaseChannel) SupportsStreaming() bool                        { return false }
+func (b *BaseChannel) SendStream(_ context.Context, _ string, tokenCh <-chan string) error {
+	// Drain to prevent goroutine leaks when streaming is not supported.
+	for range tokenCh {
+	}
+	return nil
+}
+
+// CollectStream drains a token channel and returns the concatenated text.
+// Useful for channels that want to buffer a stream into a single Send call.
+func CollectStream(tokenCh <-chan string) string {
+	var buf strings.Builder
+	for tok := range tokenCh {
+		buf.WriteString(tok)
+	}
+	return buf.String()
+}
+
+// EditStreamer is implemented by channels that support streaming via
+// message editing (create → update → finalize). Used with RunEditStream.
+type EditStreamer interface {
+	// CreateMessage sends an initial message and returns its ID for later edits.
+	CreateMessage(ctx context.Context, channelID, text string) (messageID string, err error)
+	// UpdateMessage edits an existing message in place.
+	UpdateMessage(ctx context.Context, channelID, messageID, text string) error
+	// FinalizeMessage performs the final edit (e.g. image upload, rich formatting).
+	FinalizeMessage(ctx context.Context, channelID, messageID, text string) error
+}
+
+// RunEditStream implements streaming by periodically editing a message.
+// It reads tokens from tokenCh, creates a message on first content, updates
+// at the given interval, and calls FinalizeMessage when the stream ends.
+// The cursor string (e.g. " ▍") is appended during intermediate updates.
+func RunEditStream(
+	ctx context.Context, es EditStreamer,
+	channelID string, tokenCh <-chan string,
+	interval time.Duration, cursor string,
+) error {
+	var messageID string
+	var buf strings.Builder
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	dirty := false
+
+	for {
+		select {
+		case tok, ok := <-tokenCh:
+			if !ok {
+				// Stream complete — finalize.
+				text := buf.String()
+				if messageID != "" {
+					return es.FinalizeMessage(ctx, channelID, messageID, text)
+				}
+				if text != "" {
+					// Never got a tick; create and finalize in one shot.
+					id, err := es.CreateMessage(ctx, channelID, text)
+					if err != nil {
+						return err
+					}
+					return es.FinalizeMessage(ctx, channelID, id, text)
+				}
+				return nil
+			}
+			buf.WriteString(tok)
+			dirty = true
+
+		case <-ticker.C:
+			if !dirty || buf.Len() == 0 {
+				continue
+			}
+			content := buf.String() + cursor
+			if messageID == "" {
+				id, err := es.CreateMessage(ctx, channelID, content)
+				if err != nil {
+					continue // retry on next tick
+				}
+				messageID = id
+			} else {
+				es.UpdateMessage(ctx, channelID, messageID, content)
+			}
+			dirty = false
+
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
