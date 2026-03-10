@@ -394,7 +394,7 @@ func BuildAgent(
 
 	// Register create_skill tool for named agents.
 	if name != "" {
-		registry.Register(builtin.NewCreateSkillTool(name, registry))
+		registry.Register(builtin.NewCreateSkillTool(name, registry.GetSkillStore()))
 	}
 
 	// Build skill directories for periodic reload.
@@ -748,17 +748,21 @@ func BuildToolRegistry(
 		registry.Register(builtin.NewPersonaSelfTool(cfg.Persona))
 	}
 
-	// Discover skills: global scope first, then agent scope (overrides on collision).
+	// Discover skills into a SkillStore, then register the single "skill" tool.
+	skillStore := tools.NewSkillStore()
 	globalSkillsDir := filepath.Join(config.GolemHome(), "skills")
-	if err := registry.DiscoverSkills(globalSkillsDir); err != nil {
+	if err := skillStore.Discover(globalSkillsDir); err != nil {
 		logger.Debug("global skills discovery", zap.Error(err))
 	}
 	if cfg.AgentName != "" {
 		agentSkillsDir := filepath.Join(config.GolemHome(), "agents", cfg.AgentName, "skills")
-		if err := registry.DiscoverSkills(agentSkillsDir); err != nil {
+		if err := skillStore.Discover(agentSkillsDir); err != nil {
 			logger.Debug("agent skills discovery", zap.Error(err))
 		}
 	}
+	registry.SetSkillStore(skillStore)
+	registry.Register(builtin.NewSkillTool(skillStore, registry))
+	registry.Expand("skill") // always expanded so LLM sees the skill list
 
 	// Export GOLEM_HOME so external tool manifests can reference $GOLEM_HOME
 	// in their command/args and have it resolved at load time.
