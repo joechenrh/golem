@@ -548,19 +548,31 @@ func (s *Session) injectExtHookContext(
 	slices.Reverse(recentParts)
 	recentContext := strings.Join(recentParts, "\n")
 
-	injected, err := s.extHooks.Run(ctx, "before_llm_call", s.config.AgentName, map[string]any{
+	hookData := map[string]any{
 		"user_message":   userText,
 		"iteration":      iter,
 		"recent_context": recentContext,
 		"message_count":  len(messages),
-	})
+	}
+	s.logger.Debug("before_llm_call hook input",
+		zap.String("user_message", userText),
+		zap.Int("iteration", iter),
+		zap.Int("message_count", len(messages)),
+		zap.Int("recent_context_len", len(recentContext)))
+
+	injected, err := s.extHooks.Run(ctx, "before_llm_call", s.config.AgentName, hookData)
 	if err != nil {
 		s.logger.Warn("external hook before_llm_call failed", zap.Error(err))
 	} else if injected != "" {
+		s.logger.Debug("before_llm_call hook injected context",
+			zap.Int("injected_len", len(injected)),
+			zap.String("injected_preview", stringutil.Truncate(injected, 200)))
 		messages = append(messages, llm.Message{
 			Role:    llm.RoleUser,
 			Content: "[External context]\n" + injected,
 		})
+	} else {
+		s.logger.Debug("before_llm_call hook returned empty content")
 	}
 	return messages
 }
