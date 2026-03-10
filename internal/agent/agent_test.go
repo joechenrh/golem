@@ -924,3 +924,57 @@ func TestSessionManager_GetOrCreate_ConcurrentStress(t *testing.T) {
 		t.Errorf("session count = %d, want %d", sm.Len(), expectedCount)
 	}
 }
+
+func TestLooksLikeAck(t *testing.T) {
+	// Build a tape with tool history so hasToolHistory returns true.
+	dir := t.TempDir()
+	resolved, _ := filepath.EvalSymlinks(dir)
+	store, err := tape.NewFileStore(filepath.Join(resolved, "tape.jsonl"))
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	// Seed a tool-role message.
+	store.Append(tape.TapeEntry{
+		Kind:    tape.KindMessage,
+		Payload: json.RawMessage(`{"role":"tool","content":"ok","tool_call_id":"tc1","name":"test"}`),
+	})
+
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"chinese ok", "好的", true},
+		{"chinese received", "收到", true},
+		{"chinese understood", "明白", true},
+		{"chinese no problem", "没问题", true},
+		{"chinese ok with filler", "好的，我知道了", true},
+		{"english got it", "Got it", true},
+		{"english sure", "Sure", true},
+		{"english okay", "Okay, understood", true},
+		{"long response not ack", strings.Repeat("This is a detailed answer. ", 10), false},
+		{"plan not ack", "I'll read the file now and check for errors in the configuration.", false},
+		{"real answer", "The answer is 42.", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := looksLikeAck(tt.content, store); got != tt.want {
+				t.Errorf("looksLikeAck(%q) = %v, want %v", tt.content, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLooksLikeAck_NoToolHistory(t *testing.T) {
+	dir := t.TempDir()
+	resolved, _ := filepath.EvalSymlinks(dir)
+	store, err := tape.NewFileStore(filepath.Join(resolved, "tape.jsonl"))
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	// No tool history — ack detection should return false even for "好的".
+	if looksLikeAck("好的", store) {
+		t.Error("looksLikeAck should be false when no tool history exists")
+	}
+}

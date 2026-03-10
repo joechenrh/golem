@@ -236,6 +236,40 @@ func sanitizeTaskSummary(s string) string {
 	return s
 }
 
+// ackMaxLen is the maximum response length considered for acknowledgment detection.
+// Responses longer than this are unlikely to be bare acknowledgments.
+const ackMaxLen = 150
+
+// ackPhrases are short acknowledgment phrases that indicate the agent agreed
+// but did not act. Checked case-insensitively against the full response.
+var ackPhrases = []string{
+	// Chinese
+	"好的", "收到", "明白", "了解", "没问题", "可以",
+	"好呀", "好哒", "知道了", "行",
+	// English
+	"ok", "okay", "sure", "got it", "understood",
+	"alright", "no problem", "will do",
+}
+
+// looksLikeAck returns true if the response is a short acknowledgment
+// (e.g. "好的", "Sure") in a session that has tool history. Without
+// tool history, the agent may legitimately give a short conversational reply.
+func looksLikeAck(content string, tapeStore tape.Store) bool {
+	if len(content) > ackMaxLen || len(strings.TrimSpace(content)) == 0 {
+		return false
+	}
+	if !hasToolHistory(tapeStore) {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(content))
+	for _, phrase := range ackPhrases {
+		if strings.HasPrefix(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 // taskReminderMessage returns a language-aware stuck-recovery message
 // that re-injects the task summary.
 func taskReminderMessage(taskSummary string, content string) string {
