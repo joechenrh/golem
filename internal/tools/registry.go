@@ -21,6 +21,7 @@ type Registry struct {
 	lastUsed    map[string]int // iteration when tool was last expanded/called
 	order       []string       // insertion order for deterministic listing
 	middlewares []middleware.Middleware
+	skillStore  *SkillStore
 }
 
 // NewRegistry creates an empty tool registry.
@@ -194,70 +195,40 @@ func isWordChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
-// DiscoverSkills scans a directory for SKILL.md files and registers them.
-// Pattern: <dir>/*/SKILL.md
-func (r *Registry) DiscoverSkills(dir string) error {
-	skills, err := discoverSkills(dir)
-	if err != nil {
-		return err
-	}
-	for _, s := range skills {
-		r.Register(s)
-	}
-	return nil
+// SetSkillStore associates a SkillStore with this registry.
+func (r *Registry) SetSkillStore(store *SkillStore) {
+	r.skillStore = store
 }
 
-// ReloadSkills re-discovers skills from the given directories and registers
-// any new or changed skills. Returns the count of added/updated skills.
-// Deleted skills are NOT removed to avoid breaking mid-conversation references.
-func (r *Registry) ReloadSkills(dirs []string) int {
-	updated := 0
-	for _, dir := range dirs {
-		skills, err := discoverSkills(dir)
-		if err != nil {
-			continue
-		}
-		for _, s := range skills {
-			existing := r.tools[s.Name()]
-			if existing != nil && existing.FullDescription() == s.FullDescription() {
-				continue // unchanged
-			}
-			r.Register(s)
-			updated++
-		}
-	}
-	return updated
+// GetSkillStore returns the associated SkillStore, or nil if none is set.
+func (r *Registry) GetSkillStore() *SkillStore {
+	return r.skillStore
 }
 
-// List returns a formatted string listing all registered tools.
+// List returns a formatted string listing all registered tools and skills.
 func (r *Registry) List() string {
-	if len(r.order) == 0 {
+	hasTools := len(r.order) > 0
+	hasSkills := r.skillStore != nil && len(r.skillStore.order) > 0
+
+	if !hasTools && !hasSkills {
 		return "No tools registered."
 	}
 
 	var b strings.Builder
-	var builtins, skills []string
-	for _, name := range r.order {
-		if strings.HasPrefix(name, "skill_") {
-			skills = append(skills, name)
-		} else {
-			builtins = append(builtins, name)
-		}
-	}
-
-	if len(builtins) > 0 {
-		fmt.Fprintf(&b, "Built-in tools (%d):\n", len(builtins))
-		for _, name := range builtins {
+	if hasTools {
+		fmt.Fprintf(&b, "Built-in tools (%d):\n", len(r.order))
+		for _, name := range r.order {
 			fmt.Fprintf(&b, "  %-20s %s\n", name, r.tools[name].Description())
 		}
 	}
-	if len(skills) > 0 {
+	if hasSkills {
+		skills := r.skillStore.List()
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
 		fmt.Fprintf(&b, "Skills (%d):\n", len(skills))
-		for _, name := range skills {
-			fmt.Fprintf(&b, "  %-20s %s\n", name, r.tools[name].Description())
+		for _, s := range skills {
+			fmt.Fprintf(&b, "  %-20s %s\n", s.Name, s.Description)
 		}
 	}
 
