@@ -442,60 +442,32 @@ func (l *LarkChannel) SendStream(
 	tokenCh <-chan string,
 ) error {
 	l.sentChats.Store(channelID, true)
+	err := channel.RunEditStream(ctx, &larkEditStreamer{ch: l}, channelID, tokenCh, streamUpdateInterval, " ▍")
+	l.removePendingReaction(ctx, channelID)
+	return err
+}
 
-	var messageID string
-	var sb strings.Builder
-	ticker := time.NewTicker(streamUpdateInterval)
-	defer ticker.Stop()
-	dirty := false
+// larkEditStreamer adapts LarkChannel to the channel.EditStreamer interface.
+type larkEditStreamer struct {
+	ch *LarkChannel
+}
 
-	for {
-		select {
-		case tok, ok := <-tokenCh:
-			if !ok {
-				// Stream done. Final update: upload any images
-				// and build a card with interleaved md + img elements.
-				finalText := sb.String()
-				if messageID != "" {
-					if finalText == "" {
-						l.patchCard(ctx, messageID, "...")
-					} else {
-						l.patchCardRaw(ctx, messageID, l.buildCardWithImages(ctx, finalText))
-					}
-				} else if finalText != "" {
-					l.sendCardRaw(ctx, channelID, l.buildCardWithImages(ctx, finalText))
-				}
-				l.removePendingReaction(ctx, channelID)
-				l.logger.Debug("stream complete",
-					zap.String("chat_id", channelID),
-					zap.Int("chars", sb.Len()))
-				return nil
-			}
-			sb.WriteString(tok)
-			dirty = true
+func (s *larkEditStreamer) CreateMessage(ctx context.Context, channelID, text string) (string, error) {
+	return s.ch.sendCardReturnID(ctx, channelID, text)
+}
 
-		case <-ticker.C:
-			if !dirty || sb.Len() == 0 {
-				continue
-			}
-			content := sb.String() + " ▍"
-			if messageID == "" {
-				id, err := l.sendCardReturnID(ctx, channelID, content)
-				if err != nil {
-					l.logger.Warn("lark stream: failed to send initial card", zap.Error(err))
-					continue
-				}
-				messageID = id
-			} else {
-				l.patchCard(ctx, messageID, content)
-			}
-			dirty = false
+func (s *larkEditStreamer) UpdateMessage(ctx context.Context, _, messageID, text string) error {
+	s.ch.patchCard(ctx, messageID, text)
+	return nil
+}
 
-		case <-ctx.Done():
-			l.removePendingReaction(ctx, channelID)
-			return ctx.Err()
-		}
+func (s *larkEditStreamer) FinalizeMessage(ctx context.Context, channelID, messageID, text string) error {
+	if text == "" {
+		s.ch.patchCard(ctx, messageID, "...")
+		return nil
 	}
+	s.ch.patchCardRaw(ctx, messageID, s.ch.buildCardWithImages(ctx, text))
+	return nil
 }
 
 // removePendingReaction removes the typing reaction stored for a channelID.
