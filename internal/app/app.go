@@ -366,62 +366,19 @@ func BuildAgent(
 	channels, printer, larkCh := buildChannels(name, cfg, logger)
 	schedStore := buildScheduleStore(name, logger)
 
-	// Tool factory builds a fresh registry with all tools including
-	// schedule tools. Shared by the default session, SessionManager,
-	// and scheduler.
-	toolFactory := func() *tools.Registry {
-		r := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
-		if schedStore != nil {
-			r.RegisterAll(
-				builtin.NewScheduleAddTool(schedStore, nil),
-				builtin.NewScheduleListTool(schedStore),
-				builtin.NewScheduleRemoveTool(schedStore, nil),
-			)
-			r.Expand("schedule_add")
-			r.Expand("schedule_list")
-			r.Expand("schedule_remove")
-		}
-		return r
-	}
-
-	// Build skill directories for periodic reload.
+	extHookRunner := buildExtHookRunner(name, logger)
 	skillDirs := buildSkillDirs(cfg)
 
-	extHookRunner := buildExtHookRunner(name, logger)
+	toolFactory, spawnToolFactory := buildToolFactories(
+		cfg, exec, filesystem, larkCh, schedStore,
+		llmClient, agentTapeDir, extHookRunner, logger,
+	)
 
-	// spawnToolFactory wraps toolFactory and adds spawn_agent.
-	// Sub-agents use the base toolFactory (no spawn capability) to prevent
-	// recursive spawning.
-	var subAgentSeq atomic.Int64
-	spawnToolFactory := func() *tools.Registry {
-		r := toolFactory()
-		r.Register(builtin.NewSpawnAgentTool(func(ctx context.Context, prompt string) (string, error) {
-			seq := subAgentSeq.Add(1)
-			subTapePath := filepath.Join(agentTapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
-			sess, err := buildEphemeralSession(llmClient, cfg, toolFactory, logger, "sub-agent", subTapePath, extHookRunner)
-			if err != nil {
-				return "", fmt.Errorf("sub-agent: %w", err)
-			}
-
-			return sess.HandleInput(ctx, channel.IncomingMessage{
-				ChannelName: "internal",
-				Text:        prompt,
-			})
-		}))
-		return r
-	}
-
-	registry := spawnToolFactory()
-
-	// Register create_skill tool for named agents.
-	if name != "" {
-		registry.Register(builtin.NewCreateSkillTool(name, registry.GetSkillStore()))
-	}
-
-	defaultSess := agent.NewSession(llmClient, classifierLLM, registry, tapeStore, ctxStrategy, hookBus, cfg, logger, name)
-	defaultSess.MetricsSummary = metricsHook.Summary
-	defaultSess.SetSkillReload(skillDirs, cfg.SkillReloadInterval)
-	defaultSess.SetExtHooks(extHookRunner)
+	registry, defaultSess := buildDefaultSession(
+		name, cfg, llmClient, classifierLLM,
+		spawnToolFactory, tapeStore, ctxStrategy, hookBus, metricsHook,
+		skillDirs, extHookRunner, logger,
+	)
 
 	// Wire OnDrop callback for HybridStrategy to save dropped context via hooks.
 	if hs, ok := ctxStrategy.(*ctxmgr.HybridStrategy); ok && extHookRunner != nil {
@@ -464,6 +421,84 @@ func BuildAgent(
 		toolFactory:   toolFactory,
 		extHookRunner: extHookRunner,
 	}, nil
+}
+
+// buildToolFactories creates the base tool factory (shared by ephemeral sessions)
+// and the spawn-enabled tool factory (used by the default and managed sessions).
+// Sub-agents use the base factory (no spawn_agent) to prevent recursive spawning.
+func buildToolFactories(
+	cfg *config.Config,
+	exec executor.Executor,
+	filesystem *fs.LocalFS,
+	larkCh *larkchan.LarkChannel,
+	schedStore *scheduler.Store,
+	llmClient llm.Client,
+	agentTapeDir string,
+	extHookRunner agent.ExtHookRunner,
+	logger *zap.Logger,
+) (base, withSpawn func() *tools.Registry) {
+	base = func() *tools.Registry {
+		r := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
+		if schedStore != nil {
+			r.RegisterAll(
+				builtin.NewScheduleAddTool(schedStore, nil),
+				builtin.NewScheduleListTool(schedStore),
+				builtin.NewScheduleRemoveTool(schedStore, nil),
+			)
+			r.Expand("schedule_add")
+			r.Expand("schedule_list")
+			r.Expand("schedule_remove")
+		}
+		return r
+	}
+
+	var subAgentSeq atomic.Int64
+	withSpawn = func() *tools.Registry {
+		r := base()
+		r.Register(builtin.NewSpawnAgentTool(func(ctx context.Context, prompt string) (string, error) {
+			seq := subAgentSeq.Add(1)
+			subTapePath := filepath.Join(agentTapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
+			sess, err := buildEphemeralSession(llmClient, cfg, base, logger, "sub-agent", subTapePath, extHookRunner)
+			if err != nil {
+				return "", fmt.Errorf("sub-agent: %w", err)
+			}
+			return sess.HandleInput(ctx, channel.IncomingMessage{
+				ChannelName: "internal",
+				Text:        prompt,
+			})
+		}))
+		return r
+	}
+	return base, withSpawn
+}
+
+// buildDefaultSession creates the default session with its tool registry.
+func buildDefaultSession(
+	name string,
+	cfg *config.Config,
+	llmClient, classifierLLM llm.Client,
+	toolFactory func() *tools.Registry,
+	tapeStore tape.Store,
+	ctxStrategy ctxmgr.ContextStrategy,
+	hookBus *hooks.Bus,
+	metricsHook *hooks.MetricsHook,
+	skillDirs []string,
+	extHookRunner agent.ExtHookRunner,
+	logger *zap.Logger,
+) (*tools.Registry, *agent.Session) {
+	registry := toolFactory()
+
+	// Register create_skill tool for named agents.
+	if name != "" {
+		registry.Register(builtin.NewCreateSkillTool(name, registry.GetSkillStore()))
+	}
+
+	sess := agent.NewSession(llmClient, classifierLLM, registry, tapeStore, ctxStrategy, hookBus, cfg, logger, name)
+	sess.MetricsSummary = metricsHook.Summary
+	sess.SetSkillReload(skillDirs, cfg.SkillReloadInterval)
+	sess.SetExtHooks(extHookRunner)
+
+	return registry, sess
 }
 
 // buildSessionManager creates and populates a SessionManager for remote channels.
