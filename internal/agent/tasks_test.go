@@ -230,3 +230,78 @@ func TestTaskTracker_SummaryEmpty(t *testing.T) {
 		t.Errorf("Summary() = %q, want %q", summary, "No background tasks.")
 	}
 }
+
+func TestTaskTracker_HasRunning_Empty(t *testing.T) {
+	tt := NewTaskTracker(5)
+	if tt.HasRunning() {
+		t.Error("HasRunning() = true on empty tracker")
+	}
+}
+
+func TestTaskTracker_HasRunning_WithRunningTask(t *testing.T) {
+	tt := NewTaskTracker(5)
+	tt.Launch("test", func(ctx context.Context, id int) {
+		<-ctx.Done() // block until cancelled
+	})
+	if !tt.HasRunning() {
+		t.Error("HasRunning() = false with running task")
+	}
+	tt.Close()
+}
+
+func TestTaskTracker_HasRunning_AfterComplete(t *testing.T) {
+	tt := NewTaskTracker(5)
+	done := make(chan struct{})
+	tt.Launch("test", func(_ context.Context, id int) {
+		tt.Complete(id, "done")
+		close(done)
+	})
+	<-done // wait for goroutine to mark complete
+	if tt.HasRunning() {
+		t.Error("HasRunning() = true after task completed")
+	}
+}
+
+func TestTaskTracker_WaitForAny_CompletesWhenTaskDone(t *testing.T) {
+	tt := NewTaskTracker(5)
+	tt.Launch("slow", func(_ context.Context, id int) {
+		time.Sleep(100 * time.Millisecond)
+		tt.Complete(id, "result")
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	tt.WaitForAny(ctx)
+
+	completed := tt.DrainCompleted()
+	if len(completed) != 1 {
+		t.Fatalf("DrainCompleted() = %d tasks, want 1", len(completed))
+	}
+	if completed[0].Result != "result" {
+		t.Errorf("result = %q, want %q", completed[0].Result, "result")
+	}
+}
+
+func TestTaskTracker_WaitForAny_RespectsContext(t *testing.T) {
+	tt := NewTaskTracker(5)
+	tt.Launch("forever", func(ctx context.Context, id int) {
+		<-ctx.Done()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	tt.WaitForAny(ctx) // should return when ctx expires, not hang
+
+	if !tt.HasRunning() {
+		t.Error("task should still be running after ctx timeout")
+	}
+	tt.Close()
+}
+
+func TestTaskTracker_WaitForAny_NoTasks(t *testing.T) {
+	tt := NewTaskTracker(5)
+	ctx := context.Background()
+	tt.WaitForAny(ctx) // should return immediately
+}

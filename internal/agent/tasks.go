@@ -52,12 +52,16 @@ type TaskTracker struct {
 	tasks map[int]*BackgroundTask
 	seq   int
 	g     errgroup.Group
+	done  chan struct{} // closed/re-created when any task completes
 }
 
 // NewTaskTracker creates a tracker that allows up to maxConcurrent
 // background tasks to run simultaneously.
 func NewTaskTracker(maxConcurrent int) *TaskTracker {
-	tt := &TaskTracker{tasks: make(map[int]*BackgroundTask)}
+	tt := &TaskTracker{
+		tasks: make(map[int]*BackgroundTask),
+		done:  make(chan struct{}),
+	}
 	tt.g.SetLimit(maxConcurrent)
 	return tt
 }
@@ -102,6 +106,7 @@ func (tt *TaskTracker) Complete(id int, result string) {
 		t.CompletedAt = time.Now()
 		t.Result = result
 	}
+	tt.signalDone()
 }
 
 // Fail marks a task as failed.
@@ -112,6 +117,59 @@ func (tt *TaskTracker) Fail(id int, errMsg string) {
 		t.Status = TaskFailed
 		t.CompletedAt = time.Now()
 		t.Error = errMsg
+	}
+	tt.signalDone()
+}
+
+// signalDone wakes any goroutine blocked in WaitForAny.
+// Must be called with tt.mu held.
+func (tt *TaskTracker) signalDone() {
+	close(tt.done)
+	tt.done = make(chan struct{})
+}
+
+// HasRunning returns true if any task is still running.
+func (tt *TaskTracker) HasRunning() bool {
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+	for _, t := range tt.tasks {
+		if t.Status == TaskRunning {
+			return true
+		}
+	}
+	return false
+}
+
+// WaitForAny blocks until at least one task completes (or fails),
+// or the context is cancelled. Returns immediately if no tasks are running
+// or uninjected results already exist.
+func (tt *TaskTracker) WaitForAny(ctx context.Context) {
+	for {
+		tt.mu.Lock()
+		hasRunning := false
+		hasUninjected := false
+		for _, t := range tt.tasks {
+			if t.Status == TaskRunning {
+				hasRunning = true
+			}
+			if !t.injected && (t.Status == TaskCompleted || t.Status == TaskFailed) {
+				hasUninjected = true
+			}
+		}
+		ch := tt.done
+		tt.mu.Unlock()
+
+		// Nothing running or there are already uninjected results — return.
+		if !hasRunning || hasUninjected {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ch:
+			// A task completed — loop to check state.
+		}
 	}
 }
 
