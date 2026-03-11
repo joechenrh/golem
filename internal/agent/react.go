@@ -171,7 +171,7 @@ func (s *Session) persistPendingUserMessage(ctx context.Context, msg *IncomingMe
 	s.appendMessage(llm.RoleUser, msg.Text, nil, msg.SenderID, msgImages)
 	s.hooks.Emit(ctx, hooks.Event{
 		Type:    hooks.EventUserMessage,
-		Payload: map[string]any{"text": msg.Text, "channel_id": msg.ChannelID},
+		Payload: map[string]any{"text": msg.Text, "channel_id": msg.ChannelID, "session_id": s.sessionID},
 	})
 	if s.extHooks != nil {
 		// TODO: consider making fire-and-forget hooks async (goroutine) to avoid blocking the agent loop.
@@ -303,9 +303,10 @@ func (s *Session) executeTool(
 	if err := s.hooks.Emit(ctx, hooks.Event{
 		Type: hooks.EventBeforeToolExec,
 		Payload: map[string]any{
-			"tool_name": tc.Name,
-			"tool_id":   tc.ID,
-			"arguments": tc.Arguments,
+			"tool_name":  tc.Name,
+			"tool_id":    tc.ID,
+			"arguments":  tc.Arguments,
+			"session_id": s.sessionID,
 		},
 	}); err != nil {
 		return "Tool execution blocked: " + err.Error()
@@ -328,9 +329,12 @@ func (s *Session) executeTool(
 	s.hooks.Emit(ctx, hooks.Event{
 		Type: hooks.EventAfterToolExec,
 		Payload: map[string]any{
-			"tool_name": tc.Name,
-			"tool_id":   tc.ID,
-			"result":    stringutil.Truncate(result, maxLogTruncateLen),
+			"tool_name":   tc.Name,
+			"tool_id":     tc.ID,
+			"result":      stringutil.Truncate(result, maxLogTruncateLen),
+			"duration_ms": duration.Milliseconds(),
+			"arguments":   stringutil.Truncate(tc.Arguments, maxLogTruncateLen),
+			"session_id":  s.sessionID,
 		},
 	})
 

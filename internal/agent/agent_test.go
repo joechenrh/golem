@@ -108,7 +108,7 @@ func newTestAgent(t *testing.T, client *mockLLMClient, extraTools ...tools.Tool)
 		MaxToolIter: 15,
 	}
 
-	return NewSession(client, nil, registry, store, strategy, bus, cfg, logger)
+	return NewSession(client, nil, registry, store, strategy, bus, cfg, logger, "test")
 }
 
 func newTestAgentWithClassifier(t *testing.T, client, classifierClient *mockLLMClient, extraTools ...tools.Tool) *Session {
@@ -137,7 +137,7 @@ func newTestAgentWithClassifier(t *testing.T, client, classifierClient *mockLLMC
 		MaxToolIter:     15,
 	}
 
-	return NewSession(client, classifierClient, registry, store, strategy, bus, cfg, logger)
+	return NewSession(client, classifierClient, registry, store, strategy, bus, cfg, logger, "test")
 }
 
 func cliMsg(text string) channel.IncomingMessage {

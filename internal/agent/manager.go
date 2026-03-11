@@ -186,7 +186,7 @@ func (sm *SessionManager) createSession(
 	}
 
 	ctx, cancel := context.WithCancel(sm.baseCtx)
-	sess := NewSession(sm.factory.LLMClient, sm.factory.ClassifierLLM, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger)
+	sess := NewSession(sm.factory.LLMClient, sm.factory.ClassifierLLM, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger, channelID)
 	sess.ctx = ctx
 	sess.cancel = cancel
 	sess.lastAccess = time.Now()
@@ -220,7 +220,7 @@ func (sm *SessionManager) createSessionFromTape(
 
 	registry := sm.factory.ToolFactory()
 
-	sess := NewSession(sm.factory.LLMClient, sm.factory.ClassifierLLM, registry, tapeStore, ctxStrategy, hookBus, sm.factory.Config, sm.logger)
+	sess := NewSession(sm.factory.LLMClient, sm.factory.ClassifierLLM, registry, tapeStore, ctxStrategy, hookBus, sm.factory.Config, sm.logger, "restored")
 	sess.TapePath = tapePath
 	sess.SetSkillReload(sm.factory.SkillDirs, sm.factory.Config.SkillReloadInterval)
 	sess.SetExtHooks(sm.factory.ExtHookRunner)

@@ -185,6 +185,7 @@ func (inst *AgentInstance) processMessages(
 func (inst *AgentInstance) processMessage(
 	ctx context.Context, msg channel.IncomingMessage,
 ) bool {
+	start := time.Now()
 	inst.Logger.Debug("incoming message",
 		zap.String("channel", msg.ChannelName),
 		zap.String("chat_id", msg.ChannelID),
@@ -258,6 +259,12 @@ func (inst *AgentInstance) processMessage(
 			inst.Logger.Error("send error", zap.Error(err))
 		}
 	}
+
+	inst.Logger.Info("dispatch complete",
+		zap.String("channel", msg.ChannelName),
+		zap.String("chat_id", msg.ChannelID),
+		zap.Int64("elapsed_ms", time.Since(start).Milliseconds()))
+
 	return false
 }
 
@@ -403,7 +410,7 @@ func BuildAgent(
 
 	extHookRunner := buildExtHookRunner(name, logger)
 
-	defaultSess := agent.NewSession(llmClient, classifierLLM, registry, tapeStore, ctxStrategy, hookBus, cfg, logger)
+	defaultSess := agent.NewSession(llmClient, classifierLLM, registry, tapeStore, ctxStrategy, hookBus, cfg, logger, name)
 	defaultSess.MetricsSummary = metricsHook.Summary
 	defaultSess.SetSkillReload(skillDirs, cfg.SkillReloadInterval)
 	defaultSess.SetExtHooks(extHookRunner)
@@ -929,5 +936,5 @@ func buildEphemeralSession(
 	hookBus, _ := hooks.BuildDefaultBus(logger.Named(name), nil, auditPath)
 
 	registry := toolFactory()
-	return agent.NewSession(llmClient, nil, registry, tapeStore, ctxStrategy, hookBus, &subCfg, logger.Named(name)), nil
+	return agent.NewSession(llmClient, nil, registry, tapeStore, ctxStrategy, hookBus, &subCfg, logger.Named(name), name), nil
 }

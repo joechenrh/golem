@@ -31,7 +31,7 @@ func (h *LoggingHook) Handle(_ context.Context, event Event) error {
 	case EventBeforeToolExec:
 		h.logger.Info("before tool exec", fields...)
 	case EventAfterToolExec:
-		h.logger.Debug("after tool exec", fields...)
+		h.logger.Info("after tool exec", fields...)
 	case EventError:
 		h.logger.Error("agent error", fields...)
 	default:

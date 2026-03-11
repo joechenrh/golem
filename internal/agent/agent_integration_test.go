@@ -241,7 +241,7 @@ func newTestHarness(t *testing.T, responses []mockResponse) *testHarness {
 		MaxToolIter: 15,
 	}
 
-	agentLoop := NewSession(client, nil, registry, tapeStore, strategy, bus, cfg, logger)
+	agentLoop := NewSession(client, nil, registry, tapeStore, strategy, bus, cfg, logger, "test")
 
 	return &testHarness{
 		agent:    agentLoop,

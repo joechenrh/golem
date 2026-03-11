@@ -80,6 +80,9 @@ type Session struct {
 	// Background task tracker for async subagent orchestration.
 	tasks *TaskTracker
 
+	// Session identity for log context and hook payloads.
+	sessionID string
+
 	// Lifecycle fields (managed by SessionManager for remote chats;
 	// unused for the default CLI session).
 	ctx        context.Context
@@ -127,6 +130,7 @@ type ExtHookRunner interface {
 }
 
 // NewSession creates a Session with all dependencies wired in.
+// sessionID is used as a log context field and included in hook payloads.
 func NewSession(
 	llmClient llm.Client,
 	classifierLLM llm.Client,
@@ -136,6 +140,7 @@ func NewSession(
 	hookBus *hooks.Bus,
 	cfg *config.Config,
 	logger *zap.Logger,
+	sessionID string,
 ) *Session {
 	return &Session{
 		llm:             llmClient,
@@ -145,7 +150,8 @@ func NewSession(
 		contextStrategy: ctxStrategy,
 		hooks:           hookBus,
 		config:          cfg,
-		logger:          logger,
+		logger:          logger.With(zap.String("session", sessionID)),
+		sessionID:       sessionID,
 		tasks:           NewTaskTracker(5),
 		redactor:        redact.New(),
 	}

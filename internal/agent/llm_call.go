@@ -38,7 +38,7 @@ func (s *Session) executeLLMCall(
 
 	s.hooks.Emit(ctx, hooks.Event{
 		Type:    hooks.EventBeforeLLMCall,
-		Payload: map[string]any{"iteration": iter, "message_count": len(messages)},
+		Payload: map[string]any{"iteration": iter, "message_count": len(messages), "session_id": s.sessionID},
 	})
 
 	var resp *llm.ChatResponse
@@ -52,7 +52,7 @@ func (s *Session) executeLLMCall(
 		s.chainValid = false
 		s.hooks.Emit(ctx, hooks.Event{
 			Type:    hooks.EventError,
-			Payload: map[string]any{"error": err.Error()},
+			Payload: map[string]any{"error": err.Error(), "session_id": s.sessionID},
 		})
 		return nil, fmt.Errorf("LLM call: %w", err)
 	}
@@ -227,6 +227,7 @@ func (s *Session) processLLMResponse(ctx context.Context, resp *llm.ChatResponse
 			"prompt_tokens":     resp.Usage.PromptTokens,
 			"completion_tokens": resp.Usage.CompletionTokens,
 			"turn_total_tokens": s.turnUsage.TotalTokens,
+			"session_id":        s.sessionID,
 		},
 	})
 	if s.extHooks != nil {
