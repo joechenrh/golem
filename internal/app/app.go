@@ -67,6 +67,9 @@ type AgentInstance struct {
 
 	// toolFactory builds a fresh tool registry for ephemeral sessions (scheduler, sub-agents).
 	toolFactory func() *tools.Registry
+
+	// extHookRunner propagated to ephemeral sessions (sub-agents, scheduler).
+	extHookRunner agent.ExtHookRunner
 }
 
 // Run starts all channels, processes incoming messages, and blocks until the
@@ -94,11 +97,12 @@ func (inst *AgentInstance) Run(ctx context.Context) error {
 	// Start the scheduler if schedules are configured.
 	if inst.SchedStore != nil {
 		factory := &appSessionFactory{
-			llmClient:   inst.LLMClient,
-			cfg:         inst.Config,
-			logger:      inst.Logger,
-			toolFactory: inst.toolFactory,
-			agentName:   inst.Name,
+			llmClient:     inst.LLMClient,
+			cfg:           inst.Config,
+			logger:        inst.Logger,
+			toolFactory:   inst.toolFactory,
+			agentName:     inst.Name,
+			extHookRunner: inst.extHookRunner,
 		}
 		inst.Sched = scheduler.New(inst.SchedStore, inst.Channels, factory, inst.Logger)
 		go inst.Sched.Run(gctx)
@@ -380,6 +384,11 @@ func BuildAgent(
 		return r
 	}
 
+	// Build skill directories for periodic reload.
+	skillDirs := buildSkillDirs(cfg)
+
+	extHookRunner := buildExtHookRunner(name, logger)
+
 	// spawnToolFactory wraps toolFactory and adds spawn_agent.
 	// Sub-agents use the base toolFactory (no spawn capability) to prevent
 	// recursive spawning.
@@ -389,7 +398,7 @@ func BuildAgent(
 		r.Register(builtin.NewSpawnAgentTool(func(ctx context.Context, prompt string) (string, error) {
 			seq := subAgentSeq.Add(1)
 			subTapePath := filepath.Join(agentTapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
-			sess, err := buildEphemeralSession(llmClient, cfg, toolFactory, logger, "sub-agent", subTapePath)
+			sess, err := buildEphemeralSession(llmClient, cfg, toolFactory, logger, "sub-agent", subTapePath, extHookRunner)
 			if err != nil {
 				return "", fmt.Errorf("sub-agent: %w", err)
 			}
@@ -408,11 +417,6 @@ func BuildAgent(
 	if name != "" {
 		registry.Register(builtin.NewCreateSkillTool(name, registry.GetSkillStore()))
 	}
-
-	// Build skill directories for periodic reload.
-	skillDirs := buildSkillDirs(cfg)
-
-	extHookRunner := buildExtHookRunner(name, logger)
 
 	defaultSess := agent.NewSession(llmClient, classifierLLM, registry, tapeStore, ctxStrategy, hookBus, cfg, logger, name)
 	defaultSess.MetricsSummary = metricsHook.Summary
@@ -445,19 +449,20 @@ func BuildAgent(
 	}
 
 	return &AgentInstance{
-		Name:        name,
-		Config:      cfg,
-		Logger:      logger,
-		LLMClient:   llmClient,
-		Session:     defaultSess,
-		Sessions:    sessions,
-		Channels:    channels,
-		Printer:     printer,
-		Registry:    registry,
-		TapePath:    tapePath,
-		SchedStore:  schedStore,
-		MetricsHook: metricsHook,
-		toolFactory: toolFactory,
+		Name:          name,
+		Config:        cfg,
+		Logger:        logger,
+		LLMClient:     llmClient,
+		Session:       defaultSess,
+		Sessions:      sessions,
+		Channels:      channels,
+		Printer:       printer,
+		Registry:      registry,
+		TapePath:      tapePath,
+		SchedStore:    schedStore,
+		MetricsHook:   metricsHook,
+		toolFactory:   toolFactory,
+		extHookRunner: extHookRunner,
 	}, nil
 }
 
@@ -887,11 +892,12 @@ func DiscoverAndBuildBackgroundAgents(
 // appSessionFactory implements scheduler.SessionFactory by creating ephemeral
 // sessions for scheduled task execution.
 type appSessionFactory struct {
-	llmClient   llm.Client
-	cfg         *config.Config
-	logger      *zap.Logger
-	toolFactory func() *tools.Registry
-	agentName   string
+	llmClient     llm.Client
+	cfg           *config.Config
+	logger        *zap.Logger
+	toolFactory   func() *tools.Registry
+	agentName     string
+	extHookRunner agent.ExtHookRunner
 }
 
 func (f *appSessionFactory) HandleScheduledPrompt(
@@ -902,7 +908,7 @@ func (f *appSessionFactory) HandleScheduledPrompt(
 		return "", err
 	}
 	fullTapePath := filepath.Join(agentDir, tapePath)
-	sess, err := buildEphemeralSession(f.llmClient, f.cfg, f.toolFactory, f.logger, "scheduler", fullTapePath)
+	sess, err := buildEphemeralSession(f.llmClient, f.cfg, f.toolFactory, f.logger, "scheduler", fullTapePath, f.extHookRunner)
 	if err != nil {
 		return "", fmt.Errorf("scheduler: %w", err)
 	}
@@ -917,6 +923,9 @@ const subAgentMaxToolIter = 50
 
 // context strategy, hook bus, and tool registry. Used by spawn_agent and
 // the scheduler to avoid duplicating session setup logic.
+// extHookRunner is optional; when non-nil, external hooks (e.g. mem9)
+// are propagated so sub-agents benefit from the same safety and
+// observability as the parent session.
 func buildEphemeralSession(
 	llmClient llm.Client,
 	cfg *config.Config,
@@ -924,6 +933,7 @@ func buildEphemeralSession(
 	logger *zap.Logger,
 	name string,
 	tapePath string,
+	extHookRunner agent.ExtHookRunner,
 ) (*agent.Session, error) {
 	tapeStore, err := tape.NewFileStore(tapePath)
 	if err != nil {
@@ -940,5 +950,9 @@ func buildEphemeralSession(
 	hookBus, _ := hooks.BuildDefaultBus(logger.Named(name), nil, auditPath)
 
 	registry := toolFactory()
-	return agent.NewSession(llmClient, nil, registry, tapeStore, ctxStrategy, hookBus, &subCfg, logger.Named(name), name), nil
+	sess := agent.NewSession(llmClient, nil, registry, tapeStore, ctxStrategy, hookBus, &subCfg, logger.Named(name), name)
+	if extHookRunner != nil {
+		sess.SetExtHooks(extHookRunner)
+	}
+	return sess, nil
 }
