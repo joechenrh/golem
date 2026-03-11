@@ -68,8 +68,8 @@ func doWithRetry(
 			return resp, nil
 		}
 
-		// Not retryable: 4xx except 429.
-		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 {
+		// Not retryable: non-retriable status codes (4xx except 429).
+		if !isRetryableStatus(resp.StatusCode) {
 			return resp, nil
 		}
 
@@ -137,6 +137,11 @@ func backoff(
 	case <-time.After(wait):
 		return nil
 	}
+}
+
+// isRetryableStatus returns true for HTTP status codes that warrant a retry.
+func isRetryableStatus(code int) bool {
+	return code == 429 || code >= 500
 }
 
 // truncateBody returns a string from body bytes, truncating to maxLen.
