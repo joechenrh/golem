@@ -56,6 +56,8 @@ func (r *ProgressReporter) Handle(ctx context.Context, event hooks.Event) error 
 		r.mu.Unlock()
 		return nil
 	}
+	// Stamp time before sending so a slow or failing channel does not
+	// cause a burst of retries from concurrent callers.
 	r.lastSent = time.Now()
 	r.mu.Unlock()
 
