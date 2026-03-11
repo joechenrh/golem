@@ -17,6 +17,7 @@ import (
 	"github.com/joechenrh/golem/internal/llm"
 	"github.com/joechenrh/golem/internal/tape"
 	"github.com/joechenrh/golem/internal/tools"
+	"github.com/joechenrh/golem/internal/tools/builtin"
 )
 
 // SessionFactory contains everything needed to create a new per-chat session.
@@ -32,6 +33,7 @@ type SessionFactory struct {
 	AuditDir        string             // directory for audit log files (empty to skip)
 	SkillDirs       []string           // directories for periodic skill reload
 	ExtHookRunner   ExtHookRunner      // external hooks runner (nil if none)
+	Channel         DirectSender       // chat channel for progress updates (nil if none)
 }
 
 // SessionManager maintains isolated Session instances keyed by channel ID
@@ -185,6 +187,16 @@ func (sm *SessionManager) createSession(
 			zap.Int("summary_len", len(summary)))
 	}
 
+	// Wire progress tracking.
+	accumulator := NewEventAccumulator(50)
+	hookBus.Register(accumulator)
+	if sm.factory.Channel != nil {
+		reporter := NewProgressReporter(sm.factory.Channel, channelID, 10*time.Second, sm.logger)
+		hookBus.Register(reporter)
+		registry.Register(builtin.NewReportProgressTool(hookBus))
+		registry.Expand("report_progress")
+	}
+
 	ctx, cancel := context.WithCancel(sm.baseCtx)
 	sess := NewSession(sm.factory.LLMClient, sm.factory.ClassifierLLM, registry, tapeStore, ctxStrategy, hookBus, cfg, sm.logger, channelID)
 	sess.ctx = ctx
@@ -193,6 +205,8 @@ func (sm *SessionManager) createSession(
 	sess.TapePath = tapePath
 	sess.SetSkillReload(sm.factory.SkillDirs, sm.factory.Config.SkillReloadInterval)
 	sess.SetExtHooks(sm.factory.ExtHookRunner)
+	sess.SetAccumulator(accumulator)
+	sess.Tasks().SetHooks(hookBus)
 
 	return sess, nil
 }
@@ -220,10 +234,22 @@ func (sm *SessionManager) createSessionFromTape(
 
 	registry := sm.factory.ToolFactory()
 
+	// Wire progress tracking.
+	accumulator := NewEventAccumulator(50)
+	hookBus.Register(accumulator)
+	if sm.factory.Channel != nil {
+		reporter := NewProgressReporter(sm.factory.Channel, "restored", 10*time.Second, sm.logger)
+		hookBus.Register(reporter)
+		registry.Register(builtin.NewReportProgressTool(hookBus))
+		registry.Expand("report_progress")
+	}
+
 	sess := NewSession(sm.factory.LLMClient, sm.factory.ClassifierLLM, registry, tapeStore, ctxStrategy, hookBus, sm.factory.Config, sm.logger, "restored")
 	sess.TapePath = tapePath
 	sess.SetSkillReload(sm.factory.SkillDirs, sm.factory.Config.SkillReloadInterval)
 	sess.SetExtHooks(sm.factory.ExtHookRunner)
+	sess.SetAccumulator(accumulator)
+	sess.Tasks().SetHooks(hookBus)
 	sess.RestoreExpandedTools()
 
 	return sess, nil
