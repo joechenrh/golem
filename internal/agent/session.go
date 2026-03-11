@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -29,7 +30,13 @@ type IncomingMessage = channel.IncomingMessage
 // Session orchestrates the ReAct loop for a single conversation: LLM calls,
 // tool execution, tape recording, command routing, and token tracking.
 // Each conversation (CLI or remote chat) gets its own Session.
+//
+// For remote channels (e.g. Lark), multiple messages may arrive for the
+// same chat concurrently. The mu mutex serializes access so that only one
+// HandleInput/HandleInputStream call runs at a time per Session.
 type Session struct {
+	mu sync.Mutex // serializes HandleInput/HandleInputStream calls
+
 	llm             llm.Client
 	classifierLLM   llm.Client // lightweight model for nudge classification (nil = disabled)
 	tools           *tools.Registry
@@ -181,10 +188,13 @@ func (s *Session) Close() {
 }
 
 // HandleInput processes a user message and returns the final response.
-// Used by non-streaming channels.
+// Used by non-streaming channels. Serialized per session via mu.
 func (s *Session) HandleInput(
 	ctx context.Context, msg channel.IncomingMessage,
 ) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	ctx = channel.WithChannelID(ctx, msg.ChannelID)
 
 	route := router.RouteUser(msg.Text)
@@ -197,10 +207,14 @@ func (s *Session) HandleInput(
 
 // HandleInputStream processes a user message with streaming.
 // Tokens are sent to tokenCh as they arrive. Used by CLI.
+// Serialized per session via mu.
 func (s *Session) HandleInputStream(
 	ctx context.Context, msg channel.IncomingMessage,
 	tokenCh chan<- string,
 ) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	ctx = channel.WithChannelID(ctx, msg.ChannelID)
 
 	route := router.RouteUser(msg.Text)
