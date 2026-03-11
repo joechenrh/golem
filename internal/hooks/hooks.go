@@ -19,6 +19,14 @@ const (
 	EventBeforeToolExec EventType = "before_tool_exec"
 	EventAfterToolExec  EventType = "after_tool_exec"
 	EventError          EventType = "error"
+
+	// Progress tracking events.
+	EventIterationStart EventType = "iteration_start"
+	EventPhaseUpdate    EventType = "phase_update"
+	EventTaskLaunched   EventType = "task_launched"
+	EventTaskCompleted  EventType = "task_completed"
+	EventTurnStart      EventType = "turn_start"
+	EventTurnDone       EventType = "turn_done"
 )
 
 // Event represents a lifecycle event with an untyped payload.
