@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"time"
 
@@ -47,6 +48,7 @@ type StatusSnapshot struct {
 // NewEventAccumulator creates an accumulator with the given rolling window size.
 func NewEventAccumulator(maxEvents int) *EventAccumulator {
 	return &EventAccumulator{
+		events:    make([]accEvent, 0, maxEvents),
 		maxEvents: maxEvents,
 	}
 }
@@ -61,20 +63,27 @@ func (a *EventAccumulator) Handle(_ context.Context, event hooks.Event) error {
 
 	// Reset on turn start before recording the event.
 	if event.Type == hooks.EventTurnStart {
-		a.events = a.events[:0]
+		a.events = make([]accEvent, 0, a.maxEvents)
 		a.current = SessionState{}
 	}
+
+	// Shallow-copy payload to avoid aliasing the caller's map.
+	payload := make(map[string]any, len(event.Payload))
+	maps.Copy(payload, event.Payload)
 
 	entry := accEvent{
 		Type:      event.Type,
 		Timestamp: time.Now(),
-		Payload:   event.Payload,
+		Payload:   payload,
 	}
 
+	// Copy-down eviction keeps the backing array at its pre-allocated capacity.
 	if len(a.events) >= a.maxEvents {
-		a.events = a.events[1:]
+		copy(a.events, a.events[1:])
+		a.events[len(a.events)-1] = entry
+	} else {
+		a.events = append(a.events, entry)
 	}
-	a.events = append(a.events, entry)
 
 	switch event.Type {
 	case hooks.EventBeforeToolExec:
@@ -93,8 +102,6 @@ func (a *EventAccumulator) Handle(_ context.Context, event hooks.Event) error {
 		a.current.RunningTasks++
 	case hooks.EventTaskCompleted:
 		a.current.RunningTasks = max(0, a.current.RunningTasks-1)
-	case hooks.EventTurnStart:
-		a.current.IdleSince = nil
 	case hooks.EventTurnDone:
 		now := time.Now()
 		a.current.IdleSince = &now
