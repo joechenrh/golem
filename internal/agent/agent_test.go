@@ -1224,6 +1224,214 @@ func (m *mockSpawnTool) Execute(ctx context.Context, args string) (string, error
 	return "Task #1 started", nil
 }
 
+// ── Integration Test ─────────────────────────────────────────────
+
+// mockFailThenSucceedTool fails on the first call with a given input,
+// then succeeds on subsequent calls.
+type mockFailThenSucceedTool struct {
+	mu       sync.Mutex
+	name     string
+	calls    []string // recorded arguments
+	failArgs string   // fail when arguments contain this
+}
+
+func (m *mockFailThenSucceedTool) Name() string        { return m.name }
+func (m *mockFailThenSucceedTool) Description() string { return "mock fail-then-succeed tool" }
+func (m *mockFailThenSucceedTool) FullDescription() string {
+	return "mock fail-then-succeed tool for testing"
+}
+func (m *mockFailThenSucceedTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`)
+}
+
+func (m *mockFailThenSucceedTool) Execute(_ context.Context, args string) (string, error) {
+	m.mu.Lock()
+	m.calls = append(m.calls, args)
+	m.mu.Unlock()
+
+	if strings.Contains(args, m.failArgs) {
+		return "", fmt.Errorf("file not found: %s", m.failArgs)
+	}
+	return "content of the file", nil
+}
+
+// TestIntegration_FullReActLoop exercises the complete ReAct loop with:
+//   - Multi-step tool calling (read file → fail → self-correct → succeed)
+//   - Tool failure tracking and self-correction
+//   - Streaming mode with token collection
+//   - Tape persistence verification (correct entry count and content)
+//   - Hook emission (before/after tool exec)
+func TestIntegration_FullReActLoop(t *testing.T) {
+	// Scenario:
+	// 1. LLM calls read_file with wrong path → tool returns error
+	// 2. LLM self-corrects, calls read_file with correct path → success
+	// 3. LLM calls analyze tool with file content → success
+	// 4. LLM returns final text answer
+	client := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			// Step 1: LLM tries wrong path
+			{
+				FinishReason: "tool_calls",
+				ToolCalls: []llm.ToolCall{
+					{ID: "tc1", Name: "read_file", Arguments: `{"path":"wrong.txt"}`},
+				},
+			},
+			// Step 2: LLM sees error, retries with correct path
+			{
+				FinishReason: "tool_calls",
+				ToolCalls: []llm.ToolCall{
+					{ID: "tc2", Name: "read_file", Arguments: `{"path":"correct.txt"}`},
+				},
+			},
+			// Step 3: LLM calls analyze with the file content
+			{
+				FinishReason: "tool_calls",
+				ToolCalls: []llm.ToolCall{
+					{ID: "tc3", Name: "analyze", Arguments: `{"data":"content of the file"}`},
+				},
+			},
+			// Step 4: final answer
+			{Content: "Analysis complete: the file contains important data.", FinishReason: "stop"},
+		},
+	}
+
+	readTool := &mockFailThenSucceedTool{name: "read_file", failArgs: "wrong.txt"}
+	analyzeTool := &mockTool{name: "analyze", result: "analysis: data is valid"}
+
+	// Track hook events.
+	var hookEvents []hooks.Event
+	var hookMu sync.Mutex
+	hookRecorder := &recordingHook{record: func(e hooks.Event) {
+		hookMu.Lock()
+		hookEvents = append(hookEvents, e)
+		hookMu.Unlock()
+	}}
+
+	agent := newTestAgent(t, client, readTool, analyzeTool)
+	agent.hooks.Register(hookRecorder)
+
+	// --- Non-streaming test ---
+	t.Run("non-streaming", func(t *testing.T) {
+		result, err := agent.HandleInput(context.Background(), cliMsg("Analyze the file"))
+		if err != nil {
+			t.Fatalf("HandleInput: %v", err)
+		}
+
+		// Verify final answer.
+		if !strings.Contains(result, "Analysis complete") {
+			t.Errorf("result = %q, want final answer", result)
+		}
+
+		// Verify LLM was called 4 times (fail + retry + analyze + final).
+		if client.callCount != 4 {
+			t.Errorf("LLM callCount = %d, want 4", client.callCount)
+		}
+
+		// Verify tool was called with both paths.
+		readTool.mu.Lock()
+		calls := append([]string{}, readTool.calls...)
+		readTool.mu.Unlock()
+		if len(calls) != 2 {
+			t.Fatalf("read_file calls = %d, want 2", len(calls))
+		}
+		if !strings.Contains(calls[0], "wrong.txt") {
+			t.Errorf("first call = %q, want wrong.txt", calls[0])
+		}
+		if !strings.Contains(calls[1], "correct.txt") {
+			t.Errorf("second call = %q, want correct.txt", calls[1])
+		}
+
+		// Verify tape entries:
+		// user msg + (assistant+tool_result)*3 + assistant final = 8 entries min
+		entries, err := agent.tape.Entries()
+		if err != nil {
+			t.Fatalf("tape.Entries: %v", err)
+		}
+		if len(entries) < 8 {
+			t.Errorf("tape entries = %d, want >= 8", len(entries))
+		}
+
+		// Verify tape contains both the error and successful tool results.
+		tapeJSON, _ := json.Marshal(entries)
+		tapeStr := string(tapeJSON)
+		if !strings.Contains(tapeStr, "file not found") {
+			t.Error("tape should contain the tool error")
+		}
+		if !strings.Contains(tapeStr, "content of the file") {
+			t.Error("tape should contain the successful tool result")
+		}
+
+		// Verify hooks fired for tool executions.
+		hookMu.Lock()
+		var beforeCount, afterCount int
+		for _, e := range hookEvents {
+			switch e.Type {
+			case hooks.EventBeforeToolExec:
+				beforeCount++
+			case hooks.EventAfterToolExec:
+				afterCount++
+			}
+		}
+		hookMu.Unlock()
+		// 3 tool calls (2x read_file + 1x analyze).
+		if beforeCount != 3 {
+			t.Errorf("before_tool_exec hooks = %d, want 3", beforeCount)
+		}
+		if afterCount != 3 {
+			t.Errorf("after_tool_exec hooks = %d, want 3", afterCount)
+		}
+	})
+
+	// --- Streaming test ---
+	t.Run("streaming", func(t *testing.T) {
+		// Reset for streaming test.
+		client2 := &mockLLMClient{
+			responses: []*llm.ChatResponse{
+				{
+					FinishReason: "tool_calls",
+					ToolCalls:    []llm.ToolCall{{ID: "s1", Name: "analyze", Arguments: `{"data":"test"}`}},
+				},
+				{Content: "Streaming result ready.", FinishReason: "stop"},
+			},
+		}
+		streamAgent := newTestAgent(t, client2, analyzeTool)
+
+		tokenCh := make(chan string, 100)
+		var tokens []string
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for tok := range tokenCh {
+				tokens = append(tokens, tok)
+			}
+		}()
+
+		err := streamAgent.HandleInputStream(context.Background(), cliMsg("Stream test"), tokenCh)
+		close(tokenCh)
+		<-done
+
+		if err != nil {
+			t.Fatalf("HandleInputStream: %v", err)
+		}
+
+		joined := strings.Join(tokens, "")
+		if !strings.Contains(joined, "Streaming result ready") {
+			t.Errorf("streamed = %q, want to contain final answer", joined)
+		}
+	})
+}
+
+// recordingHook records hook events for test verification.
+type recordingHook struct {
+	record func(hooks.Event)
+}
+
+func (h *recordingHook) Name() string { return "recorder" }
+func (h *recordingHook) Handle(_ context.Context, event hooks.Event) error {
+	h.record(event)
+	return nil
+}
+
 func TestHandleInput_TaskRecoveryAtIterLimit(t *testing.T) {
 	// Scenario: LLM keeps making tool calls after spawning a sub-agent,
 	// hitting MaxToolIter. The recovery phase should wait for the task
