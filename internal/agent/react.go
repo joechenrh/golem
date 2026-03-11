@@ -65,6 +65,20 @@ func (s *Session) runReActLoop(
 		s.cachedSystemPrompt = s.prompt.CachedPrompt()
 	}
 
+	// Emit turn_start for progress tracking.
+	if s.accumulator != nil {
+		s.hooks.Emit(ctx, hooks.Event{
+			Type:    hooks.EventTurnStart,
+			Payload: map[string]any{"user_message": truncateForPayload(pendingMsg)},
+		})
+		defer func() {
+			s.hooks.Emit(ctx, hooks.Event{
+				Type:    hooks.EventTurnDone,
+				Payload: map[string]any{"tokens_used": s.turnUsage.TotalTokens},
+			})
+		}()
+	}
+
 	nudges := 0
 	stuckEscalated := false
 	s.lastTaskSummary = ""
@@ -72,6 +86,16 @@ func (s *Session) runReActLoop(
 
 	iter := 0
 	for iter < s.config.MaxToolIter {
+		// Emit iteration_start for progress tracking.
+		if s.accumulator != nil {
+			s.hooks.Emit(ctx, hooks.Event{
+				Type: hooks.EventIterationStart,
+				Payload: map[string]any{
+					"iteration": iter,
+					"max_iter":  s.config.MaxToolIter,
+				},
+			})
+		}
 		// Inject completed background task results as ephemeral messages.
 		s.ephemeralMessages = append(s.ephemeralMessages, s.toolExec.InjectCompletedTasks()...)
 
@@ -320,6 +344,17 @@ func (s *Session) processAssistantResponse(
 
 	s.appendMessage(llm.RoleAssistant, content, nil, "", nil)
 	return content
+}
+
+// truncateForPayload returns a truncated user message for event payloads.
+func truncateForPayload(msg *IncomingMessage) string {
+	if msg == nil {
+		return ""
+	}
+	if len(msg.Text) > 200 {
+		return msg.Text[:200] + "…"
+	}
+	return msg.Text
 }
 
 // lastUserMessage returns the most recent user message text from the tape.
