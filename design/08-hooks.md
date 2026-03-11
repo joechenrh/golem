@@ -156,7 +156,50 @@ The optional `env` section declares environment variable overrides for the hook 
 
 Hook discovery scans `~/.golem/hooks/` (global) and `~/.golem/agents/<name>/hooks/` (per-agent).
 
-## 10. Current Gaps
+## 10. Progress Tracking Events & Hooks
+
+Source: `internal/hooks/accumulator.go`, `internal/agent/session.go`, `internal/tools/builtins/`
+
+### 10.1 New Event Types
+
+Six additional event types support real-time progress visibility during long-running agentic tasks:
+
+| `EventType` constant | String value | Fires when | Blocking? |
+|---|---|---|---|
+| `EventTurnStart` | `turn_start` | `runReActLoop` begins a new turn | No |
+| `EventIterationStart` | `iteration_start` | Top of each ReAct iteration | No |
+| `EventTurnDone` | `turn_done` | `runReActLoop` returns (normal or error) | No |
+| `EventTaskLaunched` | `task_launched` | `TaskTracker` records a new background task | No |
+| `EventTaskCompleted` | `task_completed` | `TaskTracker` marks a task finished | No |
+| `EventPhaseUpdate` | `phase_update` | `report_progress` builtin tool is called | No |
+
+All six are notification events (no `before_` prefix); errors from their handlers are logged and ignored.
+
+### 10.2 EventAccumulator
+
+`EventAccumulator` is an internal hook that collects the above progress events into an in-memory state snapshot. It tracks:
+
+- Current phase label and description (from `phase_update` payloads)
+- Running count of completed vs. total iterations
+- List of active and completed background tasks
+
+`Snapshot()` returns an immutable `ProgressSnapshot` safe for concurrent read. The session calls `Accumulator()` to retrieve the current snapshot for display (e.g. in `StatusInfo()`).
+
+### 10.3 ProgressReporter
+
+`ProgressReporter` listens for `phase_update` events and forwards the phase label to the chat channel as a human-readable status message. It applies a minimum-interval throttle (default 2 s) to avoid flooding the channel when tools report progress at high frequency. The reporter is registered only on remote (non-CLI) sessions where the chat channel supports unsolicited status messages.
+
+### 10.4 Emission Sites
+
+| Event | Emitted by |
+|---|---|
+| `turn_start`, `turn_done` | `runReActLoop` in `session.go` |
+| `iteration_start` | Top-of-loop in `runReActLoop` |
+| `before_tool_exec`, `after_tool_exec` | `ToolExecutor` (pre-existing) |
+| `task_launched`, `task_completed` | `TaskTracker` in `internal/agent/tasks.go` |
+| `phase_update` | `report_progress` builtin tool |
+
+## 11. Current Gaps
 
 * **No hook removal / deregistration.** Once registered, a hook stays for the lifetime of the bus. There is no `Unregister` or priority/ordering API.
 * **No per-event filtering at registration time.** Every hook receives every event and must filter internally. A subscription map (`EventType -> []Hook`) would reduce dispatch overhead.
