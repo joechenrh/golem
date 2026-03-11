@@ -66,7 +66,7 @@ All commands are prefixed with `:`:
 | **Shell** | `shell_exec` |
 | **Web** | `web_search`, `web_fetch`, `http_request` |
 | **Lark/Feishu** | `lark_send`, `lark_list_chats`, `lark_read_doc`, `lark_write_doc` |
-| **Agent** | `spawn_agent`, `check_tasks`, `persona_self`, `create_skill` |
+| **Agent** | `spawn_agent`, `persona_self`, `create_skill` |
 | **Scheduler** | `schedule_add`, `schedule_list`, `schedule_remove` |
 
 Tools use **progressive disclosure**: only a minimal schema is sent initially, expanding to the full parameter schema when referenced.

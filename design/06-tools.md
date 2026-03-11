@@ -52,7 +52,7 @@ Middlewares wrap `Execute` in registration order (outermost first). The app curr
 3. Lark tools (if `LarkChannel` is configured) — pre-expanded
 4. Persona memory tool (if persona is configured)
 5. Schedule tools (added later, on the default registry)
-6. Spawn agent tool + check_tasks tool
+6. Spawn agent tool
 7. Skill tool (single `skill` tool, always expanded; `SkillStore` discovers from `~/.golem/skills/` then `~/.golem/agents/<name>/skills/`)
 8. External plugins (from `~/.golem/plugins/*.tool.json`, e.g. mem9 memory tools)
 
@@ -149,8 +149,7 @@ Source: `internal/tools/external.go`
 | `schedule_add` | Create a cron-scheduled task; supports standard cron, `@daily`, `@every 30m`, `CRON_TZ=` | `cron_expr`, `prompt`, `channel_name`, `channel_id`, `description` |
 | `schedule_list` | List all scheduled tasks | (none) |
 | `schedule_remove` | Remove a scheduled task by ID | `id` |
-| `spawn_agent` | Launch an async background sub-agent; returns a task ID immediately (sub-agents cannot spawn further agents) | `prompt`, `context` (optional) |
-| `check_tasks` | Check status and results of background tasks launched by `spawn_agent` | (none) |
+| `spawn_agent` | Launch an async background sub-agent; returns a task ID immediately. Completed results are automatically delivered to the session as ephemeral messages (sub-agents cannot spawn further agents) | `prompt`, `context` (optional) |
 
 File tools skip binary files (detected by extension) and ignore directories like `.git`, `node_modules`, `vendor`, `__pycache__`, `.venv`, and `target` during listing and searching. All Lark tools are pre-expanded in the registry. Both doc tools auto-extract the document token from full Feishu/Lark URLs. Schedules fire prompts into isolated agent sessions at cron times.
 

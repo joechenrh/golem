@@ -14,7 +14,7 @@ This project is a **Go clone** of [CrabClaw](https://github.com/jackwener/crabcl
 - **Multiple LLM providers**: OpenAI, Anthropic, any OpenAI-compatible service
 - **21 built-in tools** with progressive disclosure to save tokens
 - **Parallel tool execution**: Multiple tool calls run concurrently via errgroup
-- **Async subagent orchestration**: `spawn_agent` launches background tasks that run independently; main session stays responsive with `check_tasks` for status monitoring
+- **Async subagent orchestration**: `spawn_agent` launches background tasks that run independently; completed results are automatically delivered to the main session via in-memory wait
 - **Skill system**: Two-scope skill discovery from `~/.golem/skills/` (global) and `~/.golem/agents/<name>/skills/` (per-agent), plus runtime skill creation
 - **Context management**: Tape-based conversation log with three strategies (anchor, masking, hybrid) and overhead budgeting for system prompt + tool schemas
 - **Persona system**: Three-layer agent identity (SOUL.md, AGENTS.md, MEMORY.md) with shared USER.md
@@ -70,7 +70,7 @@ Remote channels (Lark) also support `/help`, `/new`, `/status`.
 | **Shell** | `shell_exec` |
 | **Web** | `web_search`, `web_fetch`, `http_request` |
 | **Lark/Feishu** | `lark_send`, `lark_list_chats`, `lark_read_doc`, `lark_write_doc`, `chat_history` |
-| **Agent** | `spawn_agent`, `check_tasks`, `persona_self`, `create_skill` |
+| **Agent** | `spawn_agent`, `persona_self`, `create_skill` |
 | **Scheduler** | `schedule_add`, `schedule_list`, `schedule_remove` |
 
 Tools use progressive disclosure: only a minimal schema is sent initially, expanding to the full parameter schema when the LLM calls a tool.
