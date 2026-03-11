@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/joechenrh/golem/internal/hooks"
+	"github.com/joechenrh/golem/internal/stringutil"
 )
 
 // TaskStatus represents the state of a background task.
@@ -53,6 +56,7 @@ type TaskTracker struct {
 	seq   int
 	g     errgroup.Group
 	done  chan struct{} // closed/re-created when any task completes
+	hooks *hooks.Bus    // optional, nil for sub-agent trackers
 }
 
 // NewTaskTracker creates a tracker that allows up to maxConcurrent
@@ -64,6 +68,11 @@ func NewTaskTracker(maxConcurrent int) *TaskTracker {
 	}
 	tt.g.SetLimit(maxConcurrent)
 	return tt
+}
+
+// SetHooks attaches a hook bus for emitting task lifecycle events.
+func (tt *TaskTracker) SetHooks(bus *hooks.Bus) {
+	tt.hooks = bus
 }
 
 // Add registers a new running task and returns its ID.
@@ -90,6 +99,15 @@ func (tt *TaskTracker) Launch(desc string, fn func(ctx context.Context, id int))
 	// the parent tool-call errgroup finishes.
 	ctx, cancel := context.WithCancel(context.WithoutCancel(context.Background()))
 	id := tt.Add(desc, cancel)
+	if tt.hooks != nil {
+		tt.hooks.Emit(context.Background(), hooks.Event{
+			Type: hooks.EventTaskLaunched,
+			Payload: map[string]any{
+				"task_id":     id,
+				"description": desc,
+			},
+		})
+	}
 	tt.g.Go(func() error {
 		fn(ctx, id)
 		return nil
@@ -100,25 +118,51 @@ func (tt *TaskTracker) Launch(desc string, fn func(ctx context.Context, id int))
 // Complete marks a task as successfully completed.
 func (tt *TaskTracker) Complete(id int, result string) {
 	tt.mu.Lock()
-	defer tt.mu.Unlock()
+	var desc string
 	if t, ok := tt.tasks[id]; ok {
 		t.Status = TaskCompleted
 		t.CompletedAt = time.Now()
 		t.Result = result
+		desc = t.Description
 	}
 	tt.signalDone()
+	tt.mu.Unlock()
+
+	if tt.hooks != nil && desc != "" {
+		tt.hooks.Emit(context.Background(), hooks.Event{
+			Type: hooks.EventTaskCompleted,
+			Payload: map[string]any{
+				"task_id":     id,
+				"description": desc,
+				"result":      stringutil.Truncate(result, 200),
+			},
+		})
+	}
 }
 
 // Fail marks a task as failed.
 func (tt *TaskTracker) Fail(id int, errMsg string) {
 	tt.mu.Lock()
-	defer tt.mu.Unlock()
+	var desc string
 	if t, ok := tt.tasks[id]; ok {
 		t.Status = TaskFailed
 		t.CompletedAt = time.Now()
 		t.Error = errMsg
+		desc = t.Description
 	}
 	tt.signalDone()
+	tt.mu.Unlock()
+
+	if tt.hooks != nil && desc != "" {
+		tt.hooks.Emit(context.Background(), hooks.Event{
+			Type: hooks.EventTaskCompleted,
+			Payload: map[string]any{
+				"task_id":     id,
+				"description": desc,
+				"error":       errMsg,
+			},
+		})
+	}
 }
 
 // signalDone wakes any goroutine blocked in WaitForAny.
