@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -1143,4 +1144,82 @@ func TestHandleInputStream_ToolCallsThenFinalAnswer(t *testing.T) {
 	if !strings.Contains(joined, "mock output") {
 		t.Errorf("final response missing: %q", joined)
 	}
+}
+
+func TestHandleInput_WaitsForBackgroundTasks(t *testing.T) {
+	// LLM response sequence:
+	// 1. Call spawn_agent tool
+	// 2. Text response "Working on it..." (while task runs)
+	// 3. After task completes, LLM sees result and gives final answer
+	client := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			{
+				ToolCalls: []llm.ToolCall{{
+					ID:        "call_1",
+					Name:      "spawn_agent",
+					Arguments: `{"prompt": "do work"}`,
+				}},
+				FinishReason: "tool_calls",
+			},
+			{Content: "I've started the analysis.", FinishReason: "stop"},
+			{Content: "The analysis found X.", FinishReason: "stop"},
+		},
+	}
+
+	spawnTool := &mockSpawnTool{
+		runner: func(_ context.Context, prompt string) (string, error) {
+			time.Sleep(200 * time.Millisecond)
+			return "sub-agent result: fixed the bug", nil
+		},
+	}
+
+	agent := newTestAgent(t, client, spawnTool)
+	agent.config.MaxToolIter = 3 // tight limit to verify wait doesn't burn iterations
+	result, err := agent.HandleInput(context.Background(), cliMsg("fix the bug"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+
+	// Should get the THIRD response (after task completed), not the second.
+	if !strings.Contains(result, "analysis found X") {
+		t.Errorf("result = %q, want final answer after task completion", result)
+	}
+
+	// LLM should have been called 3 times (not hit the limit).
+	if client.callCount != 3 {
+		t.Errorf("LLM called %d times, want 3", client.callCount)
+	}
+}
+
+// mockSpawnTool simulates spawn_agent for testing.
+type mockSpawnTool struct {
+	runner func(ctx context.Context, prompt string) (string, error)
+}
+
+func (m *mockSpawnTool) Name() string            { return "spawn_agent" }
+func (m *mockSpawnTool) Description() string     { return "test spawn" }
+func (m *mockSpawnTool) FullDescription() string { return "test spawn" }
+func (m *mockSpawnTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"prompt":{"type":"string"}},"required":["prompt"]}`)
+}
+func (m *mockSpawnTool) Execute(ctx context.Context, args string) (string, error) {
+	var params struct{ Prompt string }
+	json.Unmarshal([]byte(args), &params)
+
+	tracker := tools.GetTaskTracker(ctx)
+	if tracker == nil {
+		return m.runner(ctx, params.Prompt)
+	}
+
+	capturedPrompt := params.Prompt
+	runner := m.runner
+	tracker.Launch("test task", func(taskCtx context.Context, id int) {
+		result, err := runner(taskCtx, capturedPrompt)
+		if err != nil {
+			tracker.Fail(id, err.Error())
+		} else {
+			tracker.Complete(id, result)
+		}
+	})
+	return "Task #1 started", nil
 }

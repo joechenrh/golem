@@ -73,7 +73,8 @@ func (s *Session) runReActLoop(
 	s.lastTaskSummary = ""
 	emptyRetries := 0
 
-	for iter := range s.config.MaxToolIter {
+	iter := 0
+	for iter < s.config.MaxToolIter {
 		// Inject completed background task results as ephemeral messages.
 		s.injectCompletedTasks()
 
@@ -85,6 +86,7 @@ func (s *Session) runReActLoop(
 		if err != nil {
 			return "", err
 		}
+		iter++
 
 		// First successful LLM call — persist the pending user message.
 		if pendingMsg != nil {
@@ -93,8 +95,9 @@ func (s *Session) runReActLoop(
 		}
 
 		// Tool calls present — execute them and continue the loop.
+		// Pass iter-1 because iter was already incremented after executeLLMCall.
 		if len(resp.ToolCalls) > 0 {
-			s.processToolCalls(ctx, resp, iter)
+			s.processToolCalls(ctx, resp, iter-1)
 			continue
 		}
 
@@ -143,7 +146,22 @@ func (s *Session) runReActLoop(
 			}
 		}
 
-		// Final answer — no tool calls.
+		// Task wait: if background tasks are still running, send a status
+		// summary to the user and wait in-memory for completion instead
+		// of returning. This avoids burning iterations on polling.
+		if s.tasks.HasRunning() {
+			s.logger.Debug("waiting for background tasks before returning",
+				zap.Int("iter", iter))
+			if stream && tokenCh != nil {
+				tokenCh <- s.tasks.Summary()
+			}
+			s.tasks.WaitForAny(ctx)
+			s.injectCompletedTasks()
+			// Don't count the wait as an iteration — the LLM wasn't called.
+			continue
+		}
+
+		// Final answer — no tool calls, no running tasks.
 		content := s.processAssistantResponse(ctx, resp)
 		s.persistExpandedTools()
 		if stream && tokenCh != nil {
