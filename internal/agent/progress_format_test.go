@@ -30,7 +30,7 @@ func TestFormatProgress(t *testing.T) {
 					Phase: "implementing error handling",
 				},
 			},
-			contains: []string{"implementing error handling"},
+			contains: []string{`"implementing error handling"`},
 		},
 		{
 			name: "with active tool",
@@ -41,7 +41,7 @@ func TestFormatProgress(t *testing.T) {
 					ToolStarted: time.Now().Add(-3 * time.Second),
 				},
 			},
-			contains: []string{"shell_exec", "running"},
+			contains: []string{"shell_exec", "running", "elapsed"},
 		},
 		{
 			name: "with recent tool events",
