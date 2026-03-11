@@ -3,13 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
-	"sync"
-	"time"
 
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/joechenrh/golem/internal/ctxmgr"
 	"github.com/joechenrh/golem/internal/hooks"
@@ -17,7 +13,6 @@ import (
 	"github.com/joechenrh/golem/internal/router"
 	"github.com/joechenrh/golem/internal/stringutil"
 	"github.com/joechenrh/golem/internal/tape"
-	"github.com/joechenrh/golem/internal/tools"
 )
 
 // runReActLoop executes the tool-calling loop until the LLM produces a final answer
@@ -29,7 +24,7 @@ func (s *Session) runReActLoop(
 	tokenCh chan<- string,
 	pendingMsg *IncomingMessage,
 ) (string, error) {
-	s.maybeReloadSkills()
+	s.prompt.MaybeReloadSkills()
 
 	// Fork tape for transactional writes — entries are buffered in memory
 	// until the turn completes. If the turn fails before any entries are
@@ -56,7 +51,8 @@ func (s *Session) runReActLoop(
 
 	// Cache system prompt once per turn to avoid rebuilding (and re-reading
 	// persona files) on every LLM iteration within the same turn.
-	s.cachedSystemPrompt = s.buildSystemPrompt()
+	s.cachedSystemPrompt = s.prompt.Build()
+	s.prompt.SetCachedPrompt(s.cachedSystemPrompt)
 
 	// Wire auto-anchor: when the context strategy trims messages, insert
 	// an anchor so future BuildMessages calls skip the dropped region.
@@ -65,7 +61,8 @@ func (s *Session) runReActLoop(
 	// Expand $skill hints from the user message: inject matched skill
 	// bodies into the system prompt and auto-expand referenced tools.
 	if pendingMsg != nil {
-		s.expandSkillHints(pendingMsg.Text)
+		s.prompt.ExpandSkillHints(pendingMsg.Text)
+		s.cachedSystemPrompt = s.prompt.CachedPrompt()
 	}
 
 	nudges := 0
@@ -76,7 +73,7 @@ func (s *Session) runReActLoop(
 	iter := 0
 	for iter < s.config.MaxToolIter {
 		// Inject completed background task results as ephemeral messages.
-		s.injectCompletedTasks()
+		s.ephemeralMessages = append(s.ephemeralMessages, s.toolExec.InjectCompletedTasks()...)
 
 		// Shrink tool schemas not used in the last few iterations to
 		// save context window space in long multi-step chains.
@@ -97,7 +94,7 @@ func (s *Session) runReActLoop(
 		// Tool calls present — execute them and continue the loop.
 		// Pass iter-1 because iter was already incremented after executeLLMCall.
 		if len(resp.ToolCalls) > 0 {
-			s.processToolCalls(ctx, resp, iter-1)
+			s.toolExec.ProcessToolCalls(ctx, resp, iter-1, s.appendMessage, s.appendToolResult, s.toolFailures)
 
 			// If spawn_agent successfully launched a background task, nudge
 			// the LLM to report status and stop making its own tool calls
@@ -173,7 +170,7 @@ func (s *Session) runReActLoop(
 				tokenCh <- s.tasks.Summary()
 			}
 			s.tasks.WaitForAny(ctx)
-			s.injectCompletedTasks()
+			s.ephemeralMessages = append(s.ephemeralMessages, s.toolExec.InjectCompletedTasks()...)
 			// Don't count the wait as an iteration — the LLM wasn't called.
 			continue
 		}
@@ -197,7 +194,7 @@ func (s *Session) runReActLoop(
 			tokenCh <- s.tasks.Summary()
 		}
 		s.tasks.WaitForAny(ctx)
-		s.injectCompletedTasks()
+		s.ephemeralMessages = append(s.ephemeralMessages, s.toolExec.InjectCompletedTasks()...)
 
 		for range taskRecoveryIters {
 			resp, err := s.executeLLMCall(ctx, modelName, maxTokens, iter, stream, nil, nil, false)
@@ -207,7 +204,7 @@ func (s *Session) runReActLoop(
 			iter++
 
 			if len(resp.ToolCalls) > 0 {
-				s.processToolCalls(ctx, resp, iter-1)
+				s.toolExec.ProcessToolCalls(ctx, resp, iter-1, s.appendMessage, s.appendToolResult, s.toolFailures)
 				continue
 			}
 			if strings.TrimSpace(resp.Content) != "" {
@@ -256,33 +253,18 @@ func (s *Session) persistPendingUserMessage(ctx context.Context, msg *IncomingMe
 func (s *Session) handleClassifierNudge(
 	ctx context.Context, resp *llm.ChatResponse, iter int, nudges *int,
 ) (bool, bool) {
-	if s.classifierLLM == nil || !isAmbiguousResponse(resp.Content, s.tape) {
-		return false, false
-	}
 	if *nudges >= maxNudges {
 		return false, false
 	}
 
 	lastUserMsg := s.lastUserMessage()
 	toolNames := s.tools.Names()
-	s.logger.Debug("invoking classifier",
-		zap.Int("resp_len", len(resp.Content)),
-		zap.Int("iter", iter))
-	decision, taskSummary, rawBody, ok := classifyResponse(
-		ctx, s.classifierLLM, s.config.ClassifierModel,
-		lastUserMsg, resp.Content, toolNames,
+	decision, taskSummary, ok := s.classifier.Classify(
+		ctx, resp, s.tape, toolNames, lastUserMsg,
 	)
 	if !ok {
-		s.logger.Warn("classifier returned unparseable response, accepting",
-			zap.Int("iter", iter),
-			zap.String("raw_body", stringutil.Truncate(rawBody, 200)))
 		return false, false
 	}
-
-	s.logger.Debug("classifier decision",
-		zap.String("decision", decision),
-		zap.String("task_summary", taskSummary),
-		zap.Int("iter", iter))
 
 	switch decision {
 	case "nudge":
@@ -312,120 +294,6 @@ func (s *Session) handleClassifierNudge(
 		return false, true
 	}
 	return false, false
-}
-
-// processToolCalls records the assistant message, expands tool schemas, and
-// executes each tool call in parallel, recording results to the tape in order.
-func (s *Session) processToolCalls(
-	ctx context.Context, resp *llm.ChatResponse, iter int,
-) {
-	s.appendMessage(llm.RoleAssistant, resp.Content, resp.ToolCalls, "", nil)
-
-	// Auto-expand any tool the model calls, so the next iteration
-	// sends the full parameter schema (progressive disclosure).
-	for _, tc := range resp.ToolCalls {
-		s.tools.ExpandAt(tc.Name, iter)
-	}
-	if resp.Content != "" {
-		s.tools.ExpandHints(resp.Content)
-	}
-
-	// Execute tool calls in parallel and collect results keyed by index.
-	type toolResultEntry struct {
-		id     string
-		name   string
-		result string
-	}
-	var results sync.Map
-	g, gctx := errgroup.WithContext(ctx)
-	for i, tc := range resp.ToolCalls {
-		g.Go(func() error {
-			res := s.executeTool(gctx, tc)
-			results.Store(i, toolResultEntry{id: tc.ID, name: tc.Name, result: res})
-			return nil
-		})
-	}
-	g.Wait()
-
-	// Append results in original tool call order and track failures.
-	for i := range resp.ToolCalls {
-		v, _ := results.Load(i)
-		r := v.(toolResultEntry)
-		s.appendToolResult(r.id, r.name, r.result)
-
-		if strings.HasPrefix(r.result, "Error:") {
-			s.toolFailures[r.name]++
-			if s.toolFailures[r.name] >= maxToolFailures {
-				s.appendMessage(llm.RoleUser,
-					fmt.Sprintf("Tool %q has failed %d times this turn. Reconsider your approach — try a different tool or method.",
-						r.name, s.toolFailures[r.name]), nil, "", nil)
-			}
-		}
-	}
-}
-
-// executeTool runs a single tool call with hook emission.
-func (s *Session) executeTool(
-	ctx context.Context, tc llm.ToolCall,
-) string {
-	// Before tool exec hook — can block execution.
-	if err := s.hooks.Emit(ctx, hooks.Event{
-		Type: hooks.EventBeforeToolExec,
-		Payload: map[string]any{
-			"tool_name":  tc.Name,
-			"tool_id":    tc.ID,
-			"arguments":  tc.Arguments,
-			"session_id": s.sessionID,
-		},
-	}); err != nil {
-		return "Tool execution blocked: " + err.Error()
-	}
-
-	ctx = tools.WithTaskTracker(ctx, s.tasks)
-
-	start := time.Now()
-	result, err := s.tools.Execute(ctx, tc.Name, tc.Arguments)
-	duration := time.Since(start)
-	if err != nil {
-		result = "Error: " + err.Error()
-	}
-
-	s.logger.Debug("tool executed",
-		zap.String("tool", tc.Name),
-		zap.Duration("duration", duration),
-		zap.Bool("error", err != nil))
-
-	s.hooks.Emit(ctx, hooks.Event{
-		Type: hooks.EventAfterToolExec,
-		Payload: map[string]any{
-			"tool_name":   tc.Name,
-			"tool_id":     tc.ID,
-			"result":      stringutil.Truncate(result, maxLogTruncateLen),
-			"duration_ms": duration.Milliseconds(),
-			"arguments":   stringutil.Truncate(tc.Arguments, maxLogTruncateLen),
-			"session_id":  s.sessionID,
-		},
-	})
-
-	return result
-}
-
-// injectCompletedTasks drains finished background tasks and appends their
-// results as ephemeral user messages so the LLM can see them on the next call.
-func (s *Session) injectCompletedTasks() {
-	completed := s.tasks.DrainCompleted()
-	for _, t := range completed {
-		var msg string
-		if t.Status == TaskCompleted {
-			msg = fmt.Sprintf("[Background task #%d completed] %q\nResult:\n%s", t.ID, t.Description, t.Result)
-		} else {
-			msg = fmt.Sprintf("[Background task #%d failed] %q\nError: %s", t.ID, t.Description, t.Error)
-		}
-		s.ephemeralMessages = append(s.ephemeralMessages, llm.Message{
-			Role:    llm.RoleUser,
-			Content: msg,
-		})
-	}
 }
 
 // processAssistantResponse handles the final answer: runs any embedded colon-

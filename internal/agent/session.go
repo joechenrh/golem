@@ -90,6 +90,11 @@ type Session struct {
 	// Session identity for log context and hook payloads.
 	sessionID string
 
+	// Collaborators: extracted to reduce Session complexity.
+	toolExec   *ToolExecutor
+	classifier *NudgeClassifier
+	prompt     *PromptBuilder
+
 	// Lifecycle fields (managed by SessionManager for remote chats;
 	// unused for the default CLI session).
 	ctx        context.Context
@@ -153,7 +158,11 @@ func NewSession(
 	logger *zap.Logger,
 	sessionID string,
 ) *Session {
-	return &Session{
+	namedLogger := logger.With(zap.String("session", sessionID))
+	tasks := NewTaskTracker(5)
+	redactor := redact.New()
+
+	s := &Session{
 		llm:             llmClient,
 		classifierLLM:   classifierLLM,
 		tools:           toolRegistry,
@@ -161,17 +170,42 @@ func NewSession(
 		contextStrategy: ctxStrategy,
 		hooks:           hookBus,
 		config:          cfg,
-		logger:          logger.With(zap.String("session", sessionID)),
+		logger:          namedLogger,
 		sessionID:       sessionID,
-		tasks:           NewTaskTracker(5),
-		redactor:        redact.New(),
+		tasks:           tasks,
+		redactor:        redactor,
 	}
+
+	s.toolExec = &ToolExecutor{
+		tools:     toolRegistry,
+		hooks:     hookBus,
+		tasks:     tasks,
+		redactor:  redactor,
+		logger:    namedLogger,
+		sessionID: sessionID,
+	}
+
+	s.classifier = &NudgeClassifier{
+		classifierLLM:   classifierLLM,
+		classifierModel: cfg.ClassifierModel,
+		logger:          namedLogger,
+	}
+
+	s.prompt = &PromptBuilder{
+		config: cfg,
+		tools:  toolRegistry,
+		logger: namedLogger,
+	}
+
+	return s
 }
 
 // SetSkillReload configures periodic skill reload from the given directories.
 func (s *Session) SetSkillReload(dirs []string, interval time.Duration) {
 	s.skillDirs = dirs
 	s.skillReloadInterval = interval
+	s.prompt.skillDirs = dirs
+	s.prompt.skillReloadInterval = interval
 }
 
 // SetExtHooks sets the external hook runner for this session.

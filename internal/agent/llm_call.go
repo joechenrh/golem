@@ -3,10 +3,8 @@ package agent
 import (
 	"context"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -317,155 +315,8 @@ func (s *Session) doStreamingCall(
 	return resp, nil
 }
 
-// buildSystemPrompt constructs the system prompt for LLM calls.
-// When persona files are configured, the prompt is assembled in three layers:
-//
-//	Layer 1 (Identity): SOUL.md, USER.md
-//	Layer 2 (Operations): AGENTS.md + built-in tool-use instructions
-//	Layer 3 (Knowledge): memory system description + MEMORY.md
-//
-// Falls back to the flat system-prompt.md approach when no persona exists.
+// buildSystemPrompt delegates to the PromptBuilder collaborator.
+// Kept as a Session method so existing tests that call it directly continue to work.
 func (s *Session) buildSystemPrompt() string {
-	if s.config.Persona.HasPersona() {
-		return s.buildPersonaPrompt()
-	}
-	return s.buildFlatPrompt()
-}
-
-// buildPersonaPrompt assembles the three-layer persona system prompt.
-func (s *Session) buildPersonaPrompt() string {
-	p := s.config.Persona
-	var b strings.Builder
-
-	soul := p.GetSoul()
-	agents := p.GetAgents()
-	memory := p.GetMemory()
-
-	// --- Layer 1: Identity ---
-	b.WriteString("# Identity\n\n")
-	b.WriteString(soul)
-	b.WriteByte('\n')
-	if p.User != "" {
-		b.WriteString("\n## User Profile\n\n")
-		b.WriteString(p.User)
-		b.WriteByte('\n')
-	}
-
-	// --- Layer 2: Operations ---
-	b.WriteString("\n# Operations\n\n")
-	if agents != "" {
-		b.WriteString(agents)
-		b.WriteByte('\n')
-	}
-	b.WriteString("\n## Tool Use\n\n")
-	b.WriteString(toolUseInstruction)
-
-	// Skill summary — let the LLM know what skills are available.
-	if skillStore := s.tools.GetSkillStore(); skillStore != nil {
-		if summary := skillStore.Summary(); summary != "" {
-			b.WriteString("\n## Available Skills\n\n")
-			b.WriteString("Use the `skill` tool to load detailed instructions for any of these workflows:\n")
-			b.WriteString(summary)
-		}
-	}
-
-	// --- Layer 3: Knowledge ---
-	b.WriteString("\n# Knowledge\n\n")
-	b.WriteString("Use the persona_self tool to read/update your persona files: ")
-	b.WriteString("SOUL.md (identity), AGENTS.md (rules), MEMORY.md (knowledge & preferences). ")
-	b.WriteString("Update MEMORY.md regularly for learned patterns and user preferences.\n")
-
-	if memory != "" {
-		b.WriteString("\n## Current Memory\n\n")
-		b.WriteString(memory)
-		b.WriteByte('\n')
-	}
-
-	// --- Environment ---
-	b.WriteString("\n# Environment\n\n")
-	fmt.Fprintf(&b, "Working directory: %s\n", s.config.WorkspaceDir)
-	fmt.Fprintf(&b, "Current time: %s\n", time.Now().Format(time.RFC3339))
-
-	return b.String()
-}
-
-// buildFlatPrompt is the legacy system prompt assembly (no persona files).
-func (s *Session) buildFlatPrompt() string {
-	var b strings.Builder
-
-	b.WriteString("You are golem, a helpful coding assistant.\n\n")
-
-	fmt.Fprintf(&b, "Working directory: %s\n", s.config.WorkspaceDir)
-	fmt.Fprintf(&b, "Current time: %s\n\n", time.Now().Format(time.RFC3339))
-
-	b.WriteString(toolUseInstruction)
-	b.WriteByte('\n')
-
-	// Skill summary — let the LLM know what skills are available.
-	if skillStore := s.tools.GetSkillStore(); skillStore != nil {
-		if summary := skillStore.Summary(); summary != "" {
-			b.WriteString("## Available Skills\n\n")
-			b.WriteString("Use the `skill` tool to load detailed instructions for any of these workflows:\n")
-			b.WriteString(summary)
-			b.WriteByte('\n')
-		}
-	}
-
-	switch {
-	case s.config.SystemPrompt != "":
-		b.WriteString(s.config.SystemPrompt)
-		b.WriteByte('\n')
-	default:
-		if data, err := os.ReadFile(".agent/system-prompt.md"); err == nil {
-			b.WriteString(strings.TrimSpace(string(data)))
-			b.WriteByte('\n')
-		}
-	}
-
-	return b.String()
-}
-
-// maybeReloadSkills re-discovers skills from disk if enough time has elapsed.
-func (s *Session) maybeReloadSkills() {
-	if s.skillReloadInterval <= 0 || len(s.skillDirs) == 0 {
-		return
-	}
-	if time.Since(s.lastSkillReload) < s.skillReloadInterval {
-		return
-	}
-	s.lastSkillReload = time.Now()
-	if store := s.tools.GetSkillStore(); store != nil {
-		if n := store.Reload(s.skillDirs); n > 0 {
-			s.logger.Info("reloaded skills from disk", zap.Int("updated", n))
-		}
-	}
-}
-
-// expandSkillHints scans text for $skill-name references, appends matched
-// skill bodies to the cached system prompt, and auto-expands any tools
-// mentioned in the skill body via ExpandHints.
-func (s *Session) expandSkillHints(text string) {
-	store := s.tools.GetSkillStore()
-	if store == nil {
-		return
-	}
-	skills := store.ExpandSkillHints(text)
-	if len(skills) == 0 {
-		return
-	}
-	var b strings.Builder
-	b.WriteString(s.cachedSystemPrompt)
-	for _, skill := range skills {
-		b.WriteString("\n## Skill: ")
-		b.WriteString(skill.Name)
-		b.WriteString("\n\n")
-		b.WriteString(skill.Body)
-		b.WriteByte('\n')
-
-		// Auto-expand any tools referenced in the skill body.
-		s.tools.ExpandHints(skill.Body)
-	}
-	s.cachedSystemPrompt = b.String()
-	s.logger.Debug("expanded skill hints into system prompt",
-		zap.Int("skill_count", len(skills)))
+	return s.prompt.Build()
 }
