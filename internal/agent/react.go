@@ -99,16 +99,20 @@ func (s *Session) runReActLoop(
 		if len(resp.ToolCalls) > 0 {
 			s.processToolCalls(ctx, resp, iter-1)
 
-			// If spawn_agent was among the calls, nudge the LLM to report
-			// status and stop making its own tool calls so it reaches the
-			// task-wait phase before exhausting MaxToolIter.
-			for _, tc := range resp.ToolCalls {
-				if tc.Name == "spawn_agent" {
-					s.ephemeralMessages = append(s.ephemeralMessages, llm.Message{
-						Role:    llm.RoleUser,
-						Content: "Sub-agent(s) launched. Tell the user what you dispatched and STOP making tool calls. You will receive results automatically.",
-					})
-					break
+			// If spawn_agent successfully launched a background task, nudge
+			// the LLM to report status and stop making its own tool calls
+			// so it reaches the task-wait phase before exhausting MaxToolIter.
+			// Only inject the hint when a task is actually running — a failed
+			// spawn (e.g., missing prompt) should not stop the LLM from working.
+			if s.tasks.HasRunning() {
+				for _, tc := range resp.ToolCalls {
+					if tc.Name == "spawn_agent" {
+						s.ephemeralMessages = append(s.ephemeralMessages, llm.Message{
+							Role:    llm.RoleUser,
+							Content: "Sub-agent(s) launched. Tell the user what you dispatched and STOP making tool calls. You will receive results automatically.",
+						})
+						break
+					}
 				}
 			}
 			continue
