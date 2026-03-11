@@ -284,6 +284,10 @@ func (s *FileStore) rotateLocked() {
 			s.diskBytes += int64(len(line))
 		}
 	}
+	// Fsync retained entries to ensure durability after rotation.
+	if s.file != nil && s.diskBytes > 0 {
+		s.file.Sync()
+	}
 }
 
 // entriesFromLastAnchor returns entries from the last anchor onward,
