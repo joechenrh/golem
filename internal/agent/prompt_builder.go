@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -115,6 +116,16 @@ func (pb *PromptBuilder) buildPersonaPrompt() string {
 	}
 	b.WriteString("\n## Tool Use\n\n")
 	b.WriteString(toolUseInstruction)
+	if slices.Contains(pb.tools.Names(), "report_progress") {
+		b.WriteString("\n## Progress Reporting\n\n")
+		b.WriteString("When working on multi-step tasks, use report_progress to keep the user ")
+		b.WriteString("informed at natural milestones:\n")
+		b.WriteString("• After finishing analysis/planning\n")
+		b.WriteString("• Before starting implementation\n")
+		b.WriteString("• After completing a major subtask\n")
+		b.WriteString("• When encountering a significant blocker or change of approach\n\n")
+		b.WriteString("Do NOT call it on every tool use. Only at meaningful phase transitions.\n")
+	}
 
 	// Skill summary — let the LLM know what skills are available.
 	if skillStore := pb.tools.GetSkillStore(); skillStore != nil {
@@ -155,6 +166,16 @@ func (pb *PromptBuilder) buildFlatPrompt() string {
 	fmt.Fprintf(&b, "Current time: %s\n\n", time.Now().Format(time.RFC3339))
 
 	b.WriteString(toolUseInstruction)
+	if slices.Contains(pb.tools.Names(), "report_progress") {
+		b.WriteString("\n## Progress Reporting\n\n")
+		b.WriteString("When working on multi-step tasks, use report_progress to keep the user ")
+		b.WriteString("informed at natural milestones:\n")
+		b.WriteString("• After finishing analysis/planning\n")
+		b.WriteString("• Before starting implementation\n")
+		b.WriteString("• After completing a major subtask\n")
+		b.WriteString("• When encountering a significant blocker or change of approach\n\n")
+		b.WriteString("Do NOT call it on every tool use. Only at meaningful phase transitions.\n")
+	}
 	b.WriteByte('\n')
 
 	// Skill summary — let the LLM know what skills are available.
