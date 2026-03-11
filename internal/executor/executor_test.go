@@ -126,6 +126,73 @@ func TestFormatResult(t *testing.T) {
 	}
 }
 
+func TestRtkRewrite(t *testing.T) {
+	tests := []struct {
+		name    string
+		rtkPath string
+		command string
+		want    string
+	}{
+		{
+			name:    "no rtk installed",
+			rtkPath: "",
+			command: "git status",
+			want:    "git status",
+		},
+		{
+			name:    "git status",
+			rtkPath: "/usr/bin/rtk",
+			command: "git status",
+			want:    "/usr/bin/rtk git status",
+		},
+		{
+			name:    "cd then git",
+			rtkPath: "/usr/bin/rtk",
+			command: "cd mydir && git diff",
+			want:    "/usr/bin/rtk cd mydir && git diff",
+		},
+		{
+			name:    "go test",
+			rtkPath: "/usr/bin/rtk",
+			command: "go test ./...",
+			want:    "/usr/bin/rtk go test ./...",
+		},
+		{
+			name:    "gh pr list",
+			rtkPath: "/usr/bin/rtk",
+			command: "gh pr list",
+			want:    "/usr/bin/rtk gh pr list",
+		},
+		{
+			name:    "unsupported command",
+			rtkPath: "/usr/bin/rtk",
+			command: "cat file.txt",
+			want:    "cat file.txt",
+		},
+		{
+			name:    "bare ls",
+			rtkPath: "/usr/bin/rtk",
+			command: "ls",
+			want:    "/usr/bin/rtk ls",
+		},
+		{
+			name:    "rg search",
+			rtkPath: "/usr/bin/rtk",
+			command: "rg pattern src/",
+			want:    "/usr/bin/rtk rg pattern src/",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := &LocalExecutor{WorkDir: ".", rtkPath: tt.rtkPath}
+			got := e.rtkRewrite(tt.command)
+			if got != tt.want {
+				t.Errorf("rtkRewrite(%q) = %q, want %q", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTruncate(t *testing.T) {
 	short := "hello"
 	if got := stringutil.TruncateWithNote(short, 100); got != short {

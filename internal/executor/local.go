@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -13,14 +14,31 @@ import (
 
 const maxOutputBytes = 50 * 1024 // 50KB
 
+// rtkCommands lists command prefixes that RTK can compress.
+// See https://github.com/rtk-ai/rtk for the full list.
+var rtkCommands = []string{
+	"git ", "gh ",
+	"cargo ", "go test", "pytest", "vitest", "playwright",
+	"eslint", "biome", "tsc", "ruff", "golangci-lint", "clippy",
+	"docker ", "kubectl ",
+	"npm ", "pnpm ", "pip ", "prisma ",
+	"ls ", "ls\n", "find ", "grep ", "rg ", "diff ",
+}
+
 // LocalExecutor runs commands via /bin/sh -c in a working directory.
 type LocalExecutor struct {
 	WorkDir string
+	rtkPath string // empty if RTK is not installed
 }
 
 // NewLocal creates a LocalExecutor rooted at the given directory.
+// It auto-detects RTK on PATH for transparent output compression.
 func NewLocal(workDir string) *LocalExecutor {
-	return &LocalExecutor{WorkDir: workDir}
+	e := &LocalExecutor{WorkDir: workDir}
+	if path, err := exec.LookPath("rtk"); err == nil {
+		e.rtkPath = path
+	}
+	return e
 }
 
 func (e *LocalExecutor) Name() string { return "local" }
@@ -32,7 +50,8 @@ func (e *LocalExecutor) Execute(
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	shellCmd := e.rtkRewrite(command)
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", shellCmd)
 	cmd.Dir = e.WorkDir
 
 	var stdout, stderr bytes.Buffer
@@ -67,4 +86,26 @@ func (e *LocalExecutor) Execute(
 	}
 
 	return result, nil
+}
+
+// rtkRewrite prefixes a command with "rtk" when RTK is installed and the
+// command is one that RTK knows how to compress. The original command is
+// returned unchanged when RTK is not available or the command is unsupported.
+func (e *LocalExecutor) rtkRewrite(command string) string {
+	if e.rtkPath == "" {
+		return command
+	}
+	// Strip leading whitespace and any "cd <dir> && " prefix to find the
+	// actual command being run, but keep the original string intact.
+	bare := strings.TrimLeft(command, " \t")
+	// Handle "cd some/dir && git status" patterns — check after &&.
+	if idx := strings.Index(bare, "&& "); idx >= 0 {
+		bare = strings.TrimLeft(bare[idx+3:], " \t")
+	}
+	for _, prefix := range rtkCommands {
+		if strings.HasPrefix(bare, prefix) || bare == strings.TrimRight(prefix, " \n") {
+			return e.rtkPath + " " + command
+		}
+	}
+	return command
 }
