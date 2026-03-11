@@ -398,8 +398,13 @@ func BuildAgent(
 	// Wire card action handler and session manager for remote channels.
 	var sessions *agent.SessionManager
 	if cfg.HasRemoteChannels() {
+		// larkCh implements DirectSender via SendDirect (may be nil).
+		var remoteSender agent.DirectSender
+		if larkCh != nil {
+			remoteSender = larkCh
+		}
 		sessions = buildSessionManager(name, cfg, llmClient, classifierLLM,
-			spawnToolFactory, metricsHook, agentTapeDir, skillDirs, extHookRunner, logger)
+			spawnToolFactory, metricsHook, agentTapeDir, skillDirs, extHookRunner, logger, remoteSender)
 	}
 	if larkCh != nil {
 		setupCardActionHandler(larkCh, sessions, logger)
@@ -498,6 +503,12 @@ func buildDefaultSession(
 	sess.SetSkillReload(skillDirs, cfg.SkillReloadInterval)
 	sess.SetExtHooks(extHookRunner)
 
+	// Wire progress tracking.
+	accumulator := agent.NewEventAccumulator(50)
+	hookBus.Register(accumulator)
+	sess.SetAccumulator(accumulator)
+	sess.Tasks().SetHooks(hookBus)
+
 	return registry, sess
 }
 
@@ -511,6 +522,7 @@ func buildSessionManager(
 	skillDirs []string,
 	extHookRunner agent.ExtHookRunner,
 	logger *zap.Logger,
+	ch agent.DirectSender,
 ) *agent.SessionManager {
 	sessions := agent.NewSessionManager(agent.SessionFactory{
 		LLMClient:       llmClient,
@@ -524,6 +536,7 @@ func buildSessionManager(
 		AuditDir:        auditDir,
 		SkillDirs:       skillDirs,
 		ExtHookRunner:   extHookRunner,
+		Channel:         ch,
 	}, logger)
 	if err := sessions.LoadExisting(cfg.TapeDir); err != nil {
 		logger.Warn("failed to restore sessions", zap.Error(err))
