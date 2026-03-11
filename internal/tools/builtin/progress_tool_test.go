@@ -2,6 +2,8 @@ package builtin
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -46,6 +48,42 @@ func TestReportProgressTool(t *testing.T) {
 		}
 		if result != "Error: 'summary' is required" {
 			t.Errorf("unexpected result: %q", result)
+		}
+	})
+
+	t.Run("invalid JSON returns parse error", func(t *testing.T) {
+		result, err := tool.Execute(context.Background(), `{bad json}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.HasPrefix(result, "Error: invalid arguments:") {
+			t.Errorf("expected parse error, got: %q", result)
+		}
+	})
+
+	t.Run("metadata", func(t *testing.T) {
+		if tool.Name() != "report_progress" {
+			t.Errorf("unexpected name: %q", tool.Name())
+		}
+		if tool.Description() == "" {
+			t.Error("expected non-empty description")
+		}
+		if tool.FullDescription() == "" {
+			t.Error("expected non-empty full description")
+		}
+	})
+
+	t.Run("parameters schema is valid JSON", func(t *testing.T) {
+		var schema map[string]any
+		if err := json.Unmarshal(tool.Parameters(), &schema); err != nil {
+			t.Fatalf("invalid parameters JSON: %v", err)
+		}
+		if schema["type"] != "object" {
+			t.Errorf("expected type=object, got %v", schema["type"])
+		}
+		required, _ := schema["required"].([]any)
+		if len(required) != 1 || required[0] != "summary" {
+			t.Errorf("expected required=[summary], got %v", required)
 		}
 	})
 }

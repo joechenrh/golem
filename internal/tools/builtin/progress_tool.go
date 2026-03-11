@@ -54,10 +54,12 @@ func (t *ReportProgressTool) Execute(
 		return "Error: 'summary' is required", nil
 	}
 
-	t.hooks.Emit(ctx, hooks.Event{
+	if err := t.hooks.Emit(ctx, hooks.Event{
 		Type:    hooks.EventPhaseUpdate,
 		Payload: map[string]any{"summary": params.Summary},
-	})
+	}); err != nil {
+		return "Error: " + err.Error(), nil
+	}
 
 	return "Progress reported.", nil
 }
