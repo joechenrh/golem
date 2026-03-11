@@ -189,7 +189,8 @@ func TestRegistry_ToolDefinitions_CompactParamsWhenUnexpanded(t *testing.T) {
 	r.Register(newMockTool("test_tool", "desc", "full"))
 
 	defs := r.ToolDefinitions()
-	// Unexpanded tools should get compact params.
+	// Compact params should include property names and types (but not
+	// descriptions) so the LLM knows what arguments to send.
 	var parsed map[string]any
 	if err := json.Unmarshal(defs[0].Parameters, &parsed); err != nil {
 		t.Fatalf("Parameters is not valid JSON: %v", err)
@@ -201,8 +202,19 @@ func TestRegistry_ToolDefinitions_CompactParamsWhenUnexpanded(t *testing.T) {
 	if !hasProps {
 		t.Error("compact params should include properties key for API compatibility")
 	}
-	if m, ok := props.(map[string]any); !ok || len(m) != 0 {
-		t.Error("compact params properties should be an empty object")
+	m, ok := props.(map[string]any)
+	if !ok {
+		t.Fatal("compact params properties should be a map")
+	}
+	// Mock tool has {"input": {"type": "string"}} — should be preserved.
+	inputProp, hasInput := m["input"]
+	if !hasInput {
+		t.Error("compact params should include property names from full schema")
+	}
+	if ip, ok := inputProp.(map[string]any); ok {
+		if ip["type"] != "string" {
+			t.Errorf("compact params input.type = %v, want %q", ip["type"], "string")
+		}
 	}
 }
 

@@ -11,8 +11,46 @@ import (
 	"github.com/joechenrh/golem/internal/middleware"
 )
 
-// compactParams is a minimal JSON Schema used for unexpanded tools to save tokens.
-var compactParams = json.RawMessage(`{"type":"object","properties":{}}`)
+// compactSchema strips descriptions from a tool's parameter schema, keeping
+// property names, types, and required fields. This gives the LLM enough
+// information to call the tool correctly without wasting tokens on
+// verbose descriptions.
+func compactSchema(full json.RawMessage) json.RawMessage {
+	var schema map[string]any
+	if err := json.Unmarshal(full, &schema); err != nil {
+		return full
+	}
+	props, _ := schema["properties"].(map[string]any)
+	compact := make(map[string]any, len(props))
+	for name, v := range props {
+		m, ok := v.(map[string]any)
+		if !ok {
+			compact[name] = v
+			continue
+		}
+		// Keep type and enum, drop description.
+		entry := map[string]any{}
+		if t, ok := m["type"]; ok {
+			entry["type"] = t
+		}
+		if e, ok := m["enum"]; ok {
+			entry["enum"] = e
+		}
+		compact[name] = entry
+	}
+	result := map[string]any{
+		"type":       "object",
+		"properties": compact,
+	}
+	if req, ok := schema["required"]; ok {
+		result["required"] = req
+	}
+	out, err := json.Marshal(result)
+	if err != nil {
+		return full
+	}
+	return out
+}
 
 // Registry holds registered tools and manages progressive disclosure state.
 type Registry struct {
@@ -98,11 +136,14 @@ func (r *Registry) ToolDefinitions() []llm.ToolDefinition {
 	defs := make([]llm.ToolDefinition, 0, len(r.tools))
 	for _, name := range r.order {
 		t := r.tools[name]
-		desc := t.Description()
-		params := compactParams
+		var desc string
+		var params json.RawMessage
 		if r.expanded[name] {
 			desc = t.FullDescription()
 			params = t.Parameters()
+		} else {
+			desc = t.Description()
+			params = compactSchema(t.Parameters())
 		}
 		defs = append(defs, llm.ToolDefinition{
 			Name:        name,
