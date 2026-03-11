@@ -442,14 +442,15 @@ func (l *LarkChannel) SendStream(
 	tokenCh <-chan string,
 ) error {
 	l.sentChats.Store(channelID, true)
-	err := channel.RunEditStream(ctx, &larkEditStreamer{ch: l}, channelID, tokenCh, streamUpdateInterval, " ▍")
+	err := channel.RunEditStream(ctx, &larkEditStreamer{ch: l, start: time.Now()}, channelID, tokenCh, streamUpdateInterval, " ▍")
 	l.removePendingReaction(ctx, channelID)
 	return err
 }
 
 // larkEditStreamer adapts LarkChannel to the channel.EditStreamer interface.
 type larkEditStreamer struct {
-	ch *LarkChannel
+	ch    *LarkChannel
+	start time.Time // captured at construction for elapsed-time footer
 }
 
 func (s *larkEditStreamer) CreateMessage(ctx context.Context, channelID, text string) (string, error) {
@@ -466,7 +467,9 @@ func (s *larkEditStreamer) FinalizeMessage(ctx context.Context, channelID, messa
 		s.ch.patchCard(ctx, messageID, "...")
 		return nil
 	}
-	s.ch.patchCardRaw(ctx, messageID, s.ch.buildCardWithImages(ctx, text))
+	elapsed := time.Since(s.start)
+	footer := fmt.Sprintf("%.1fs", elapsed.Seconds())
+	s.ch.patchCardRaw(ctx, messageID, s.ch.buildCardWithImagesAndFooter(ctx, text, footer))
 	return nil
 }
 
@@ -614,9 +617,13 @@ var markdownImageRe = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
 // to Lark, and returns a card with interleaved markdown + img elements.
 // If no images are found or all uploads fail, falls back to a plain card.
 func (l *LarkChannel) buildCardWithImages(ctx context.Context, text string) []byte {
+	return l.buildCardWithImagesAndFooter(ctx, text, "")
+}
+
+func (l *LarkChannel) buildCardWithImagesAndFooter(ctx context.Context, text, footer string) []byte {
 	matches := markdownImageRe.FindAllStringSubmatchIndex(text, -1)
 	if len(matches) == 0 {
-		return buildStructuredCard(text)
+		return buildStructuredCardWithFooter(text, footer)
 	}
 
 	// Upload images in parallel, collecting image_keys indexed by match position.
@@ -677,9 +684,17 @@ func (l *LarkChannel) buildCardWithImages(ctx context.Context, text string) []by
 	}
 
 	if len(elements) == 0 {
-		return buildCard(text)
+		return buildStructuredCardWithFooter(text, footer)
 	}
 
+	if footer != "" {
+		elements = append(elements, map[string]any{
+			"tag": "note",
+			"elements": []any{
+				map[string]any{"tag": "plain_text", "content": footer},
+			},
+		})
+	}
 	elements = append(elements, actionButtons)
 	card := map[string]any{"elements": elements}
 	content, _ := json.Marshal(card)

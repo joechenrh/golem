@@ -15,7 +15,18 @@ var hrPatterns = []string{"---", "***", "___"}
 //   - Horizontal rules (---, ***, ___) become hr dividers
 //   - Remaining text is split into separate markdown elements per section
 //   - Action buttons are appended at the end
+//
+// buildStructuredCardWithFooter is like buildStructuredCard but inserts a
+// note element before the action buttons to display footer text.
+func buildStructuredCardWithFooter(text, footer string) []byte {
+	return buildStructuredCardInner(text, footer)
+}
+
 func buildStructuredCard(text string) []byte {
+	return buildStructuredCardInner(text, "")
+}
+
+func buildStructuredCardInner(text, footer string) []byte {
 	lines := strings.Split(text, "\n")
 
 	var header map[string]any
@@ -80,6 +91,14 @@ func buildStructuredCard(text string) []byte {
 		}
 	}
 
+	if footer != "" {
+		elements = append(elements, map[string]any{
+			"tag": "note",
+			"elements": []any{
+				map[string]any{"tag": "plain_text", "content": footer},
+			},
+		})
+	}
 	elements = append(elements, actionButtons)
 	card := map[string]any{"elements": elements}
 	if header != nil {
