@@ -91,9 +91,10 @@ type Session struct {
 	sessionID string
 
 	// Collaborators: extracted to reduce Session complexity.
-	toolExec   *ToolExecutor
-	classifier *NudgeClassifier
-	prompt     *PromptBuilder
+	toolExec    *ToolExecutor
+	classifier  *NudgeClassifier
+	prompt      *PromptBuilder
+	accumulator *EventAccumulator
 
 	// Lifecycle fields (managed by SessionManager for remote chats;
 	// unused for the default CLI session).
@@ -211,6 +212,21 @@ func (s *Session) SetSkillReload(dirs []string, interval time.Duration) {
 // SetExtHooks sets the external hook runner for this session.
 func (s *Session) SetExtHooks(runner ExtHookRunner) {
 	s.extHooks = runner
+}
+
+// SetAccumulator attaches an EventAccumulator for progress tracking.
+func (s *Session) SetAccumulator(acc *EventAccumulator) {
+	s.accumulator = acc
+}
+
+// Accumulator returns the session's EventAccumulator, or nil if none is set.
+func (s *Session) Accumulator() *EventAccumulator {
+	return s.accumulator
+}
+
+// Tasks returns the session's TaskTracker.
+func (s *Session) Tasks() *TaskTracker {
+	return s.tasks
 }
 
 // Close cancels all background tasks and waits for goroutines to finish.
@@ -426,6 +442,8 @@ func (s *Session) RecordFeedback(chatID, value string) {
 }
 
 // StatusInfo returns a human-readable status summary for this session.
+// When the session is actively running and has an accumulator, progress
+// information is appended to the base model/token info.
 func (s *Session) StatusInfo() string {
 	model := s.config.Model
 	totalTokens := s.sessionUsage.TotalTokens
@@ -433,10 +451,19 @@ func (s *Session) StatusInfo() string {
 	completionTokens := s.sessionUsage.CompletionTokens
 	toolCount := s.tools.Count()
 
-	return fmt.Sprintf(
+	base := fmt.Sprintf(
 		"**Model:** %s\n**Tools:** %d\n**Tokens used:** %d (prompt: %d, completion: %d)",
 		model, toolCount, totalTokens, promptTokens, completionTokens,
 	)
+
+	if s.accumulator != nil {
+		snap := s.accumulator.Snapshot()
+		if snap.State.IdleSince == nil && snap.State.Iteration > 0 {
+			return base + "\n\n" + FormatProgress(snap)
+		}
+	}
+
+	return base
 }
 
 // Summarize generates a summary of the current conversation and appends it
