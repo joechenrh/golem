@@ -1223,3 +1223,55 @@ func (m *mockSpawnTool) Execute(ctx context.Context, args string) (string, error
 	})
 	return "Task #1 started", nil
 }
+
+func TestHandleInput_TaskRecoveryAtIterLimit(t *testing.T) {
+	// Scenario: LLM keeps making tool calls after spawning a sub-agent,
+	// hitting MaxToolIter. The recovery phase should wait for the task
+	// and give the LLM extra iterations to produce a final answer.
+	client := &mockLLMClient{
+		responses: []*llm.ChatResponse{
+			// iter 0: spawn a sub-agent
+			{
+				ToolCalls: []llm.ToolCall{{
+					ID: "call_1", Name: "spawn_agent",
+					Arguments: `{"prompt": "investigate"}`,
+				}},
+				FinishReason: "tool_calls",
+			},
+			// iter 1: LLM ignores the hint and calls another tool
+			{
+				ToolCalls: []llm.ToolCall{{
+					ID: "call_2", Name: "echo",
+					Arguments: `{"text": "extra work"}`,
+				}},
+				FinishReason: "tool_calls",
+			},
+			// iter 2 (MaxToolIter reached): loop exits, recovery kicks in.
+			// Recovery LLM call — produces final answer with task result.
+			{Content: "Based on the sub-agent findings, here is the answer.", FinishReason: "stop"},
+		},
+	}
+
+	spawnTool := &mockSpawnTool{
+		runner: func(_ context.Context, _ string) (string, error) {
+			time.Sleep(200 * time.Millisecond)
+			return "sub-agent result: found the root cause", nil
+		},
+	}
+
+	agent := newTestAgent(t, client, spawnTool)
+	agent.config.MaxToolIter = 2 // tight limit — spawn + 1 tool call hits it
+
+	result, err := agent.HandleInput(context.Background(), cliMsg("investigate the issue"))
+	if err != nil {
+		t.Fatalf("HandleInput: %v", err)
+	}
+
+	if !strings.Contains(result, "sub-agent findings") {
+		t.Errorf("result = %q, want recovery answer after task completion", result)
+	}
+	// 2 main loop calls + 1 recovery call = 3 total
+	if client.callCount != 3 {
+		t.Errorf("LLM called %d times, want 3", client.callCount)
+	}
+}

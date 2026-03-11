@@ -104,6 +104,9 @@ const (
 	// compact unused tool schemas after this many iterations
 	shrinkAfterIters = 10
 
+	// extra iterations granted after MaxToolIter when background tasks are pending
+	taskRecoveryIters = 3
+
 	// max chars for log truncation
 	maxLogTruncateLen = 500
 

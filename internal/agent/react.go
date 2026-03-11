@@ -98,6 +98,19 @@ func (s *Session) runReActLoop(
 		// Pass iter-1 because iter was already incremented after executeLLMCall.
 		if len(resp.ToolCalls) > 0 {
 			s.processToolCalls(ctx, resp, iter-1)
+
+			// If spawn_agent was among the calls, nudge the LLM to report
+			// status and stop making its own tool calls so it reaches the
+			// task-wait phase before exhausting MaxToolIter.
+			for _, tc := range resp.ToolCalls {
+				if tc.Name == "spawn_agent" {
+					s.ephemeralMessages = append(s.ephemeralMessages, llm.Message{
+						Role:    llm.RoleUser,
+						Content: "Sub-agent(s) launched. Tell the user what you dispatched and STOP making tool calls. You will receive results automatically.",
+					})
+					break
+				}
+			}
 			continue
 		}
 
@@ -168,6 +181,40 @@ func (s *Session) runReActLoop(
 			tokenCh <- content
 		}
 		return content, nil
+	}
+
+	// If background tasks are still running when the iteration limit is
+	// reached, wait for them and give the LLM a small extra budget to
+	// incorporate the results and produce a final answer.
+	if s.tasks.HasRunning() {
+		s.logger.Info("iteration limit reached with running tasks, entering recovery",
+			zap.Int("iter", iter))
+		if stream && tokenCh != nil {
+			tokenCh <- s.tasks.Summary()
+		}
+		s.tasks.WaitForAny(ctx)
+		s.injectCompletedTasks()
+
+		for range taskRecoveryIters {
+			resp, err := s.executeLLMCall(ctx, modelName, maxTokens, iter, stream, nil, nil, false)
+			if err != nil {
+				break
+			}
+			iter++
+
+			if len(resp.ToolCalls) > 0 {
+				s.processToolCalls(ctx, resp, iter-1)
+				continue
+			}
+			if strings.TrimSpace(resp.Content) != "" {
+				content := s.processAssistantResponse(ctx, resp)
+				s.persistExpandedTools()
+				if stream && tokenCh != nil {
+					tokenCh <- content
+				}
+				return content, nil
+			}
+		}
 	}
 
 	fallback := "Tool calling limit reached. Please try a simpler request."
