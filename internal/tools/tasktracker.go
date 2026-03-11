@@ -12,8 +12,6 @@ type BackgroundTaskTracker interface {
 	Complete(id int, result string)
 	// Fail marks a task as failed with an error message.
 	Fail(id int, errMsg string)
-	// Summary returns a formatted status of all tasks.
-	Summary() string
 }
 
 type taskTrackerKey struct{}

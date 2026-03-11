@@ -52,10 +52,6 @@ func TestSpawnAgentTool_AsyncWithTracker(t *testing.T) {
 	if !strings.Contains(result, "Task #") {
 		t.Errorf("result = %q, want task ID", result)
 	}
-	if !strings.Contains(result, "check_tasks") {
-		t.Errorf("result = %q, want check_tasks mention", result)
-	}
-
 	// Verify Launch was called.
 	if tracker.launchCount != 1 {
 		t.Errorf("Launch called %d times, want 1", tracker.launchCount)
@@ -122,4 +118,3 @@ func (m *mockTracker) Launch(desc string, fn func(ctx context.Context, id int)) 
 
 func (m *mockTracker) Complete(int, string) {}
 func (m *mockTracker) Fail(int, string)     {}
-func (m *mockTracker) Summary() string      { return "" }

@@ -39,7 +39,7 @@ func (t *SpawnAgentTool) FullDescription() string {
 		"The sub-agent has its own conversation context and access to standard tools " +
 		"(shell, file I/O, web) but cannot spawn further agents.\n\n" +
 		"You can call this tool multiple times in a single response to run several " +
-		"sub-agents in parallel. Use check_tasks to monitor progress and retrieve results."
+		"sub-agents in parallel. Results are delivered automatically when each finishes."
 }
 
 var spawnAgentParams = json.RawMessage(`{
@@ -100,7 +100,7 @@ func (t *SpawnAgentTool) Execute(
 		}
 	})
 
-	return fmt.Sprintf("Task #%d started: %s\nUse check_tasks to monitor.", taskID, desc), nil
+	return fmt.Sprintf("Task #%d started: %s\nResults will be delivered automatically when the sub-agent finishes.", taskID, desc), nil
 }
 
 // truncateDesc truncates s to maxLen characters, appending "…" if truncated.

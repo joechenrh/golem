@@ -120,8 +120,9 @@ const toolUseInstruction = "When you have enough information to act, call tools 
 	"always use spawn_agent to delegate the work to background sub-agents instead of doing it " +
 	"directly in the main session. This keeps you responsive to the user while sub-agents work. " +
 	"Spawn multiple sub-agents in one response for parallel execution. " +
-	"Use check_tasks to monitor progress. After collecting results, decide whether " +
-	"to spawn follow-up agents, retry failures, or deliver the final answer.\n"
+	"You will receive sub-agent results automatically when they finish — no need to poll. " +
+	"After receiving results, decide whether to spawn follow-up agents, retry failures, " +
+	"or deliver the final answer.\n"
 
 // ExtHookRunner is satisfied by exthook.Runner.
 // Defined here as an interface to avoid a circular import.

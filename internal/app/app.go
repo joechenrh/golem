@@ -380,25 +380,29 @@ func BuildAgent(
 		return r
 	}
 
-	registry := toolFactory()
-
-	// spawn_agent creates a sub-agent with its own tape and registry
-	// WITHOUT spawn capability (prevents recursive spawning).
+	// spawnToolFactory wraps toolFactory and adds spawn_agent.
+	// Sub-agents use the base toolFactory (no spawn capability) to prevent
+	// recursive spawning.
 	var subAgentSeq atomic.Int64
-	registry.Register(builtin.NewSpawnAgentTool(func(ctx context.Context, prompt string) (string, error) {
-		seq := subAgentSeq.Add(1)
-		subTapePath := filepath.Join(agentTapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
-		sess, err := buildEphemeralSession(llmClient, cfg, toolFactory, logger, "sub-agent", subTapePath)
-		if err != nil {
-			return "", fmt.Errorf("sub-agent: %w", err)
-		}
+	spawnToolFactory := func() *tools.Registry {
+		r := toolFactory()
+		r.Register(builtin.NewSpawnAgentTool(func(ctx context.Context, prompt string) (string, error) {
+			seq := subAgentSeq.Add(1)
+			subTapePath := filepath.Join(agentTapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
+			sess, err := buildEphemeralSession(llmClient, cfg, toolFactory, logger, "sub-agent", subTapePath)
+			if err != nil {
+				return "", fmt.Errorf("sub-agent: %w", err)
+			}
 
-		return sess.HandleInput(ctx, channel.IncomingMessage{
-			ChannelName: "internal",
-			Text:        prompt,
-		})
-	}))
-	registry.Register(builtin.NewCheckTasksTool())
+			return sess.HandleInput(ctx, channel.IncomingMessage{
+				ChannelName: "internal",
+				Text:        prompt,
+			})
+		}))
+		return r
+	}
+
+	registry := spawnToolFactory()
 
 	// Register create_skill tool for named agents.
 	if name != "" {
@@ -434,7 +438,7 @@ func BuildAgent(
 	var sessions *agent.SessionManager
 	if cfg.HasRemoteChannels() {
 		sessions = buildSessionManager(name, cfg, llmClient, classifierLLM,
-			toolFactory, metricsHook, agentTapeDir, skillDirs, extHookRunner, logger)
+			spawnToolFactory, metricsHook, agentTapeDir, skillDirs, extHookRunner, logger)
 	}
 	if larkCh != nil {
 		setupCardActionHandler(larkCh, sessions, logger)
