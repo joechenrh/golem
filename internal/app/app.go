@@ -683,6 +683,7 @@ func buildProviderClient(model string, cfg *config.Config, logger *zap.Logger, o
 	if err != nil {
 		return nil, err
 	}
+	client = llm.NewRetryClient(client, 0, 0, logger)
 	return llm.NewRateLimitedClient(client, cfg.LLMRateLimit, logger), nil
 }
 
