@@ -130,7 +130,31 @@ Shell commands (e.g. `:ls -la`, `:git status`) are dispatched to the `shell_exec
 
 The session maintains two `llm.Usage` accumulators: `sessionUsage`, which accumulates over the entire session lifetime and is never reset, and `turnUsage`, which is reset at the start of each `runReActLoop()` invocation. Both are updated after each LLM response with `PromptTokens`, `CompletionTokens`, and `TotalTokens`. Usage is surfaced via the `:usage` command and emitted in `EventAfterLLMCall` hook payloads.
 
-## 9. Current Gaps
+## 9. Progress Tracking
+
+Source: `internal/agent/session.go`, `internal/hooks/accumulator.go`, `internal/tools/builtins/`
+
+### 9.1 EventAccumulator on Session
+
+`Session` holds an optional `accumulator *hooks.EventAccumulator` field. Three methods expose it:
+
+- `SetAccumulator(a *hooks.EventAccumulator)` — wires the accumulator in after construction (called by `SessionManager.GetOrCreate` for remote sessions).
+- `Accumulator() *hooks.EventAccumulator` — returns the accumulator, or nil for CLI sessions.
+- `Tasks() *TaskTracker` — returns the session's task tracker, used by `EventAccumulator` to emit `task_launched` / `task_completed` events.
+
+### 9.2 StatusInfo() extension
+
+`StatusInfo()` is extended to append a human-readable progress block when an accumulator is active. After the standard usage/model lines it calls `Accumulator().Snapshot()` and formats the result via `hooks.FormatProgress(snap)`. The formatted block includes the current phase label, iteration count, and any in-flight background tasks. This output is used by Lark and other remote channels to show a live status card while the agent is working.
+
+### 9.3 report_progress Builtin Tool
+
+A `report_progress` tool is registered in the tool registry **only for remote (non-CLI) sessions**. The tool accepts a `phase` string and an optional `description` string, emits a `phase_update` event to the hook bus, and returns an empty success result so that tool execution completes without inserting noise into the tape. The tool is intentionally omitted from CLI sessions because progress output is already visible in the streaming token display.
+
+### 9.4 System Prompt Injection
+
+When `report_progress` is available, the session injects a short guidance paragraph into the system prompt instructing the agent to call `report_progress` before starting each major work phase. This encourages structured phase reporting without requiring it via hard constraints. The paragraph is appended after the base persona text and is omitted entirely when the tool is not registered.
+
+## 10. Current Gaps
 
 1. **No summarization on capacity eviction or shutdown.** `evictOldestLocked()` and `Shutdown()` cancel sessions without calling `Summarize()`. Only `EvictIdle()` summarizes. A session evicted to make room for a new one loses its context permanently.
 
