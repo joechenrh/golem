@@ -213,7 +213,7 @@ func (sm *SessionManager) createSession(
 
 // createSessionFromTape builds a new Session resuming from an existing tape file.
 func (sm *SessionManager) createSessionFromTape(
-	tapePath string,
+	tapePath, channelID string,
 ) (*Session, error) {
 	tapeStore, err := tape.NewFileStore(tapePath)
 	if err != nil {
@@ -238,13 +238,13 @@ func (sm *SessionManager) createSessionFromTape(
 	accumulator := NewEventAccumulator(50)
 	hookBus.Register(accumulator)
 	if sm.factory.Channel != nil {
-		reporter := NewProgressReporter(sm.factory.Channel, "restored", 10*time.Second, sm.logger)
+		reporter := NewProgressReporter(sm.factory.Channel, channelID, 10*time.Second, sm.logger)
 		hookBus.Register(reporter)
 		registry.Register(builtin.NewReportProgressTool(hookBus))
 		registry.Expand("report_progress")
 	}
 
-	sess := NewSession(sm.factory.LLMClient, sm.factory.ClassifierLLM, registry, tapeStore, ctxStrategy, hookBus, sm.factory.Config, sm.logger, "restored")
+	sess := NewSession(sm.factory.LLMClient, sm.factory.ClassifierLLM, registry, tapeStore, ctxStrategy, hookBus, sm.factory.Config, sm.logger, channelID)
 	sess.TapePath = tapePath
 	sess.SetSkillReload(sm.factory.SkillDirs, sm.factory.Config.SkillReloadInterval)
 	sess.SetExtHooks(sm.factory.ExtHookRunner)
@@ -288,7 +288,7 @@ func (sm *SessionManager) LoadExisting(tapeDir string) error {
 			continue
 		}
 
-		sess, err := sm.createSessionFromTape(tapePath)
+		sess, err := sm.createSessionFromTape(tapePath, chatID)
 		if err != nil {
 			skipped++
 			sm.logger.Warn("skipping session restore",
