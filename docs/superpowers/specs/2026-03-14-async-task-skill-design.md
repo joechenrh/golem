@@ -110,14 +110,14 @@ Behavioral constraints:
 4. **MUST NOT** perform any fix work itself — only create the task and spawn.
 5. When the sub-agent returns, query TiDB and reply to user with final result.
 
-**Important limitation:** While the sub-agent is running, the main session's per-chat worker is blocked in `WaitForAny()`. The user cannot send regular messages to this chat session until the sub-agent completes. Slash commands (e.g., `/status`) are exempt after the bug fix below. This is an accepted tradeoff for v1 — future versions may release the worker during `WaitForAny`.
+**Important limitation:** While the sub-agent is running, the main session's per-chat worker is blocked in `WaitForAny()`. The user cannot send regular messages to this chat session until the sub-agent completes. Slash commands (e.g., `/status`) are exempt after the bug fix below. This also means **only one task can run per chat at a time** (implicit per-chat concurrency limit of 1). This is an accepted tradeoff for v1 — future versions may release the worker during `WaitForAny`.
 
 ### Sub-Agent Section
 
 Workflow (skill prompt drives the agent to follow this sequence):
 
-1. `lark_message(channel_id, "任务已开始，ID: {task_id}")`
-2. `mysql: UPDATE async_tasks SET status='running' WHERE id='{task_id}'`
+1. `mysql: UPDATE async_tasks SET status='running' WHERE id='{task_id}'`
+2. `lark_message(channel_id, "任务已开始，ID: {task_id}")` — on retry, send "任务重试中 (第N次)，ID: {task_id}" instead
 3. `mysql: INSERT INTO task_events (task_id, phase) VALUES ('{task_id}', 'analyzing')`
 4. `gh issue view {issue_url}` — understand the problem
 5. Clone repo, create branch, analyze code, write fix, create PR
@@ -144,13 +144,16 @@ Failure handling (enforced by skill):
 
 No automatic recovery on startup. Recovery is triggered by the user re-sending a message (e.g., "fix #123" or "任务 xxx 状态").
 
-The main agent section handles this by distinguishing "running and alive" from "running but orphaned":
-1. Query TiDB — finds existing task with `status=running`
-2. Check if the current process has an active sub-agent for this task (via `TaskTracker`) — if yes, the task is alive, reply "already running"
+Recovery is triggered when the main agent section (step 1) queries by `issue_url` and finds a task with `status=running`. It distinguishes "alive" from "orphaned" using `TaskTracker` — an existing in-memory component in `internal/agent/tasks.go` that tracks all active sub-agents spawned by `spawn_agent`. No new code needed for this check.
+
+1. Main agent queries `async_tasks` by `issue_url` — finds `status=running`
+2. Check `TaskTracker` for an active sub-agent associated with this task — if found, the task is alive, reply "已在执行中"
 3. If no active sub-agent exists (orphaned after restart):
-   - Query `task_events` for the task's execution history
+   - Query `task_events ORDER BY created_at` for the task's execution history
    - Spawn a new sub-agent with the history injected into the prompt as context
    - The sub-agent reads the history and decides where to continue (e.g., "PR already created, skip to waiting for review")
+
+Note: the "status query" path (user asks "任务 xxx 状态") only reads and displays task state — it does NOT trigger recovery. Recovery is only triggered via the `issue_url` lookup path.
 
 ### Status Query
 
