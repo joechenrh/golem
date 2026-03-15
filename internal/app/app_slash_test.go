@@ -10,7 +10,7 @@ func TestSlashCommandDetection(t *testing.T) {
 	}{
 		{"status command", "/status", true},
 		{"help command", "/help", true},
-		{"new command", "/new", true},
+		{"new command not bypassed", "/new", false},
 		{"unknown slash", "/unknown", false},
 		{"regular message", "fix issue #123", false},
 		{"slash in middle", "please /help me", false},

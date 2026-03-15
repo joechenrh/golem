@@ -164,9 +164,11 @@ func (inst *AgentInstance) processMessages(
 			continue
 		}
 
-		// Handle slash commands inline, bypassing the per-chat queue.
-		// This allows /status to work even when the per-chat worker
+		// Handle read-only slash commands inline, bypassing the per-chat queue.
+		// This allows /status and /help to work even when the per-chat worker
 		// is blocked in WaitForAny() during sub-agent execution.
+		// NOTE: /new is NOT included here because Reset() is not safe to call
+		// concurrently with an active session. It stays serialized via the queue.
 		if isRemoteSlashCommand(msg.Text) {
 			ch, ok := inst.Channels[msg.ChannelName]
 			if ok {
@@ -234,7 +236,9 @@ func (inst *AgentInstance) processMessage(
 		}
 	}
 
-	// Handle slash commands for remote channels (e.g. /help, /new, /status).
+	// Handle slash commands that need session serialization (e.g. /new which
+	// calls Reset). Read-only commands like /status and /help are intercepted
+	// earlier in processMessages to bypass the per-chat queue.
 	if msg.ChannelName != "cli" && strings.HasPrefix(msg.Text, "/") {
 		if inst.handleSlashCommand(sessCtx, ch, msg) {
 			return false
@@ -292,7 +296,7 @@ func isRemoteSlashCommand(text string) bool {
 	cmd := strings.TrimSpace(strings.TrimPrefix(text, "/"))
 	parts := strings.SplitN(cmd, " ", 2)
 	switch parts[0] {
-	case "help", "new", "status":
+	case "help", "status":
 		return true
 	}
 	return false
