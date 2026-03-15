@@ -441,7 +441,10 @@ func (s *Session) RecordFeedback(chatID, value string) {
 	})
 }
 
-// StatusInfo returns a human-readable status summary for this session.
+// StatusInfo returns a human-readable summary of the session.
+// NOTE: This method intentionally does NOT acquire s.mu so it can be called
+// concurrently while a ReAct loop is running (e.g., from /status commands).
+// Usage counters may be slightly stale, which is acceptable for display.
 // When the session is actively running and has an accumulator, progress
 // information is appended to the base model/token info.
 func (s *Session) StatusInfo() string {

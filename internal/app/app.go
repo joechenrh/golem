@@ -164,6 +164,17 @@ func (inst *AgentInstance) processMessages(
 			continue
 		}
 
+		// Handle slash commands inline, bypassing the per-chat queue.
+		// This allows /status to work even when the per-chat worker
+		// is blocked in WaitForAny() during sub-agent execution.
+		if isRemoteSlashCommand(msg.Text) {
+			ch, ok := inst.Channels[msg.ChannelName]
+			if ok {
+				inst.handleSlashCommand(ctx, ch, msg)
+			}
+			continue
+		}
+
 		q, ok := chatQueues[msg.ChannelID]
 		if !ok {
 			q = make(chan channel.IncomingMessage, 16)
@@ -269,6 +280,21 @@ func (inst *AgentInstance) processMessage(
 		zap.String("chat_id", msg.ChannelID),
 		zap.Int64("elapsed_ms", time.Since(start).Milliseconds()))
 
+	return false
+}
+
+// isRemoteSlashCommand checks if a message is a known slash command
+// that can be handled without going through the per-chat message queue.
+func isRemoteSlashCommand(text string) bool {
+	if !strings.HasPrefix(text, "/") {
+		return false
+	}
+	cmd := strings.TrimSpace(strings.TrimPrefix(text, "/"))
+	parts := strings.SplitN(cmd, " ", 2)
+	switch parts[0] {
+	case "help", "new", "status":
+		return true
+	}
 	return false
 }
 
