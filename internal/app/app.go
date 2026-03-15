@@ -335,7 +335,9 @@ func (inst *AgentInstance) handleSlashCommand(
 		return false
 	}
 
-	ch.SendDirect(ctx, msg.ChannelID, response)
+	if err := ch.SendDirect(ctx, msg.ChannelID, response); err != nil {
+		inst.Logger.Error("slash command send error", zap.Error(err))
+	}
 	return true
 }
 
