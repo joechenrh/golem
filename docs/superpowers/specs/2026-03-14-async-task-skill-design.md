@@ -102,10 +102,10 @@ Behavioral constraints:
    - If `status=completed` → reply with the stored result
    - If `status=failed` → ask user whether to retry
    - If not found → `INSERT` a new record with `status=pending`, `deadline=NOW()+12h`
-2. Call `spawn_agent` with a prompt containing:
-   - The sub-agent section of this skill
-   - `task_id`, `channel_id`, issue URL
-   - TiDB connection info and SQL templates
+2. Call `spawn_agent` with a lightweight prompt that:
+   - Instructs the sub-agent to load the `fix-pr` skill and follow its "For Sub-Agent" section
+   - Passes `task_id`, `channel_id`, issue URL, TiDB connection info
+   - For recovery: appends the task event history so the sub-agent can resume
 3. **Do NOT** send any acknowledgment to the user — the sub-agent handles this via `lark_message`.
 4. **MUST NOT** perform any fix work itself — only create the task and spawn.
 5. When the sub-agent returns, query TiDB and reply to user with final result.
@@ -113,6 +113,8 @@ Behavioral constraints:
 **Important limitation:** While the sub-agent is running, the main session's per-chat worker is blocked in `WaitForAny()`. The user cannot send regular messages to this chat session until the sub-agent completes. Slash commands (e.g., `/status`) are exempt after the bug fix below. This also means **only one task can run per chat at a time** (implicit per-chat concurrency limit of 1). This is an accepted tradeoff for v1 — future versions may release the worker during `WaitForAny`.
 
 ### Sub-Agent Section
+
+The sub-agent loads the `fix-pr` skill via the `skill` tool and reads this section for the workflow. Task parameters (task_id, channel_id, issue_url, TiDB connection) are provided in the spawn_agent prompt, not in the skill file.
 
 Workflow (skill prompt drives the agent to follow this sequence):
 

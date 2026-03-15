@@ -503,16 +503,31 @@ mysql ... -e "SELECT id FROM async_tasks WHERE issue_url='<issue_url>'"
 
 ### Step 4: Spawn sub-agent
 
-Call `spawn_agent` with the following prompt. Replace `{task_id}`, `{channel_id}`, `{issue_url}`, and `{tidb_connection}` with actual values.
-
 **CRITICAL:** You MUST NOT do any fix work yourself. Your only job is to create the task record and spawn the sub-agent.
 
-For recovery (orphaned running task), also query and include the task event history:
+Call `spawn_agent` with the following prompt template. Replace placeholders with actual values:
+
+```text
+你是一个异步任务执行器。请使用 fix-pr skill 来完成以下任务。
+
+- Task ID: <task_id>
+- Channel ID: <channel_id>
+- Issue URL: <issue_url>
+- TiDB connection: mysql -h "$TIDB_HOST" -P "$TIDB_PORT" -u "$TIDB_USER" -p"$TIDB_PASSWORD" "$TIDB_DATABASE" -e
+
+请先调用 skill tool 加载 fix-pr skill，然后按照 "For Sub-Agent" section 的 workflow 执行。
+```
+
+For recovery (orphaned running task), also query and append the task event history to the prompt:
 ```bash
 mysql ... -e "SELECT phase, detail, created_at FROM task_events WHERE task_id='<task_id>' ORDER BY created_at"
 ```
 
-Include this history in the sub-agent prompt as "Previous execution history" so the sub-agent can decide where to continue.
+Append to the spawn_agent prompt:
+```text
+这是一个恢复任务。以下是之前的执行历史，请根据历史判断从哪一步继续：
+<event_history>
+```
 
 ### Step 5: Wait and report
 
@@ -533,37 +548,37 @@ Reply with a formatted summary of the task state and recent events.
 
 ---
 
-## For Sub-Agent (include this section in spawn_agent prompt)
+## For Sub-Agent
 
-You are a sub-agent executing a fix-PR task. Your task:
-- Task ID: {task_id}
-- Channel ID: {channel_id}
-- Issue URL: {issue_url}
-- TiDB connection: {tidb_connection}
+This section is read by the sub-agent after it loads the fix-pr skill. It defines the workflow and behavioral constraints.
 
-{If recovery: Previous execution history:
-{event_history}
-Review this history and skip steps that have already been completed.}
+### Task Context
+
+Your task parameters are provided in the spawn_agent prompt:
+- **Task ID** — unique identifier for this task in TiDB
+- **Channel ID** — Lark chat to send notifications to via `lark_message` tool
+- **Issue URL** — GitHub issue to fix
+- **TiDB connection** — mysql CLI connection string for task state updates
 
 ### Workflow
 
-Follow these steps in order. Update task_events at each phase transition.
+Follow these steps in order. Update `task_events` at each phase transition.
 
 **1. Mark task as running and notify user**
 
 ```bash
-mysql {tidb_connection} -e "UPDATE async_tasks SET status='running' WHERE id='{task_id}'"
+mysql <tidb_connection> -e "UPDATE async_tasks SET status='running' WHERE id='<task_id>'"
 ```
 
 Use `lark_message` tool:
-- First attempt: `{"channel_id": "{channel_id}", "text": "任务已开始，ID: {task_id}\nIssue: {issue_url}"}`
-- On retry: `{"channel_id": "{channel_id}", "text": "任务重试中 (第N次)，ID: {task_id}"}`
+- First attempt: `{"channel_id": "<channel_id>", "text": "任务已开始，ID: <task_id>\nIssue: <issue_url>"}`
+- On retry: `{"channel_id": "<channel_id>", "text": "任务重试中 (第N次)，ID: <task_id>"}`
 
 **2. Analyze the issue**
 
 ```bash
-mysql {tidb_connection} -e "INSERT INTO task_events (task_id, phase) VALUES ('{task_id}', 'analyzing')"
-gh issue view {issue_url} --json title,body,labels,comments
+mysql <tidb_connection> -e "INSERT INTO task_events (task_id, phase) VALUES ('<task_id>', 'analyzing')"
+gh issue view <issue_url> --json title,body,labels,comments
 ```
 
 Read the issue carefully. Understand the problem, expected behavior, and any reproduction steps.
@@ -571,17 +586,17 @@ Read the issue carefully. Understand the problem, expected behavior, and any rep
 **3. Fix the issue**
 
 - Clone the repository if needed
-- Create a branch: `fix/{issue_number}`
+- Create a branch: `fix/<issue_number>`
 - Analyze the codebase to find the root cause
 - Write the fix
 - Write or update tests
 - Create a PR:
   ```bash
-  gh pr create --title "fix: <description>" --body "Fixes {issue_url}"
+  gh pr create --title "fix: <description>" --body "Fixes <issue_url>"
   ```
 
 ```bash
-mysql {tidb_connection} -e "INSERT INTO task_events (task_id, phase, detail) VALUES ('{task_id}', 'pr_created', 'PR #<number>')"
+mysql <tidb_connection> -e "INSERT INTO task_events (task_id, phase, detail) VALUES ('<task_id>', 'pr_created', 'PR #<number>')"
 ```
 
 **4. Wait for review**
@@ -597,25 +612,25 @@ gh pr view <pr_number> --json reviewDecision,reviews,comments
 - If `reviewDecision` is `APPROVED` → break out of loop
 - Check deadline:
   ```bash
-  mysql {tidb_connection} -e "SELECT deadline < NOW() AS expired FROM async_tasks WHERE id='{task_id}'"
+  mysql <tidb_connection> -e "SELECT deadline < NOW() AS expired FROM async_tasks WHERE id='<task_id>'"
   ```
   If expired → treat as timeout failure
 
 ```bash
-mysql {tidb_connection} -e "INSERT INTO task_events (task_id, phase) VALUES ('{task_id}', 'waiting_review')"
+mysql <tidb_connection> -e "INSERT INTO task_events (task_id, phase) VALUES ('<task_id>', 'waiting_review')"
 ```
 
 **5. Merge**
 
 ```bash
 gh pr merge <pr_number> --squash --delete-branch
-mysql {tidb_connection} -e "INSERT INTO task_events (task_id, phase, detail) VALUES ('{task_id}', 'merged', 'merge commit: <sha>')"
+mysql <tidb_connection> -e "INSERT INTO task_events (task_id, phase, detail) VALUES ('<task_id>', 'merged', 'merge commit: <sha>')"
 ```
 
 **6. Complete**
 
 ```bash
-mysql {tidb_connection} -e "UPDATE async_tasks SET status='completed', result='PR #<number> merged. Commit: <sha>' WHERE id='{task_id}'"
+mysql <tidb_connection> -e "UPDATE async_tasks SET status='completed', result='PR #<number> merged. Commit: <sha>' WHERE id='<task_id>'"
 ```
 
 Exit. The main agent will read the result and notify the user.
@@ -625,18 +640,22 @@ Exit. The main agent will read the result and notify the user.
 If any step fails:
 
 ```bash
-mysql {tidb_connection} -e "UPDATE async_tasks SET retry_count=retry_count+1 WHERE id='{task_id}'"
-mysql {tidb_connection} -e "INSERT INTO task_events (task_id, phase, detail) VALUES ('{task_id}', 'retry', '<error description>')"
-mysql {tidb_connection} -e "SELECT retry_count, max_retries FROM async_tasks WHERE id='{task_id}'"
+mysql <tidb_connection> -e "UPDATE async_tasks SET retry_count=retry_count+1 WHERE id='<task_id>'"
+mysql <tidb_connection> -e "INSERT INTO task_events (task_id, phase, detail) VALUES ('<task_id>', 'retry', '<error description>')"
+mysql <tidb_connection> -e "SELECT retry_count, max_retries FROM async_tasks WHERE id='<task_id>'"
 ```
 
 - If `retry_count < max_retries` → restart from step 1
 - If reached limit:
   ```bash
-  mysql {tidb_connection} -e "UPDATE async_tasks SET status='failed', error='<error>' WHERE id='{task_id}'"
+  mysql <tidb_connection> -e "UPDATE async_tasks SET status='failed', error='<error>' WHERE id='<task_id>'"
   ```
-  Use `lark_message`: `{"channel_id": "{channel_id}", "text": "任务失败，ID: {task_id}\n原因: <error>"}`
+  Use `lark_message`: `{"channel_id": "<channel_id>", "text": "任务失败，ID: <task_id>\n原因: <error>"}`
   Exit.
+
+### Recovery
+
+If your prompt contains "Previous execution history", review it and skip steps already completed. For example, if `pr_created` event exists, skip directly to step 4 (wait for review).
 ```
 
 - [ ] **Step 3: Verify skill is discoverable**
