@@ -807,6 +807,8 @@ func BuildToolRegistry(
 		registry.Expand("lark_read_doc")
 		registry.Expand("lark_write_doc")
 		registry.Expand("chat_history")
+		registry.Register(builtin.NewLarkMessageTool(larkCh))
+		registry.Expand("lark_message")
 	}
 
 	// Persona self-edit tool (only when persona is configured).
