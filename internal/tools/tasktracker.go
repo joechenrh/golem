@@ -12,6 +12,10 @@ type BackgroundTaskTracker interface {
 	Complete(id int, result string)
 	// Fail marks a task as failed with an error message.
 	Fail(id int, errMsg string)
+	// SetChildTracker attaches a sub-agent's tracker to a task for tree display.
+	SetChildTracker(id int, child BackgroundTaskTracker)
+	// TreeSummary returns a recursive, indented summary of all tasks.
+	TreeSummary(indent string) string
 }
 
 type taskTrackerKey struct{}

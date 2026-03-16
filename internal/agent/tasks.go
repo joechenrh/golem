@@ -11,6 +11,7 @@ import (
 
 	"github.com/joechenrh/golem/internal/hooks"
 	"github.com/joechenrh/golem/internal/stringutil"
+	"github.com/joechenrh/golem/internal/tools"
 )
 
 // TaskStatus represents the state of a background task.
@@ -37,15 +38,16 @@ func (s TaskStatus) String() string {
 
 // BackgroundTask holds the state of a single background task.
 type BackgroundTask struct {
-	ID          int
-	Description string
-	Status      TaskStatus
-	StartedAt   time.Time
-	CompletedAt time.Time
-	Result      string
-	Error       string
-	cancel      context.CancelFunc
-	injected    bool // true once DrainCompleted has returned this task
+	ID           int
+	Description  string
+	Status       TaskStatus
+	StartedAt    time.Time
+	CompletedAt  time.Time
+	Result       string
+	Error        string
+	ChildTracker tools.BackgroundTaskTracker // sub-agent's tracker; nil if no children
+	cancel       context.CancelFunc
+	injected     bool // true once DrainCompleted has returned this task
 }
 
 // TaskTracker manages background tasks launched by spawn_agent.
@@ -280,4 +282,43 @@ func (tt *TaskTracker) CancelAll() {
 func (tt *TaskTracker) Close() {
 	tt.CancelAll()
 	tt.g.Wait()
+}
+
+// SetChildTracker attaches a sub-agent's tracker to the given task,
+// enabling recursive tree display via TreeSummary.
+func (tt *TaskTracker) SetChildTracker(taskID int, child tools.BackgroundTaskTracker) {
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+	if t, ok := tt.tasks[taskID]; ok {
+		t.ChildTracker = child
+	}
+}
+
+// TreeSummary returns a recursive, indented summary of all tasks and their
+// children. It copies state under the lock then recurses without holding it.
+func (tt *TaskTracker) TreeSummary(indent string) string {
+	tt.mu.Lock()
+	type entry struct {
+		id           int
+		desc         string
+		status       string
+		childTracker tools.BackgroundTaskTracker
+	}
+	entries := make([]entry, 0, len(tt.tasks))
+	for i := range tt.seq {
+		id := i + 1
+		if t, ok := tt.tasks[id]; ok {
+			entries = append(entries, entry{id, t.Description, t.Status.String(), t.ChildTracker})
+		}
+	}
+	tt.mu.Unlock()
+
+	var sb strings.Builder
+	for _, e := range entries {
+		fmt.Fprintf(&sb, "%s|- #%d %s [%s]\n", indent, e.id, e.desc, e.status)
+		if e.childTracker != nil {
+			sb.WriteString(e.childTracker.TreeSummary(indent + "   "))
+		}
+	}
+	return sb.String()
 }

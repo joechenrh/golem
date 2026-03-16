@@ -116,5 +116,7 @@ func (m *mockTracker) Launch(desc string, fn func(ctx context.Context, id int)) 
 	return m.launchCount
 }
 
-func (m *mockTracker) Complete(int, string) {}
-func (m *mockTracker) Fail(int, string)     {}
+func (m *mockTracker) Complete(int, string)                             {}
+func (m *mockTracker) Fail(int, string)                                 {}
+func (m *mockTracker) SetChildTracker(int, tools.BackgroundTaskTracker) {}
+func (m *mockTracker) TreeSummary(string) string                        { return "" }

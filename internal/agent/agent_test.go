@@ -1483,3 +1483,58 @@ func TestHandleInput_TaskRecoveryAtIterLimit(t *testing.T) {
 		t.Errorf("LLM called %d times, want 3", client.callCount)
 	}
 }
+
+func TestTaskTracker_SetChildTracker(t *testing.T) {
+	parent := NewTaskTracker(5)
+	child := NewTaskTracker(5)
+	child.Add("child task", nil)
+
+	id := parent.Add("parent task", nil)
+	parent.SetChildTracker(id, child)
+
+	summary := parent.TreeSummary("")
+	if !strings.Contains(summary, "parent task") {
+		t.Errorf("TreeSummary missing parent task, got: %s", summary)
+	}
+	if !strings.Contains(summary, "child task") {
+		t.Errorf("TreeSummary missing child task, got: %s", summary)
+	}
+}
+
+func TestTaskTracker_TreeSummary(t *testing.T) {
+	parent := NewTaskTracker(5)
+	child := NewTaskTracker(5)
+
+	pid := parent.Add("fix issue", nil)
+	parent.SetChildTracker(pid, child)
+
+	child.Add("analyze", nil)
+	child.Add("write fix", nil)
+
+	summary := parent.TreeSummary("")
+	if !strings.Contains(summary, "fix issue") {
+		t.Errorf("missing parent in tree: %s", summary)
+	}
+	if !strings.Contains(summary, "analyze") {
+		t.Errorf("missing child 'analyze' in tree: %s", summary)
+	}
+	if !strings.Contains(summary, "write fix") {
+		t.Errorf("missing child 'write fix' in tree: %s", summary)
+	}
+}
+
+func TestTaskTracker_TreeSummary_Empty(t *testing.T) {
+	tt := NewTaskTracker(5)
+	if got := tt.TreeSummary(""); got != "" {
+		t.Errorf("TreeSummary on empty tracker = %q, want empty", got)
+	}
+}
+
+func TestTaskTracker_TreeSummary_NoChildren(t *testing.T) {
+	tt := NewTaskTracker(5)
+	tt.Add("solo task", nil)
+	summary := tt.TreeSummary("")
+	if !strings.Contains(summary, "solo task") {
+		t.Errorf("missing task in summary: %s", summary)
+	}
+}
