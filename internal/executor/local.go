@@ -91,16 +91,31 @@ func (e *LocalExecutor) Execute(
 // rtkRewrite prefixes a command with "rtk" when RTK is installed and the
 // command is one that RTK knows how to compress. The original command is
 // returned unchanged when RTK is not available or the command is unsupported.
+//
+// Only simple commands are rewritten: either a bare command ("git status")
+// or a single "cd <dir> && <cmd>" pattern. Multi-command chains like
+// "git status && mysql ..." are left alone because rtk cannot handle them.
 func (e *LocalExecutor) rtkRewrite(command string) string {
 	if e.rtkPath == "" {
 		return command
 	}
-	// Strip leading whitespace and any "cd <dir> && " prefix to find the
-	// actual command being run, but keep the original string intact.
+	// Strip leading whitespace to find the actual command.
 	bare := strings.TrimLeft(command, " \t")
-	// Handle "cd some/dir && git status" patterns — check after &&.
+	// Allow a single "cd <dir> && <cmd>" prefix — strip it to reach the
+	// real command. Any other use of "&&" means a multi-command chain
+	// that rtk cannot handle, so skip rewriting entirely.
 	if idx := strings.Index(bare, "&& "); idx >= 0 {
-		bare = strings.TrimLeft(bare[idx+3:], " \t")
+		before := strings.TrimSpace(bare[:idx])
+		if !strings.HasPrefix(before, "cd ") && before != "cd" {
+			// First segment is not cd — this is a multi-command chain.
+			return command
+		}
+		rest := strings.TrimLeft(bare[idx+3:], " \t")
+		if strings.Contains(rest, "&& ") {
+			// More than one command after cd — still a chain.
+			return command
+		}
+		bare = rest
 	}
 	for _, prefix := range rtkCommands {
 		if strings.HasPrefix(bare, prefix) || bare == strings.TrimRight(prefix, " \n") {

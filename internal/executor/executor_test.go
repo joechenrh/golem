@@ -170,6 +170,18 @@ func TestRtkRewrite(t *testing.T) {
 			want:    "cat file.txt",
 		},
 		{
+			name:    "cd then multi-chain skipped",
+			rtkPath: "/usr/bin/rtk",
+			command: "cd mydir && git status && mysql -e 'SELECT 1'",
+			want:    "cd mydir && git status && mysql -e 'SELECT 1'",
+		},
+		{
+			name:    "multi-chain without cd skipped",
+			rtkPath: "/usr/bin/rtk",
+			command: "git status && git log --oneline",
+			want:    "git status && git log --oneline",
+		},
+		{
 			name:    "bare ls",
 			rtkPath: "/usr/bin/rtk",
 			command: "ls",
