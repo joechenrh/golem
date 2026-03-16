@@ -462,7 +462,14 @@ func (s *Session) StatusInfo() string {
 	if s.accumulator != nil {
 		snap := s.accumulator.Snapshot()
 		if snap.State.IdleSince == nil && snap.State.Iteration > 0 {
-			return base + "\n\n" + FormatProgress(snap)
+			base += "\n\n" + FormatProgress(snap)
+		}
+	}
+
+	if s.tasks != nil {
+		tree := s.tasks.TreeSummary("")
+		if tree != "" {
+			base += "\n\nBackground tasks:\n" + tree
 		}
 	}
 
