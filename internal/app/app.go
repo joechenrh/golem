@@ -489,13 +489,21 @@ func buildToolFactories(
 		return r
 	}
 
+	// Sub-agents get their own executor with RTK disabled to avoid
+	// rewriting issues with complex shell command chains.
+	subExec := executor.NewLocal(cfg.WorkspaceDir)
+	subExec.DisableRTK = true
+	subBase := func() *tools.Registry {
+		return BuildToolRegistry(cfg, subExec, filesystem, larkCh, logger)
+	}
+
 	var subAgentSeq atomic.Int64
 	withSpawn = func() *tools.Registry {
 		r := base()
 		r.Register(builtin.NewSpawnAgentTool(func(ctx context.Context, prompt string) (string, error) {
 			seq := subAgentSeq.Add(1)
 			subTapePath := filepath.Join(agentTapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
-			sess, err := buildEphemeralSession(llmClient, cfg, base, logger, "sub-agent", subTapePath, extHookRunner)
+			sess, err := buildEphemeralSession(llmClient, cfg, subBase, logger, "sub-agent", subTapePath, extHookRunner)
 			if err != nil {
 				return "", fmt.Errorf("sub-agent: %w", err)
 			}

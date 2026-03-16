@@ -27,8 +27,9 @@ var rtkCommands = []string{
 
 // LocalExecutor runs commands via /bin/sh -c in a working directory.
 type LocalExecutor struct {
-	WorkDir string
-	rtkPath string // empty if RTK is not installed
+	WorkDir    string
+	rtkPath    string // empty if RTK is not installed
+	DisableRTK bool   // when true, skip rtk rewriting even if installed
 }
 
 // NewLocal creates a LocalExecutor rooted at the given directory.
@@ -96,7 +97,7 @@ func (e *LocalExecutor) Execute(
 // or a single "cd <dir> && <cmd>" pattern. Multi-command chains like
 // "git status && mysql ..." are left alone because rtk cannot handle them.
 func (e *LocalExecutor) rtkRewrite(command string) string {
-	if e.rtkPath == "" {
+	if e.rtkPath == "" || e.DisableRTK {
 		return command
 	}
 	// Strip leading whitespace to find the actual command.
