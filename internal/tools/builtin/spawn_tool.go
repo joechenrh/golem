@@ -8,23 +8,26 @@ import (
 	"github.com/joechenrh/golem/internal/tools"
 )
 
-// SubAgentRunner runs a prompt through a sub-agent and returns the response.
-// The implementation should create a fresh agent loop WITHOUT spawn capability
-// to prevent recursive spawning.
-type SubAgentRunner func(ctx context.Context, prompt string) (string, error)
+// SubAgentSession holds a created sub-agent session ready to run.
+type SubAgentSession struct {
+	Tracker tools.BackgroundTaskTracker
+	Runner  func(ctx context.Context, prompt string) (string, error)
+}
+
+// SessionCreator creates a sub-agent session. Called from Execute()
+// before launching the background task.
+type SessionCreator func(ctx context.Context) (*SubAgentSession, error)
 
 // SpawnAgentTool delegates a task to an independent sub-agent.
 type SpawnAgentTool struct {
-	runner SubAgentRunner
+	creator SessionCreator
 }
 
-// NewSpawnAgentTool creates a spawn tool using the provided runner function.
-// The runner is responsible for constructing a sub-agent without spawn_agent
-// in its tool registry.
-func NewSpawnAgentTool(
-	runner SubAgentRunner,
-) *SpawnAgentTool {
-	return &SpawnAgentTool{runner: runner}
+// NewSpawnAgentTool creates a spawn tool using the provided session creator.
+// The creator is responsible for constructing a sub-agent session, returning
+// a tracker for tree display and a runner for executing the prompt.
+func NewSpawnAgentTool(creator SessionCreator) *SpawnAgentTool {
+	return &SpawnAgentTool{creator: creator}
 }
 
 func (t *SpawnAgentTool) Name() string        { return "spawn_agent" }
@@ -37,7 +40,7 @@ func (t *SpawnAgentTool) FullDescription() string {
 		"investigations, delegate to a sub-agent so you can report progress to the user " +
 		"and coordinate multiple tasks in parallel.\n\n" +
 		"The sub-agent has its own conversation context and access to standard tools " +
-		"(shell, file I/O, web) but cannot spawn further agents.\n\n" +
+		"(shell, file I/O, web). Sub-agents can spawn further sub-agents up to the configured depth limit.\n\n" +
 		"You can call this tool multiple times in a single response to run several " +
 		"sub-agents in parallel. Results are delivered automatically when each finishes."
 }
@@ -81,7 +84,11 @@ func (t *SpawnAgentTool) Execute(
 	tracker := tools.GetTaskTracker(ctx)
 	if tracker == nil {
 		// Sync fallback for sub-sessions (which have no tracker).
-		result, err := t.runner(ctx, prompt)
+		sub, err := t.creator(ctx)
+		if err != nil {
+			return "Sub-agent error: " + err.Error(), nil
+		}
+		result, err := sub.Runner(ctx, prompt)
 		if err != nil {
 			return "Sub-agent error: " + err.Error(), nil
 		}
@@ -92,7 +99,16 @@ func (t *SpawnAgentTool) Execute(
 	desc := truncateDesc(params.Prompt, 100)
 	capturedPrompt := prompt
 	taskID := tracker.Launch(desc, func(taskCtx context.Context, id int) {
-		result, err := t.runner(taskCtx, capturedPrompt)
+		sub, err := t.creator(taskCtx)
+		if err != nil {
+			tracker.Fail(id, err.Error())
+			return
+		}
+		// Link child tracker for tree display before running.
+		if sub.Tracker != nil {
+			tracker.SetChildTracker(id, sub.Tracker)
+		}
+		result, err := sub.Runner(taskCtx, capturedPrompt)
 		if err != nil {
 			tracker.Fail(id, err.Error())
 		} else {

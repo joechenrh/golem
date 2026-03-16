@@ -401,9 +401,18 @@ func BuildAgent(
 	extHookRunner := buildExtHookRunner(name, logger)
 	skillDirs := buildSkillDirs(cfg)
 
-	toolFactory, spawnToolFactory := buildToolFactories(
-		cfg, exec, filesystem, larkCh, schedStore,
-		llmClient, agentTapeDir, extHookRunner, logger,
+	// Sub-agents get their own executor with RTK disabled to avoid
+	// rewriting issues with complex shell command chains.
+	subExec := executor.NewLocal(cfg.WorkspaceDir)
+	subExec.DisableRTK = true
+
+	spawnToolFactory := buildToolFactory(
+		cfg.MaxSpawnDepth, cfg, exec, subExec, filesystem, larkCh,
+		schedStore, llmClient, agentTapeDir, extHookRunner, logger,
+	)
+	toolFactory := buildToolFactory(
+		0, cfg, exec, subExec, filesystem, larkCh,
+		schedStore, llmClient, agentTapeDir, extHookRunner, logger,
 	)
 
 	registry, defaultSess := buildDefaultSession(
@@ -460,12 +469,15 @@ func BuildAgent(
 	}, nil
 }
 
-// buildToolFactories creates the base tool factory (shared by ephemeral sessions)
-// and the spawn-enabled tool factory (used by the default and managed sessions).
-// Sub-agents use the base factory (no spawn_agent) to prevent recursive spawning.
-func buildToolFactories(
+// buildToolFactory creates a tool factory at the given depth level.
+// At depth 0 no spawn_agent tool is registered; at depth > 0 spawn_agent is
+// included with a SessionCreator that recursively builds child sessions at
+// depth-1. The root level (depth == cfg.MaxSpawnDepth) gets the primary
+// executor and schedule tools; sub-agents get subExec with RTK disabled.
+func buildToolFactory(
+	depth int,
 	cfg *config.Config,
-	exec executor.Executor,
+	exec, subExec executor.Executor,
 	filesystem *fs.LocalFS,
 	larkCh *larkchan.LarkChannel,
 	schedStore *scheduler.Store,
@@ -473,10 +485,20 @@ func buildToolFactories(
 	agentTapeDir string,
 	extHookRunner agent.ExtHookRunner,
 	logger *zap.Logger,
-) (base, withSpawn func() *tools.Registry) {
-	base = func() *tools.Registry {
-		r := BuildToolRegistry(cfg, exec, filesystem, larkCh, logger)
-		if schedStore != nil {
+) func() *tools.Registry {
+	var subAgentSeq atomic.Int64
+
+	return func() *tools.Registry {
+		// Root level uses the primary executor; sub-agents use subExec.
+		currentExec := subExec
+		if depth == cfg.MaxSpawnDepth {
+			currentExec = exec
+		}
+
+		r := BuildToolRegistry(cfg, currentExec, filesystem, larkCh, logger)
+
+		// Schedule tools only at root depth.
+		if depth == cfg.MaxSpawnDepth && schedStore != nil {
 			r.RegisterAll(
 				builtin.NewScheduleAddTool(schedStore, nil),
 				builtin.NewScheduleListTool(schedStore),
@@ -486,35 +508,34 @@ func buildToolFactories(
 			r.Expand("schedule_list")
 			r.Expand("schedule_remove")
 		}
+
+		// Register spawn_agent when depth > 0, with a child factory at depth-1.
+		if depth > 0 {
+			childFactory := buildToolFactory(
+				depth-1, cfg, exec, subExec, filesystem, larkCh,
+				schedStore, llmClient, agentTapeDir, extHookRunner, logger,
+			)
+			r.Register(builtin.NewSpawnAgentTool(func(ctx context.Context) (*builtin.SubAgentSession, error) {
+				seq := subAgentSeq.Add(1)
+				subTapePath := filepath.Join(agentTapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
+				sess, err := buildEphemeralSession(llmClient, cfg, childFactory, logger, "sub-agent", subTapePath, extHookRunner)
+				if err != nil {
+					return nil, fmt.Errorf("sub-agent: %w", err)
+				}
+				return &builtin.SubAgentSession{
+					Tracker: sess.Tasks(),
+					Runner: func(runCtx context.Context, prompt string) (string, error) {
+						return sess.HandleInput(runCtx, channel.IncomingMessage{
+							ChannelName: "internal",
+							Text:        prompt,
+						})
+					},
+				}, nil
+			}))
+		}
+
 		return r
 	}
-
-	// Sub-agents get their own executor with RTK disabled to avoid
-	// rewriting issues with complex shell command chains.
-	subExec := executor.NewLocal(cfg.WorkspaceDir)
-	subExec.DisableRTK = true
-	subBase := func() *tools.Registry {
-		return BuildToolRegistry(cfg, subExec, filesystem, larkCh, logger)
-	}
-
-	var subAgentSeq atomic.Int64
-	withSpawn = func() *tools.Registry {
-		r := base()
-		r.Register(builtin.NewSpawnAgentTool(func(ctx context.Context, prompt string) (string, error) {
-			seq := subAgentSeq.Add(1)
-			subTapePath := filepath.Join(agentTapeDir, fmt.Sprintf("sub-%d-%s.jsonl", seq, time.Now().Format("20060102-150405")))
-			sess, err := buildEphemeralSession(llmClient, cfg, subBase, logger, "sub-agent", subTapePath, extHookRunner)
-			if err != nil {
-				return "", fmt.Errorf("sub-agent: %w", err)
-			}
-			return sess.HandleInput(ctx, channel.IncomingMessage{
-				ChannelName: "internal",
-				Text:        prompt,
-			})
-		}))
-		return r
-	}
-	return base, withSpawn
 }
 
 // buildDefaultSession creates the default session with its tool registry.

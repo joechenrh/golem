@@ -10,16 +10,20 @@ import (
 )
 
 func TestSpawnAgentTool_SyncFallback(t *testing.T) {
-	runner := func(_ context.Context, prompt string) (string, error) {
-		return "sub-agent response to: " + prompt, nil
+	creator := func(_ context.Context) (*SubAgentSession, error) {
+		return &SubAgentSession{
+			Runner: func(_ context.Context, prompt string) (string, error) {
+				return "sub-agent response to: " + prompt, nil
+			},
+		}, nil
 	}
-	tool := NewSpawnAgentTool(runner)
+	tool := NewSpawnAgentTool(creator)
 
 	if tool.Name() != "spawn_agent" {
 		t.Errorf("Name() = %q, want %q", tool.Name(), "spawn_agent")
 	}
 
-	// No tracker in context → sync fallback.
+	// No tracker in context -> sync fallback.
 	args, _ := json.Marshal(map[string]string{"prompt": "Hello sub-agent"})
 	result, err := tool.Execute(context.Background(), string(args))
 	if err != nil {
@@ -32,11 +36,16 @@ func TestSpawnAgentTool_SyncFallback(t *testing.T) {
 
 func TestSpawnAgentTool_AsyncWithTracker(t *testing.T) {
 	var capturedPrompt string
-	runner := func(_ context.Context, prompt string) (string, error) {
-		capturedPrompt = prompt
-		return "done", nil
+	creator := func(_ context.Context) (*SubAgentSession, error) {
+		return &SubAgentSession{
+			Tracker: &mockTracker{},
+			Runner: func(_ context.Context, prompt string) (string, error) {
+				capturedPrompt = prompt
+				return "done", nil
+			},
+		}, nil
 	}
-	tool := NewSpawnAgentTool(runner)
+	tool := NewSpawnAgentTool(creator)
 
 	// Create a mock tracker to verify async path.
 	tracker := &mockTracker{}
@@ -57,20 +66,28 @@ func TestSpawnAgentTool_AsyncWithTracker(t *testing.T) {
 		t.Errorf("Launch called %d times, want 1", tracker.launchCount)
 	}
 
-	// Execute the captured function to verify it calls the runner.
+	// Execute the captured function to verify it calls the runner
+	// and links the child tracker.
 	if tracker.lastFn != nil {
 		tracker.lastFn(context.Background(), 1)
 		if capturedPrompt != "Fix the bug" {
 			t.Errorf("runner got prompt %q, want %q", capturedPrompt, "Fix the bug")
 		}
+		if tracker.childTrackerID != 1 {
+			t.Errorf("SetChildTracker called with id %d, want 1", tracker.childTrackerID)
+		}
 	}
 }
 
 func TestSpawnAgentTool_EmptyPrompt(t *testing.T) {
-	runner := func(_ context.Context, prompt string) (string, error) {
-		return prompt, nil
+	creator := func(_ context.Context) (*SubAgentSession, error) {
+		return &SubAgentSession{
+			Runner: func(_ context.Context, prompt string) (string, error) {
+				return prompt, nil
+			},
+		}, nil
 	}
-	tool := NewSpawnAgentTool(runner)
+	tool := NewSpawnAgentTool(creator)
 
 	args, _ := json.Marshal(map[string]string{"prompt": ""})
 	result, err := tool.Execute(context.Background(), string(args))
@@ -83,7 +100,7 @@ func TestSpawnAgentTool_EmptyPrompt(t *testing.T) {
 }
 
 func TestSpawnAgentTool_Parameters(t *testing.T) {
-	tool := NewSpawnAgentTool(nil)
+	tool := NewSpawnAgentTool(func(_ context.Context) (*SubAgentSession, error) { return nil, nil })
 
 	var schema struct {
 		Type       string         `json:"type"`
@@ -106,8 +123,9 @@ func TestSpawnAgentTool_Parameters(t *testing.T) {
 
 // mockTracker implements tools.BackgroundTaskTracker for testing.
 type mockTracker struct {
-	launchCount int
-	lastFn      func(ctx context.Context, id int)
+	launchCount    int
+	lastFn         func(ctx context.Context, id int)
+	childTrackerID int
 }
 
 func (m *mockTracker) Launch(desc string, fn func(ctx context.Context, id int)) int {
@@ -116,7 +134,10 @@ func (m *mockTracker) Launch(desc string, fn func(ctx context.Context, id int)) 
 	return m.launchCount
 }
 
-func (m *mockTracker) Complete(int, string)                             {}
-func (m *mockTracker) Fail(int, string)                                 {}
-func (m *mockTracker) SetChildTracker(int, tools.BackgroundTaskTracker) {}
-func (m *mockTracker) TreeSummary(string) string                        { return "" }
+func (m *mockTracker) Complete(int, string)      {}
+func (m *mockTracker) Fail(int, string)          {}
+func (m *mockTracker) TreeSummary(string) string { return "" }
+
+func (m *mockTracker) SetChildTracker(id int, _ tools.BackgroundTaskTracker) {
+	m.childTrackerID = id
+}
