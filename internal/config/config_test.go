@@ -494,6 +494,38 @@ func TestLoadClassifierModelEmpty(t *testing.T) {
 	}
 }
 
+func TestMaxSpawnDepthDefault(t *testing.T) {
+	t.Setenv("GOLEM_MODEL", "openai:test")
+	cfg, err := Load("", nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MaxSpawnDepth != 2 {
+		t.Errorf("MaxSpawnDepth = %d, want 2", cfg.MaxSpawnDepth)
+	}
+}
+
+func TestMaxSpawnDepthFromEnv(t *testing.T) {
+	t.Setenv("GOLEM_MODEL", "openai:test")
+	t.Setenv("GOLEM_MAX_SPAWN_DEPTH", "3")
+	cfg, err := Load("", nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MaxSpawnDepth != 3 {
+		t.Errorf("MaxSpawnDepth = %d, want 3", cfg.MaxSpawnDepth)
+	}
+}
+
+func TestMaxSpawnDepthValidation(t *testing.T) {
+	t.Setenv("GOLEM_MODEL", "openai:test")
+	t.Setenv("GOLEM_MAX_SPAWN_DEPTH", "-1")
+	_, err := Load("", nil)
+	if err == nil {
+		t.Error("expected validation error for negative MaxSpawnDepth")
+	}
+}
+
 func TestExpandHome(t *testing.T) {
 	home, _ := os.UserHomeDir()
 

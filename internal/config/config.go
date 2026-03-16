@@ -100,6 +100,7 @@ type Config struct {
 	// Agent behavior
 	MaxToolIter        int      // max tool-calling iterations per turn (default: 15)
 	MaxOutputTokens    int      // max tokens in LLM response (default: 4096)
+	MaxSpawnDepth      int      // max sub-agent nesting depth (default: 2; 0 disables spawn)
 	Temperature        *float64 // LLM sampling temperature (nil = provider default)
 	ReasoningEffort    string   // reasoning effort for OpenAI models: "low", "medium", "high", "xhigh" (default: "")
 	UseResponsesAPI    bool     // use OpenAI Responses API instead of Chat Completions (default: false)
@@ -197,6 +198,7 @@ func Load(
 		// Agent tier: behavior, storage, logging.
 		MaxToolIter:         a.integer("GOLEM_MAX_TOOL_ITER", 15),
 		MaxOutputTokens:     a.integer("GOLEM_MAX_OUTPUT_TOKENS", 4096),
+		MaxSpawnDepth:       a.integer("GOLEM_MAX_SPAWN_DEPTH", 2),
 		Temperature:         a.optFloat64("GOLEM_TEMPERATURE"),
 		ReasoningEffort:     a.str("GOLEM_REASONING_EFFORT", "high"),
 		UseResponsesAPI:     a.boolean("GOLEM_USE_RESPONSES_API", false),
@@ -264,6 +266,9 @@ func (c *Config) validate() error {
 	}
 	if c.MaxToolIter <= 0 {
 		return fmt.Errorf("max tool iterations must be positive, got %d", c.MaxToolIter)
+	}
+	if c.MaxSpawnDepth < 0 {
+		return fmt.Errorf("max spawn depth must be non-negative, got %d", c.MaxSpawnDepth)
 	}
 	if c.Temperature != nil && (*c.Temperature < 0 || *c.Temperature > 2) {
 		return fmt.Errorf("temperature must be between 0 and 2, got %v", *c.Temperature)
