@@ -149,7 +149,7 @@ Source: `internal/tools/external.go`
 | `schedule_add` | Create a cron-scheduled task; supports standard cron, `@daily`, `@every 30m`, `CRON_TZ=` | `cron_expr`, `prompt`, `channel_name`, `channel_id`, `description` |
 | `schedule_list` | List all scheduled tasks | (none) |
 | `schedule_remove` | Remove a scheduled task by ID | `id` |
-| `spawn_agent` | Launch an async background sub-agent; returns a task ID immediately. Completed results are automatically delivered to the session as ephemeral messages (sub-agents cannot spawn further agents) | `prompt`, `context` (optional) |
+| `spawn_agent` | Launch an async background sub-agent; returns a task ID immediately. Completed results are automatically delivered to the session as ephemeral messages. Sub-agents can spawn further sub-agents up to the configured `MaxSpawnDepth` (default 2). | `prompt`, `context` (optional) |
 
 File tools skip binary files (detected by extension) and ignore directories like `.git`, `node_modules`, `vendor`, `__pycache__`, `.venv`, and `target` during listing and searching. All Lark tools are pre-expanded in the registry. Both doc tools auto-extract the document token from full Feishu/Lark URLs. Schedules fire prompts into isolated agent sessions at cron times.
 
