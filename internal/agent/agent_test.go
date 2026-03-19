@@ -1538,3 +1538,22 @@ func TestTaskTracker_TreeSummary_NoChildren(t *testing.T) {
 		t.Errorf("missing task in summary: %s", summary)
 	}
 }
+
+func TestTaskTracker_TreeSummary_WithDuration(t *testing.T) {
+	tt := NewTaskTracker(5)
+
+	// Running task
+	tt.Add("running task", nil)
+
+	// Completed task
+	id2 := tt.Add("done task", nil)
+	tt.Complete(id2, "result")
+
+	summary := tt.TreeSummary("")
+	if !strings.Contains(summary, "running task [running") {
+		t.Errorf("missing running task with status: %s", summary)
+	}
+	if !strings.Contains(summary, "done task [completed in") {
+		t.Errorf("missing completed task with duration: %s", summary)
+	}
+}

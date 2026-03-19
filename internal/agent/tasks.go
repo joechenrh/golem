@@ -301,21 +301,32 @@ func (tt *TaskTracker) TreeSummary(indent string) string {
 	type entry struct {
 		id           int
 		desc         string
-		status       string
+		status       TaskStatus
+		startedAt    time.Time
+		completedAt  time.Time
 		childTracker tools.BackgroundTaskTracker
 	}
 	entries := make([]entry, 0, len(tt.tasks))
 	for i := range tt.seq {
 		id := i + 1
 		if t, ok := tt.tasks[id]; ok {
-			entries = append(entries, entry{id, t.Description, t.Status.String(), t.ChildTracker})
+			entries = append(entries, entry{id, t.Description, t.Status, t.StartedAt, t.CompletedAt, t.ChildTracker})
 		}
 	}
 	tt.mu.Unlock()
 
 	var sb strings.Builder
 	for _, e := range entries {
-		fmt.Fprintf(&sb, "%s|- #%d %s [%s]\n", indent, e.id, e.desc, e.status)
+		var durStr string
+		switch e.status {
+		case TaskRunning:
+			durStr = fmt.Sprintf(" %s", time.Since(e.startedAt).Truncate(time.Second))
+		case TaskCompleted:
+			durStr = fmt.Sprintf(" in %s", e.completedAt.Sub(e.startedAt).Truncate(time.Second))
+		case TaskFailed:
+			durStr = fmt.Sprintf(" in %s", e.completedAt.Sub(e.startedAt).Truncate(time.Second))
+		}
+		fmt.Fprintf(&sb, "%s|- #%d %s [%s%s]\n", indent, e.id, e.desc, e.status, durStr)
 		if e.childTracker != nil {
 			sb.WriteString(e.childTracker.TreeSummary(indent + "   "))
 		}
