@@ -28,13 +28,16 @@ func compactSchema(full json.RawMessage) json.RawMessage {
 			compact[name] = v
 			continue
 		}
-		// Keep type and enum, drop description.
+		// Keep type, enum, and items (required for arrays), drop description.
 		entry := map[string]any{}
 		if t, ok := m["type"]; ok {
 			entry["type"] = t
 		}
 		if e, ok := m["enum"]; ok {
 			entry["enum"] = e
+		}
+		if items, ok := m["items"]; ok {
+			entry["items"] = items
 		}
 		compact[name] = entry
 	}

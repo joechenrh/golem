@@ -218,6 +218,42 @@ func TestRegistry_ToolDefinitions_CompactParamsWhenUnexpanded(t *testing.T) {
 	}
 }
 
+func TestRegistry_CompactSchema_PreservesArrayItems(t *testing.T) {
+	r := NewRegistry()
+	tool := &mockTool{
+		name:     "memory_store",
+		description: "Save info",
+		fullDesc: "Save info to memory",
+		params: json.RawMessage(`{"type":"object","properties":{
+			"content":{"type":"string","description":"The information to remember."},
+			"tags":{"type":"array","items":{"type":"string"},"description":"1-3 short tags"}
+		},"required":["content"]}`),
+	}
+	r.Register(tool)
+
+	defs := r.ToolDefinitions()
+	var parsed map[string]any
+	if err := json.Unmarshal(defs[0].Parameters, &parsed); err != nil {
+		t.Fatalf("Parameters is not valid JSON: %v", err)
+	}
+	props := parsed["properties"].(map[string]any)
+	tags := props["tags"].(map[string]any)
+	if tags["type"] != "array" {
+		t.Errorf("tags.type = %v, want %q", tags["type"], "array")
+	}
+	if tags["items"] == nil {
+		t.Error("compact schema must preserve items for array properties")
+	}
+	items := tags["items"].(map[string]any)
+	if items["type"] != "string" {
+		t.Errorf("tags.items.type = %v, want %q", items["type"], "string")
+	}
+	// Description should be stripped.
+	if _, hasDesc := tags["description"]; hasDesc {
+		t.Error("compact schema should strip description")
+	}
+}
+
 func TestRegistry_ToolDefinitions_FullParamsWhenExpanded(t *testing.T) {
 	r := NewRegistry()
 	r.Register(newMockTool("test_tool", "desc", "full"))
