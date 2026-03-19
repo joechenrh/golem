@@ -10,7 +10,7 @@ Optimize the async task system based on observed issues from real fix-pr executi
 
 **Problem:** `go test` output dumps ~19K tokens into context. Current `TruncateWithNote` keeps the first 50KB, but useful info (PASS/FAIL) is at the end.
 
-**Fix:** New `TruncateHeadTail(s string, maxBytes int) string` in `stringutil/truncate.go`. When `len(s) > maxBytes`, keep first `maxBytes/2` + `"\n... [truncated N bytes] ...\n"` + last `maxBytes/2`. Replace `TruncateWithNote` usage in `executor/local.go` with `TruncateHeadTail`.
+**Fix:** New `TruncateHeadTail(s string, maxBytes int) string` in `stringutil/truncate.go`. When `len(s) > maxBytes`, the **total output** (head + note + tail) must fit within `maxBytes`. Calculate: `note = "\n... [truncated N bytes] ...\n"`, `headBytes = (maxBytes - len(note)) / 2`, `tailBytes = maxBytes - len(note) - headBytes`. Guard: if `maxBytes` is smaller than the note itself, just return `TruncateWithNote` (head-only fallback). Replace `TruncateWithNote` usage in `executor/local.go` with `TruncateHeadTail`.
 
 **Files:** `internal/stringutil/truncate.go`, `internal/executor/local.go`
 
@@ -18,9 +18,9 @@ Optimize the async task system based on observed issues from real fix-pr executi
 
 **Problem:** After sub-agent completes (final answer with tools=0), nudge mechanism pushes 4 more iterations (~260K wasted tokens). Sub-agents don't need nudge — giving a final answer means the task is done.
 
-**Fix:** Add `DisableNudge bool` to `Session` or `Config`. Set it to true in `buildEphemeralSession`. The nudge check in `react.go` skips when this flag is set. If nudge is already disabled when `classifierLLM == nil`, verify this and document it — no code change needed.
+**Status: Already implemented — no code change needed.** Verified: `buildEphemeralSession` passes `nil` as `classifierLLM` (app.go:1065). `NudgeClassifier.Classify` short-circuits when `classifierLLM == nil` (nudge_classifier.go:28), so nudge is never triggered. The "stuck escalation" block (react.go:167-184) also never fires since `nudges` is never incremented.
 
-**Files:** `internal/agent/react.go` or `internal/agent/session.go`, `internal/app/app.go`
+**Action:** Document this in a code comment on `buildEphemeralSession` so it's explicit. No other changes.
 
 ### A3. Readable Task Names via `description` Parameter
 
@@ -46,15 +46,18 @@ Optimize the async task system based on observed issues from real fix-pr executi
 
 **Problem:** Tree only shows `[running]` — no sense of progress or time.
 
-**Fix:** `TreeSummary` shows duration since `StartedAt` for running tasks, and time since `CompletedAt` for completed tasks:
+**Fix:** `TreeSummary` shows elapsed time for running tasks and total execution duration for completed tasks:
 
 ```
 Background tasks:
 |- #1 fix #67041 [running 3m22s]
-   |- #1 analyze root cause [completed 1m15s]
+   |- #1 analyze root cause [completed in 1m15s]
 ```
 
-Use `time.Since(t.StartedAt).Truncate(time.Second)` for running, `time.Since(t.CompletedAt).Truncate(time.Second)` for completed/failed. `StartedAt` and `CompletedAt` already exist on `BackgroundTask`.
+- Running: `time.Since(t.StartedAt).Truncate(time.Second)` — "how long has it been running"
+- Completed/failed: `t.CompletedAt.Sub(t.StartedAt).Truncate(time.Second)` — "how long did it take" (not "how long ago")
+
+The `entry` struct in `TreeSummary` needs to also copy `StartedAt` and `CompletedAt` fields (currently only copies id, desc, status, childTracker).
 
 **Files:** `internal/agent/tasks.go` (TreeSummary method)
 
@@ -75,6 +78,8 @@ Skill prompt additions:
 - "You MUST use spawn_agent to delegate analysis and fix phases separately"
 - "Each spawn_agent call MUST include a `description` parameter"
 - "The analysis agent returns ONLY: root cause location (file:line), one-sentence explanation, suggested fix approach"
+
+**Prerequisite:** `MaxSpawnDepth` must be >= 2 (the default). Document this in the skill.
 
 **Files:** `~/.golem/agents/lark-bot/skills/fix-pr/SKILL.md`
 
@@ -114,7 +119,7 @@ Sub-agent fills in the placeholders and runs it in one shell call.
 | # | Category | Change | Files |
 |---|----------|--------|-------|
 | A1 | Code | Head+tail truncation for shell output | `stringutil/truncate.go`, `executor/local.go` |
-| A2 | Code | Disable nudge for ephemeral sessions | `agent/react.go` or `session.go`, `app/app.go` |
+| A2 | Doc | Already implemented — add documentation comment | `app/app.go` (comment only) |
 | A3 | Code | `description` param on spawn_agent | `tools/builtin/spawn_tool.go` |
 | A4 | Code | Duration in TreeSummary | `agent/tasks.go` |
 | B1 | Skill | Two-phase nested spawn in fix-pr | `fix-pr/SKILL.md` |
