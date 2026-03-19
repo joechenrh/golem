@@ -20,20 +20,33 @@ Optimize the async task system based on observed issues from real fix-pr executi
 
 After the last sub-sub-agent finishes and results are injected, the LLM gives another final answer (tools=0). But if the LLM's response triggers the task wait check again (e.g., results haven't been fully drained), it loops again.
 
-**Fix:** After `WaitForAny` returns and completed tasks are injected, if there are no more running tasks AND the LLM already gave a final answer (no tool calls) in the previous iteration, exit the loop instead of continuing. Add a flag `lastWasTextOnly bool` to track this:
+**Root cause:** The task wait block (react.go:187-200) sits AFTER the LLM call and AFTER the "no tool calls" checks. When it fires, it does `WaitForAny` + inject + `continue`, which loops back to the top and calls `executeLLMCall` again. The LLM sees the injected results but has nothing to do, gives another text-only answer, and the cycle repeats until all tasks drain.
+
+**Fix:** Move the task-wait-and-inject logic to the **top of the loop**, before `executeLLMCall`. This way:
+1. Loop starts → check for running tasks → if any, wait + inject results
+2. Then call `executeLLMCall` with the freshly injected results in context
+3. LLM gives final answer with full knowledge of all sub-task results → exits cleanly
+
+This eliminates the "LLM call → text only → wait → inject → LLM call → text only" cycle. The existing `InjectCompletedTasks` call at line 100 already does some of this, but only for already-completed tasks. The wait block needs to be adjacent to it.
+
+Concretely, replace the current task wait block (lines 187-200) with a check at the top of the loop (after line 100):
 
 ```go
-if s.tasks.HasRunning() {
-    ...
+// Inject completed background task results as ephemeral messages.
+s.ephemeralMessages = append(s.ephemeralMessages, s.toolExec.InjectCompletedTasks()...)
+
+// If background tasks are still running and the LLM already gave a
+// text-only response (no tool calls), wait for tasks before calling
+// the LLM again. This avoids burning iterations on empty LLM calls.
+if lastWasTextOnly && s.tasks.HasRunning() {
     s.tasks.WaitForAny(ctx)
     s.ephemeralMessages = append(s.ephemeralMessages, s.toolExec.InjectCompletedTasks()...)
-    continue
 }
 ```
 
-The issue is that after `WaitForAny` + `continue`, the loop goes back to `executeLLMCall` which costs a full prompt. Instead, after injecting completed tasks, check again: if no more tasks are running, fall through to the final answer path rather than doing another LLM call.
+And set `lastWasTextOnly = true` when the LLM returns with no tool calls and non-empty content (before the classifier/stuck checks). Reset it when tool calls are present.
 
-**Files:** `internal/agent/react.go` (task wait section, lines 187-200)
+**Files:** `internal/agent/react.go`
 
 ### A3. Readable Task Names via `description` Parameter
 
