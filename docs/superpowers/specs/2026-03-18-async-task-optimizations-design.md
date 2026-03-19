@@ -14,13 +14,26 @@ Optimize the async task system based on observed issues from real fix-pr executi
 
 **Files:** `internal/stringutil/truncate.go`, `internal/executor/local.go`
 
-### A2. Ephemeral Session Disable Nudge
+### A2. Sub-Agent Post-Completion Token Waste
 
-**Problem:** After sub-agent completes (final answer with tools=0), nudge mechanism pushes 4 more iterations (~260K wasted tokens). Sub-agents don't need nudge — giving a final answer means the task is done.
+**Problem:** After sub-agent completes its work (final answer with tools=0), the ReAct loop runs 3-4 more iterations (~260K wasted tokens). This is NOT the classifier nudge (that's already disabled via `classifierLLM == nil`). It's the **task wait mechanism** at react.go:187-200: when a sub-agent has spawned sub-sub-agents, `s.tasks.HasRunning()` returns true, so the loop calls `WaitForAny()` and continues even after the LLM said it's done.
 
-**Status: Already implemented — no code change needed.** Verified: `buildEphemeralSession` passes `nil` as `classifierLLM` (app.go:1065). `NudgeClassifier.Classify` short-circuits when `classifierLLM == nil` (nudge_classifier.go:28), so nudge is never triggered. The "stuck escalation" block (react.go:167-184) also never fires since `nudges` is never incremented.
+After the last sub-sub-agent finishes and results are injected, the LLM gives another final answer (tools=0). But if the LLM's response triggers the task wait check again (e.g., results haven't been fully drained), it loops again.
 
-**Action:** Document this in a code comment on `buildEphemeralSession` so it's explicit. No other changes.
+**Fix:** After `WaitForAny` returns and completed tasks are injected, if there are no more running tasks AND the LLM already gave a final answer (no tool calls) in the previous iteration, exit the loop instead of continuing. Add a flag `lastWasTextOnly bool` to track this:
+
+```go
+if s.tasks.HasRunning() {
+    ...
+    s.tasks.WaitForAny(ctx)
+    s.ephemeralMessages = append(s.ephemeralMessages, s.toolExec.InjectCompletedTasks()...)
+    continue
+}
+```
+
+The issue is that after `WaitForAny` + `continue`, the loop goes back to `executeLLMCall` which costs a full prompt. Instead, after injecting completed tasks, check again: if no more tasks are running, fall through to the final answer path rather than doing another LLM call.
+
+**Files:** `internal/agent/react.go` (task wait section, lines 187-200)
 
 ### A3. Readable Task Names via `description` Parameter
 
@@ -119,7 +132,7 @@ Sub-agent fills in the placeholders and runs it in one shell call.
 | # | Category | Change | Files |
 |---|----------|--------|-------|
 | A1 | Code | Head+tail truncation for shell output | `stringutil/truncate.go`, `executor/local.go` |
-| A2 | Doc | Already implemented — add documentation comment | `app/app.go` (comment only) |
+| A2 | Code | Avoid extra LLM calls after task wait completes | `agent/react.go` |
 | A3 | Code | `description` param on spawn_agent | `tools/builtin/spawn_tool.go` |
 | A4 | Code | Duration in TreeSummary | `agent/tasks.go` |
 | B1 | Skill | Two-phase nested spawn in fix-pr | `fix-pr/SKILL.md` |
