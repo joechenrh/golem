@@ -121,6 +121,33 @@ func TestSpawnAgentTool_Parameters(t *testing.T) {
 	}
 }
 
+func TestSpawnAgentTool_Description(t *testing.T) {
+	creator := func(_ context.Context) (*SubAgentSession, error) {
+		return &SubAgentSession{
+			Tracker: &mockTracker{},
+			Runner: func(_ context.Context, prompt string) (string, error) {
+				return "done", nil
+			},
+		}, nil
+	}
+	tool := NewSpawnAgentTool(creator)
+
+	tracker := &mockTracker{}
+	ctx := tools.WithTaskTracker(context.Background(), tracker)
+
+	args, _ := json.Marshal(map[string]string{
+		"prompt":      "Fix the authentication bug in login.go by checking token expiry",
+		"description": "fix auth bug",
+	})
+	result, err := tool.Execute(ctx, string(args))
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !strings.Contains(result, "fix auth bug") {
+		t.Errorf("result should contain description, got: %s", result)
+	}
+}
+
 // mockTracker implements tools.BackgroundTaskTracker for testing.
 type mockTracker struct {
 	launchCount    int

@@ -55,6 +55,10 @@ var spawnAgentParams = json.RawMessage(`{
 		"context": {
 			"type": "string",
 			"description": "Key context, files, or partial results to pass to the sub-agent. This is prepended to the prompt so the sub-agent has the information it needs without re-discovering it."
+		},
+		"description": {
+			"type": "string",
+			"description": "Short human-readable task name for status display, e.g. 'fix #67041'. If omitted, a truncated prompt is used."
 		}
 	},
 	"required": ["prompt"]
@@ -66,8 +70,9 @@ func (t *SpawnAgentTool) Execute(
 	ctx context.Context, args string,
 ) (string, error) {
 	var params struct {
-		Prompt  string `json:"prompt"`
-		Context string `json:"context"`
+		Prompt      string `json:"prompt"`
+		Context     string `json:"context"`
+		Description string `json:"description"`
 	}
 	if errMsg := tools.ParseArgs(args, &params); errMsg != "" {
 		return errMsg, nil
@@ -96,7 +101,10 @@ func (t *SpawnAgentTool) Execute(
 	}
 
 	// Async: Launch manages context, errgroup, and lifecycle.
-	desc := truncateDesc(params.Prompt, 100)
+	desc := params.Description
+	if desc == "" {
+		desc = truncateDesc(params.Prompt, 100)
+	}
 	capturedPrompt := prompt
 	taskID := tracker.Launch(desc, func(taskCtx context.Context, id int) {
 		sub, err := t.creator(taskCtx)
