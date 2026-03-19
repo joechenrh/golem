@@ -62,8 +62,8 @@ func (e *LocalExecutor) Execute(
 	err := cmd.Run()
 
 	result := &Result{
-		Stdout:  stringutil.TruncateWithNote(stdout.String(), maxOutputBytes),
-		Stderr:  stringutil.TruncateWithNote(stderr.String(), maxOutputBytes),
+		Stdout:  stringutil.TruncateHeadTail(stdout.String(), maxOutputBytes),
+		Stderr:  stringutil.TruncateHeadTail(stderr.String(), maxOutputBytes),
 		Command: command,
 	}
 
