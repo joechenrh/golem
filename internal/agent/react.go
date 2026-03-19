@@ -83,6 +83,7 @@ func (s *Session) runReActLoop(
 	stuckEscalated := false
 	s.lastTaskSummary = ""
 	emptyRetries := 0
+	lastWasTextOnly := false
 
 	iter := 0
 	for iter < s.config.MaxToolIter {
@@ -98,6 +99,19 @@ func (s *Session) runReActLoop(
 		}
 		// Inject completed background task results as ephemeral messages.
 		s.ephemeralMessages = append(s.ephemeralMessages, s.toolExec.InjectCompletedTasks()...)
+
+		// If the LLM already gave a text-only response and background tasks
+		// are still running, wait for them before the next LLM call. This
+		// avoids the cycle: LLM text-only -> task wait -> inject -> LLM text-only.
+		if lastWasTextOnly && s.tasks.HasRunning() {
+			s.logger.Debug("proactive task wait before LLM call", zap.Int("iter", iter))
+			if stream && tokenCh != nil {
+				tokenCh <- s.tasks.Summary()
+			}
+			s.tasks.WaitForAny(ctx)
+			s.ephemeralMessages = append(s.ephemeralMessages, s.toolExec.InjectCompletedTasks()...)
+			lastWasTextOnly = false
+		}
 
 		// Shrink tool schemas not used in the last few iterations to
 		// save context window space in long multi-step chains.
@@ -136,6 +150,7 @@ func (s *Session) runReActLoop(
 					}
 				}
 			}
+			lastWasTextOnly = false
 			continue
 		}
 
@@ -184,18 +199,17 @@ func (s *Session) runReActLoop(
 			}
 		}
 
-		// Task wait: if background tasks are still running, send a status
-		// summary to the user and wait in-memory for completion instead
-		// of returning. This avoids burning iterations on polling.
+		// Background tasks still running — mark for proactive wait on next iteration.
 		if s.tasks.HasRunning() {
-			s.logger.Debug("waiting for background tasks before returning",
+			s.logger.Debug("background tasks running, will wait on next iteration",
 				zap.Int("iter", iter))
 			if stream && tokenCh != nil {
 				tokenCh <- s.tasks.Summary()
 			}
-			s.tasks.WaitForAny(ctx)
-			s.ephemeralMessages = append(s.ephemeralMessages, s.toolExec.InjectCompletedTasks()...)
-			// Don't count the wait as an iteration — the LLM wasn't called.
+			lastWasTextOnly = true
+			s.ephemeralMessages = append(s.ephemeralMessages,
+				llm.Message{Role: llm.RoleAssistant, Content: resp.Content},
+			)
 			continue
 		}
 
